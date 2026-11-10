@@ -59,9 +59,10 @@ original-format model fixtures.
 ## Native acceptance
 
 Native EXE execution, rendered layout, actual mixed-DPI behavior, microphone,
-keyboard hook and cursor insertion remain unverified under the recorded Defender
-block. Peter will perform the next manual launch. The possible effect of the
-executable location has not been independently isolated.
+keyboard hook and cursor insertion remain unverified. The recorded Defender event
+concerned the development EXE under the build directory. The published app-folder
+package has not been launched. Peter will perform that manual launch; the possible
+effect of the executable location has not been independently isolated.
 
 The client remains at:
 

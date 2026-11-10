@@ -78,9 +78,10 @@ Both processes use the same physical GPU. Avoid simultaneous inference through
 both APIs. Keep TypeWhisper's shortcut inactive during Local Dictation acceptance.
 
 
-## Native acceptance after official execution approval
+## Native acceptance and execution check
 
-The corporate Defender rule currently blocks the new EXE:
+An automated launch of the development EXE under the build directory was
+blocked by corporate Defender rule:
 
 ~~~text
 01443614-CD74-433A-B99E-2ECDC07BFC25
@@ -89,9 +90,11 @@ The corporate Defender rule currently blocks the new EXE:
 Defender event 1121 confirmed an administrator-enforced block; ordinary file ACLs
 permit reading/execution. Do not change security policy, add exclusions, create
 an ad-hoc trust certificate, or launch the same application through an alternative
-host to evade the block. Obtain official IT approval for the built application.
+host to evade the block. The published app-folder package has not been launched; Peter will test it
+manually. If that launch is also blocked, resolve the specific Windows message
+through the normal approved company process.
 
-Once approved:
+When execution is allowed:
 
 1. Launch LocalDictation.exe --no-hotkey.
 2. Check wide and narrow Settings/Review windows and display scaling.

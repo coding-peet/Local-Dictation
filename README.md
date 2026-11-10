@@ -7,9 +7,9 @@ Transformers Whisper checkpoints in FP16. Model conversion and quantization
 are not used.
 
 **Current status:** an initial native build is published on the development
-machine. Core and API tests pass. Corporate Microsoft Defender currently
-blocks the unsigned new EXE, so native visual, microphone, global-shortcut
-and cursor-insertion acceptance remain pending. Live transcription is
+machine. Core and API tests pass. A development-build EXE launch was blocked by corporate Microsoft Defender.
+The published app-folder package has not yet been manually launched, so native
+visual, microphone, global-shortcut and cursor-insertion acceptance remain pending. Live transcription is
 experimental: its first measured Slovak result was less accurate than the
 after-recording result.
 
