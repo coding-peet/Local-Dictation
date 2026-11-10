@@ -12,6 +12,7 @@ public sealed record ModelInfo
     public string Name { get; init; } = "";
     public string Revision { get; init; } = "";
     public bool Installed { get; init; }
+    public bool CanInstall {get;init;}
     public bool Compatible { get; init; }
     public bool RuntimeTested { get; init; }
     public bool QualityVerified { get; init; }

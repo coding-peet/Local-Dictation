@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
+using LocalDictation.App.Services;
 
 namespace LocalDictation.App.Views;
 
@@ -12,6 +13,7 @@ public sealed class BannerWindow : Window
     readonly ProgressBar meter = new() { Minimum=0,Maximum=1,Height=5,Width=78 };
     readonly Button stop, review;
     readonly AppController controller;
+    bool positioning;
     public BannerWindow(AppController controller)
     {
         this.controller=controller;
@@ -39,16 +41,20 @@ public sealed class BannerWindow : Window
             var helper=new WindowInteropHelper(this);
             SetWindowLongPtr(helper.Handle,-20,GetWindowLongPtr(helper.Handle,-20)|0x08000080);
             HwndSource.FromHwnd(helper.Handle).AddHook((nint hwnd,int msg,nint wp,nint lp,ref bool handled)=>
-            { if(msg==0x21) { handled=true;return 3; } return 0; });
+            { if(msg==0x21) { handled=true;return 3; }
+              if(msg==0x2E0)Dispatcher.InvokeAsync(Position);return 0; });
         };
         Loaded+=(_,_)=>Position();
+        SizeChanged+=(_,_)=>{if(IsVisible)Position();};
         controller.Changed+=Refresh;
     }
     void Position()
     {
-        var area=SystemParameters.WorkArea;
-        Width=Math.Min(590,area.Width-32);
-        Left=area.Left+(area.Width-Width)/2; Top=area.Bottom-ActualHeight-22;
+        if(positioning)return;
+        positioning=true;
+        try{BannerMonitor.Position(new WindowInteropHelper(this).Handle,controller.BannerAnchorWindow,
+            590,Math.Max(110,ActualHeight));}
+        finally{positioning=false;}
     }
     public void Refresh()
     {

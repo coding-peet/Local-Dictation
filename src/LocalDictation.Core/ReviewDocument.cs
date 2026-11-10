@@ -11,10 +11,12 @@ public sealed class ReviewDocument
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public DateTimeOffset Created { get; set; } = DateTimeOffset.Now;
     public string Reason { get; set; } = "Review before inserting";
+    public ReviewProvenance? Provenance {get;set;}
     public string PrimaryModel { get; set; } = "";
     public string? VerificationModel { get; set; }
     public string Primary { get; set; } = "";
     public string Verification { get; set; } = "";
+    public bool VerificationCompleted {get;set;}
     public List<ReviewPiece> Pieces { get; set; } = [];
     public Dictionary<string, ReviewChoice> Choices { get; set; } = [];
     public Dictionary<string, string> CustomDrafts { get; set; } = [];
@@ -29,6 +31,16 @@ public sealed class ReviewDocument
             ? choice.Kind switch { "verification" => p.Verification, "custom" => choice.Custom ?? "", _ => p.Primary }
             : p.Primary));
     [JsonIgnore] public string OutputText => ManualFinalDraft ?? WorkingText;
+
+    public void AttachProvenance(ReviewProvenance value)
+    {
+        if(Provenance!=null&&((Provenance with {ComparisonId=null})!=(value with {ComparisonId=null})||
+            Provenance.ComparisonId!=null&&Provenance.ComparisonId!=value.ComparisonId))
+            throw new InvalidOperationException("The recording provenance cannot change.");
+        if(PrimaryModel.Length>0&&PrimaryModel!=value.Primary.Id||VerificationModel!=value.Verification?.Id)
+            throw new InvalidOperationException("The recording model identity does not match.");
+        Provenance=value;
+    }
 
     void Remember()
     {
@@ -73,7 +85,8 @@ public sealed class ReviewDocument
     public void SetPrimary(string text)
     {
         Primary = text;
-        Verification = text;
+        Verification = VerificationModel is null?text:"";
+        VerificationCompleted=false;
         Pieces = [new("primary", text, text, false)];
         Choices.Clear();
     }

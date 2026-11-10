@@ -1,6 +1,7 @@
 """Lossless immutable text alternatives, with no cross-language offset arithmetic."""
 from difflib import SequenceMatcher
 import hashlib
+import json
 import re
 
 def compare(primary, verification):
@@ -26,3 +27,9 @@ def compose(pieces, choices):
                 raise ValueError("Unknown comparison choice.")
             result.append(piece[choice])
     return "".join(result)
+
+
+def comparison_identity(model,revision,verifier,verification_revision,primary,verification):
+    content=["comparison-v1",model,revision,verifier,verification_revision,primary,verification]
+    encoded=json.dumps(content,ensure_ascii=False,separators=(",",":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()

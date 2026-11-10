@@ -19,6 +19,8 @@ public sealed class SettingsWindow : Window
     readonly CheckBox live=new(){Content="Live transcription (experimental)"},
         verify=new(){Content="Verify after recording"},insert=new(){Content="Insert directly at the cursor"},
         shortcutEnabled=new(){Content="Enable Ctrl+Shift shortcut"};
+    readonly ListBox catalogModels=new(){MinHeight=96,MaxHeight=160,DisplayMemberPath="Label",SelectedValuePath="Id"};
+    Button inspectCatalog=null!;
     readonly ListBox reviews=new(){MinHeight=70,MaxHeight=170,DisplayMemberPath="Reason"};
     Button download=null!,cancelDownload=null!;
     readonly Button record;
@@ -88,6 +90,12 @@ public sealed class SettingsWindow : Window
         page.Children.Add(Ui.Text("The Dictation dropdown lists installed models and the initial checked catalog. Runtime-tested and quality-checked are separate states.",13));
         page.Children.Add(Ui.Text("Test the selected Dictation model with a local audio file before using it for Verification. Testing sends audio only to this loopback API.",13));
         page.Children.Add(Ui.Button("Test selected model with audio…",()=>_ = TestModel()));
+        page.Children.Add(Ui.Text("Install or repair a catalog model",18,true));
+        page.Children.Add(Ui.Text("Select a missing model, inspect its pinned download and size, then use Download. Installed models are preserved.",13));
+        page.Children.Add(catalogModels);
+        inspectCatalog=Ui.Button("Inspect selected catalog model",()=>_ = InspectCatalog());
+        page.Children.Add(inspectCatalog);
+        catalogModels.SelectionChanged+=(_,_)=>inspectCatalog.IsEnabled=catalogModels.SelectedItem is ModelInfo m&&m.CanInstall;
         page.Children.Add(Ui.Text("Add a public Hugging Face model",18,true));
         Ui.Label(page,"Repository URL or owner/name",repository,"Built-in Whisper Transformers models with original safetensors only. Private, gated and remote-code models are rejected.");
         page.Children.Add(Ui.Button("_Inspect compatibility and size",()=>_ = InspectModel()));
@@ -144,6 +152,10 @@ public sealed class SettingsWindow : Window
                 language.SelectedItem=controller.Settings.Language;LoadMicrophones();
             }
             UpdateModelChoices();
+            var selectedCatalog=catalogModels.SelectedValue as string;
+            catalogModels.ItemsSource=controller.Models;
+            catalogModels.SelectedValue=selectedCatalog??controller.Models.FirstOrDefault(m=>m.CanInstall)?.Id??controller.Models.FirstOrDefault()?.Id;
+            inspectCatalog.IsEnabled=catalogModels.SelectedItem is ModelInfo item&&item.CanInstall;
             var selectedReview=(reviews.SelectedItem as ReviewDocument)?.Id;
             reviews.ItemsSource=controller.Pending;
             reviews.SelectedItem=controller.Pending.FirstOrDefault(p=>p.Id==selectedReview)??controller.Pending.FirstOrDefault();
@@ -219,13 +231,20 @@ public sealed class SettingsWindow : Window
         catch(Exception ex){message.Text=ex is InvalidOperationException?ex.Message:"The runtime test did not finish. Your existing model selection was preserved.";}
     }
 
-    async Task InspectModel()
+    async Task InspectCatalog()
+    {
+        if(catalogModels.SelectedItem is not ModelInfo model||!model.CanInstall)return;
+        repository.Text="https://huggingface.co/"+model.Id+"/tree/"+model.Revision;
+        await InspectModel(model.Id);
+    }
+
+    async Task InspectModel(string? catalogId=null)
     {
         importStatus.Text="Inspecting public repository metadata…";download.IsEnabled=false;
         try
         {
             using var api=new ApiClient(controller.Settings);
-            var result=await api.Post("/v1/model-imports/inspect",new{repository=repository.Text.Trim()});
+            var result=await api.Post("/v1/model-imports/inspect",new{repository=repository.Text.Trim(),catalog_model_id=catalogId});
             inspection=result.GetProperty("inspection_id").GetString();
             var bytes=result.GetProperty("download_bytes").GetInt64();
             importStatus.Text=$"Compatible original Whisper model · {bytes/1048576.0:0.0} MiB\nPinned commit: {result.GetProperty("revision").GetString()}\nNot runtime-tested or quality-checked.";

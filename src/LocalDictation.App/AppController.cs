@@ -38,6 +38,8 @@ public sealed class AppController : IDisposable
     readonly bool noHotkey;
     SettingsWindow? settingsWindow;
     Run? active;
+    nint bannerAnchor;
+    public nint BannerAnchorWindow=>bannerAnchor;
     DateTimeOffset hideAt=DateTimeOffset.MinValue;
     public Settings Settings {get;private set;}
     public List<ModelInfo> Models {get;private set;}=[];
@@ -147,6 +149,7 @@ public sealed class AppController : IDisposable
         {ConnectionMessage="Choose an installed, runtime-tested verification model distinct from Dictation.";ShowSettings();Changed?.Invoke();return;}
         if(active?.Verifying==true)active.Cancel.Cancel();
         var destination=input.Epoch.Capture((long)WindowsTextDelivery.ForegroundWindow);
+        bannerAnchor=(nint)destination.Window;
         var run=new Run(snapshot){Destination=destination};
         active=run;input.SessionActive=true;
         StateLabel="Preparing";DetailLabel="Opening the selected microphone…";hideAt=DateTimeOffset.MinValue;
@@ -245,7 +248,15 @@ public sealed class AppController : IDisposable
     async Task Handle(Run run,JsonElement e)
     {
         var type=e.GetProperty("type").GetString();
-        if(type=="recording.limit_reached")
+        if(type=="session.started")
+        {
+            string? Optional(string key)=>e.TryGetProperty(key,out var v)&&v.ValueKind==JsonValueKind.String?v.GetString():null;
+            var time=DateTimeOffset.TryParse(Optional("session_started_utc"),out var started)?started:(DateTimeOffset?)null;
+            run.Review.AttachProvenance(new(e.GetProperty("session_id").GetString()!,
+                new(e.GetProperty("model").GetString()!,Optional("model_revision")),
+                run.Settings.VerifyAfterRecording?new(run.Settings.VerificationModel!,Optional("verification_revision")):null,time));
+        }
+        else if(type=="recording.limit_reached")
         {
             run.Recording=false;run.Capture.Stop();
             if(active==run)StateLabel="Finishing · recording limit";
@@ -277,7 +288,10 @@ public sealed class AppController : IDisposable
         }
         else if(type=="verification.completed")
         {
+            if(run.Review.Provenance is {} provenance&&e.TryGetProperty("comparison_id",out var identity))
+                run.Review.AttachProvenance(provenance with {ComparisonId=identity.GetString()});
             run.Review.Verification=e.GetProperty("verification").GetString()??"";
+            run.Review.VerificationCompleted=true;
             run.Review.Pieces=e.GetProperty("pieces").Deserialize<List<ReviewPiece>>(Protocol.Json)??[];
             run.Review.Reason=run.CanDeliver
                 ?"Verification found alternative wording. The dictation is already in your destination; apply reviewed text deliberately."

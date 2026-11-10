@@ -34,9 +34,16 @@ public sealed class ReviewWindow : Window
         var header=new StackPanel();
         header.Children.Add(Ui.Text("Review your dictation",22,true));
         header.Children.Add(Ui.Text(document.Reason,13));
-        var provenance=Ui.Text(document.PrimaryModel +
-            (document.VerificationModel is null?"":"   →   "+document.VerificationModel),12);
-        provenance.Foreground=Ui.Brush("Muted"); header.Children.Add(provenance);
+        var pinned=document.Provenance;
+        static string Revision(string? value)=>string.IsNullOrEmpty(value)?"revision unknown":value[..Math.Min(value.Length,12)];
+        var provenance=Ui.Text(document.PrimaryModel+" · "+Revision(pinned?.Primary.Revision)+
+            (document.VerificationModel is null?"":"   →   "+document.VerificationModel+" · "+Revision(pinned?.Verification?.Revision)),12);
+        provenance.Foreground=Ui.Brush("Muted");header.Children.Add(provenance);
+        var details=Ui.Box(false,72);
+        details.Text=pinned is null?"This older Review has no saved session or revision snapshot.":
+            $"Session: {pinned.SessionId}\nSession started: {pinned.SessionStartedUtc?.ToString("O")??"unknown"}\n"+
+            $"Dictation revision: {pinned.Primary.Revision??"unknown"}\nVerification revision: {pinned.Verification?.Revision??"unknown"}\nComparison: {pinned.ComparisonId??"not available"}";
+        header.Children.Add(new Expander{Header="Recording details",Content=details,Margin=new(0,0,0,12)});
         DockPanel.SetDock(header,Dock.Top);root.Children.Add(header);
         var footer=new StackPanel();
         note.Foreground=Ui.Brush("Muted"); note.FontSize=12;
@@ -88,7 +95,13 @@ public sealed class ReviewWindow : Window
         middle.RowDefinitions.Add(new(){Height=GridLength.Auto});
         middle.Children.Add(left);middle.Children.Add(choiceCard);Grid.SetColumn(choiceCard,1);
         var scroller=new ScrollViewer { Content=middle,VerticalScrollBarVisibility=ScrollBarVisibility.Auto };
-        root.Children.Add(scroller); Content=root;
+        var tabs=new TabControl();
+        tabs.Items.Add(new TabItem{Header="_Reviewed text",Content=scroller});
+        tabs.Items.Add(new TabItem{Header="_Dictation original",Content=Original(document.Primary,document.PrimaryModel,true)});
+        if(document.VerificationModel!=null)
+            tabs.Items.Add(new TabItem{Header="_Verification original",Content=Original(document.Verification,
+                document.VerificationModel,document.VerificationCompleted)});
+        root.Children.Add(tabs); Content=root;
         SizeChanged+=(_,_) =>
         {
             var narrow=ActualWidth<920;
@@ -107,6 +120,26 @@ public sealed class ReviewWindow : Window
             document.ManualFinalDraft=manual.Text;save(document);
         };
         Refresh();
+    }
+
+    UIElement Original(string source,string model,bool confirmed)
+    {
+        var page=new StackPanel{Margin=new(16)};
+        page.Children.Add(Ui.Text("Original model output",17,true));
+        page.Children.Add(Ui.Text(model,13));
+        page.Children.Add(Ui.Text(confirmed?"This source stays unchanged when you choose phrases or edit the final draft.":
+            "This item has no confirmed completed verification. Your dictation is preserved.",13));
+        var text=Ui.Box(false,240);text.Text=confirmed?source:"";
+        System.Windows.Automation.AutomationProperties.SetName(text,"Original transcript from "+model);
+        page.Children.Add(text);
+        var copySource=Ui.Button("Copy this original",()=>
+        {
+            System.Windows.Clipboard.SetText(source);
+            note.Text="Original copied. Your phrase choices and final draft are unchanged.";
+        });
+        copySource.IsEnabled=confirmed&&source.Length>0;page.Children.Add(copySource);
+        if(confirmed&&source.Length==0)page.Children.Add(Ui.Text("This model returned no text.",13));
+        return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
     }
 
     void Select(int index)

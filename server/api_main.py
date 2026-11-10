@@ -22,9 +22,14 @@ def main():
     def load():
         from model_engine import WhisperEngine
         from local_dictation.engine_adapter import EngineAdapter
-        engine=WhisperEngine()
-        engine.prepare_runtime()
-        return EngineAdapter(engine)
+        import model_engine
+        installed=[m for m in engine.catalog.models() if m["installed"]]
+        for model in installed:
+            model_engine.MODELS[model["id"]]=model["path"]
+            model_engine.MODEL_LANGUAGES[model["id"]]=model["languages"]
+        runtime=WhisperEngine()
+        runtime.prepare_runtime(cache_fast=any(m["id"]==model_engine.FAST_MODEL_ID for m in installed))
+        return EngineAdapter(runtime)
     engine=PreparingEngine(load)
     app=create_app(config,engine)
     engine.start()

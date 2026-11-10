@@ -5,7 +5,8 @@ import math
 import threading
 import time
 import uuid
-from .comparison import compare
+from .comparison import compare, comparison_identity
+from datetime import datetime, timezone
 from .workers import run_worker
 
 class BusyError(RuntimeError):pass
@@ -35,7 +36,7 @@ class Admission:
 
 class AudioSession:
     def __init__(self,config,engine,options,send,admission=None):
-        self.config,self.engine,self.options,self.send=config,engine,options,send
+        self.config,self.engine,self.options,self.send=config,engine,dict(options),send
         self.admission=admission
         self.id,self.revision=str(uuid.uuid4()),0
         self.cancelled=threading.Event()
@@ -136,7 +137,9 @@ class AudioSession:
     async def run(self):
         heartbeat=None
         try:
-            await self.emit("session.started",max_seconds=self.config.max_seconds,sample_rate=16000,model=self.options["model"])
+            await self.emit("session.started",max_seconds=self.config.max_seconds,sample_rate=16000,model=self.options["model"],
+                model_revision=self.options.get("primary_revision"),verification_model=self.options.get("verification_model"),
+                verification_revision=self.options.get("verification_revision"),session_started_utc=datetime.now(timezone.utc).isoformat())
             heartbeat=asyncio.create_task(self.progress())
             await self.announce_limit()
             if self.live:await self.run_live()
@@ -162,7 +165,10 @@ class AudioSession:
                     result=await self.decode(bytes(self.full_audio),verifier)
                     if self.cancelled.is_set():await self.emit("verification.cancelled",primary=primary)
                     else:await self.emit("verification.completed",primary=primary,verification=result["text"],model=verifier,
-                        pieces=await asyncio.to_thread(compare,primary,result["text"]))
+                        pieces=await asyncio.to_thread(compare,primary,result["text"]),
+                        primary_revision=self.options.get("primary_revision"),verification_revision=self.options.get("verification_revision"),
+                        comparison_id=comparison_identity(self.options["model"],self.options.get("primary_revision"),verifier,
+                            self.options.get("verification_revision"),primary,result["text"]))
                 except Exception:
                     await self.emit("verification.cancelled" if self.cancelled.is_set() else "verification.failed",
                         primary=primary,message="Verification did not finish. Your dictation is preserved.")

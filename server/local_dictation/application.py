@@ -74,7 +74,8 @@ def create_app(config, engine, catalog=None):
         if verifier:
             supports_language(verified,language)
         return {**options,"model":model["id"],"verification_model":verifier,
-                "live":live,"language":language}
+                "live":live,"language":language,"primary_revision":model.get("installed_revision",model.get("revision")),
+                "verification_revision":verified.get("installed_revision",verified.get("revision")) if verifier else None}
 
     async def socket(ws):
         await ws.accept()

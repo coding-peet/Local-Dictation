@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import threading
 from .installation import validate_installation
+from .downloads import parse_repository
 
 BUILTINS = [
     {"id":"kinit/whisper-large-v3-turbo-sk","name":"KInIT Turbo · Slovak","folder":"kinit-turbo",
@@ -22,50 +23,59 @@ class Catalog:
         self.entries={}
         self.validations={}
         for model in BUILTINS:
-            path=config.model_root/model["folder"]
-            try:
-                validate_installation(path)
-                installed=True
-            except (OSError,ValueError,KeyError,TypeError):installed=False
-            pinned=False
-            try:
-                manifest=json.loads((path/"local-manifest.json").read_text(encoding="utf-8"))
-                pinned=manifest.get("revision")==model["revision"]
-            except (OSError,ValueError): pass
-            self.entries[model["id"]]={**model,"path":str(path),"installed":installed,
-                "compatible":True,"runtime_tested":installed and pinned,
-                "quality_verified":installed and pinned}
+            entry={**model,"path":str(config.model_root/model["folder"]),"installed":False,
+                   "compatible":True,"runtime_tested":False,"quality_verified":False}
+            self.check(entry)
+            pinned=entry.get("installed_revision")==model["revision"]
+            entry.update(runtime_tested=entry["installed"] and pinned,quality_verified=entry["installed"] and pinned)
+            self.entries[model["id"]]=entry
         if self.file.exists():
-            saved=json.loads(self.file.read_text(encoding="utf-8"))
-            for model in saved:
-                if model["id"] not in self.entries:
-                    try:
-                        validate_installation(model["path"],model.get("files"))
-                        model["installed"]=True
-                    except (OSError,ValueError,KeyError,TypeError):model["installed"]=False
-                    self.entries[model["id"]]=model
+            for model in json.loads(self.file.read_text(encoding="utf-8")):
+                builtin=next((b for b in BUILTINS if b["id"]==model["id"]),None)
+                if builtin:
+                    if not model.get("managed") or model.get("revision")!=builtin["revision"]:
+                        continue
+                    path=Path(model["path"]).resolve()
+                    if not path.is_relative_to(self.managed_root):continue
+                    model={**model,**builtin,"path":str(path)}
+                self.check(model)
+                self.entries[model["id"]]=model
+
+    @property
+    def managed_root(self):return (self.config.data_root.parent/"models").resolve()
 
     def save(self):
         self.file.parent.mkdir(parents=True,exist_ok=True)
         temporary=self.file.with_suffix(".json.tmp")
-        temporary.write_text(json.dumps([m for m in self.entries.values()
-            if m["id"] not in {b["id"] for b in BUILTINS}],ensure_ascii=False,indent=2),encoding="utf-8")
+        builtin_ids={b["id"] for b in BUILTINS}
+        saved=[m for m in self.entries.values() if m["id"] not in builtin_ids or m.get("managed")]
+        temporary.write_text(json.dumps(saved,ensure_ascii=False,indent=2),encoding="utf-8")
         os.replace(temporary,self.file)
 
     def check(self,entry):
         try:
             path=Path(entry["path"])
-            signature=tuple(sorted((p.name,p.stat().st_size,p.stat().st_mtime_ns) for p in path.iterdir() if p.is_file()))
+            signature=(str(path.resolve()),tuple(sorted(
+                (p.name,p.stat().st_size,p.stat().st_mtime_ns) for p in path.iterdir() if p.is_file())))
             if self.validations.get(entry["id"])!=signature:
                 validate_installation(path,entry.get("files"))
+                entry["installed_revision"]=None
+                manifest=path/"local-manifest.json"
+                if manifest.exists():
+                    pinned=json.loads(manifest.read_text(encoding="utf-8"))
+                    if pinned.get("repo")!=entry["id"] or pinned.get("revision")!=entry.get("revision"):
+                        raise ValueError("Installed manifest differs from the pinned model.")
+                    entry["installed_revision"]=pinned["revision"]
                 self.validations[entry["id"]]=signature
             entry["installed"]=True
-        except (OSError,ValueError,KeyError,TypeError):entry["installed"]=False
+        except (OSError,ValueError,KeyError,TypeError):
+            entry["installed"]=False
+            entry["installed_revision"]=None
 
     def models(self):
         with self.lock:
             for entry in self.entries.values():self.check(entry)
-            return [{"object":"model","owned_by":"local",**m,
+            return [{"object":"model","owned_by":"local",**m,"can_install":not m["installed"],
                      "verification_eligible":m["installed"] and m["runtime_tested"]}
                     for m in self.entries.values()]
 
@@ -73,23 +83,60 @@ class Catalog:
         aliases={"kinit-turbo":BUILTINS[0]["id"],"whisper-large":BUILTINS[1]["id"]}
         with self.lock:
             entry=self.entries.get(aliases.get(model,model))
-            if not entry: raise ValueError("Unknown model. Select an installed model from Models.")
+            if not entry:raise ValueError("Unknown model. Select an installed model from Models.")
             self.check(entry)
-            if not entry["installed"]: raise ValueError("This model installation is missing or incomplete.")
+            if not entry["installed"]:raise ValueError("This model installation is missing or incomplete.")
             return dict(entry)
+
+    def inspection_target(self,value):
+        repo,revision=parse_repository(value)
+        with self.lock:
+            known=self.entries.get(repo)
+            if known:
+                if revision not in ("main",known["revision"]):
+                    raise ValueError("This registered model keeps its pinned revision. Updates require a separate explicit workflow.")
+                revision=known["revision"]
+        return f"https://huggingface.co/{repo}/tree/{revision}"
+
+    def can_install(self,spec):
+        with self.lock:
+            previous=self.entries.get(spec["id"])
+            if previous:
+                if spec["revision"]!=previous["revision"]:
+                    raise ValueError("A different registered revision cannot be replaced.")
+                self.check(previous)
+                if previous["installed"]:raise ValueError("This model is already installed; its revision is preserved.")
+            return previous
+
+    def install(self,spec,publish=None):
+        with self.lock:
+            previous=self.can_install(spec)
+            builtin=next((b for b in BUILTINS if b["id"]==spec["id"]),None)
+            if builtin and not Path(spec["path"]).resolve().is_relative_to(self.managed_root):
+                raise ValueError("Catalog models must install into managed storage.")
+            if publish:publish(previous)
+            metadata={**spec,**(builtin or {}),"path":spec["path"],"managed":True,"installed":True,
+                      "compatible":True,"runtime_tested":False,"quality_verified":False,
+                      "live_supported":bool(builtin and builtin["live_supported"]),"live_ready":False}
+            self.entries[spec["id"]]=metadata
+            self.validations.pop(spec["id"],None)
+            try:self.save()
+            except Exception:
+                if previous is None:self.entries.pop(spec["id"],None)
+                else:self.entries[spec["id"]]=previous
+                self.validations.pop(spec["id"],None)
+                raise
 
     def add(self,spec):
         with self.lock:
-            if spec["id"] in self.entries:
-                raise ValueError("This model is already registered; its installed revision is preserved.")
-            self.entries[spec["id"]]={**spec,"installed":True,"compatible":True,
-                "runtime_tested":False,"quality_verified":False,"live_supported":False,"live_ready":False}
-            try:self.save()
-            except Exception:
-                self.entries.pop(spec["id"],None)
-                raise
+            if spec["id"] in self.entries:raise ValueError("This model is already registered; its revision is preserved.")
+            self.install(spec)
 
     def mark_tested(self,model):
         with self.lock:
+            previous=self.entries[model]["runtime_tested"]
             self.entries[model]["runtime_tested"]=True
-            self.save()
+            try:self.save()
+            except Exception:
+                self.entries[model]["runtime_tested"]=previous
+                raise

@@ -84,7 +84,7 @@ class WhisperEngine:
         self.runtime_warmup_seconds = None
         self._discard_fast_cache()
 
-    def prepare_runtime(self):
+    def prepare_runtime(self, cache_fast=True):
         """Prepare CUDA and the fast CPU cache before readiness; no idle GPU weights."""
         if self.runtime_ready:
             return self.runtime_warmup_seconds
@@ -102,10 +102,11 @@ class WhisperEngine:
         finally:
             # Release unused temporary allocations before reporting readiness.
             self.unload()
-        self._prepare_fast_cpu_cache()
+        if cache_fast:
+            self._prepare_fast_cpu_cache()
         self.runtime_warmup_seconds = round(time.perf_counter() - start, 3)
         self.runtime_ready = True
-        LOG.info("CUDA runtime ready; fast weights cached on CPU, no GPU weights; preparation_seconds=%.3f", self.runtime_warmup_seconds)
+        LOG.info("CUDA runtime ready; fast_cpu_cache=%s, no GPU weights; preparation_seconds=%.3f", cache_fast, self.runtime_warmup_seconds)
         return self.runtime_warmup_seconds
 
     def _prime_cuda(self):
