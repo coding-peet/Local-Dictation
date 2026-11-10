@@ -7,10 +7,12 @@ Transformers Whisper checkpoints in FP16. Model conversion and quantization
 are not used.
 
 **Current status:** an initial native build is published on the development
-machine. Core and API tests pass. A development-build EXE launch was blocked by corporate Microsoft Defender.
-The published app-folder package has not yet been manually launched, so native
-visual, microphone, global-shortcut and cursor-insertion acceptance remain pending. Live transcription is
-experimental: its first measured Slovak result was less accurate than the
+machine. Core and API tests pass. Microsoft Defender blocked both the development
+EXE and a user launch of the published package. Read-only policy inspection
+confirmed the relevant ASR rule is in Warn mode (6), which offers the built-in
+Unblock approval flow. Successful native execution, visual, microphone,
+global-shortcut and cursor-insertion acceptance remain pending. Live transcription
+is experimental: its first measured Slovak result was less accurate than the
 after-recording result.
 
 See [the completion follow-up](docs/development/completion-followup.md) and
@@ -42,7 +44,13 @@ Invoke-RestMethod http://127.0.0.1:48125/health
 & 'C:\AI\LocalDictation\app\LocalDictation.exe' --no-hotkey
 ~~~
 
-This opens Settings. Choose the actual microphone, Dictation model and
+If Windows Security offers Unblock, complete that prompt personally and then
+retry the EXE. On this machine the relevant rule is in Warn mode. Recent Defender
+versions require administrator approval for Unblock; enter credentials only in
+Windows. The permission is temporary (24 hours), not a durable exclusion. See
+[the execution check](docs/development/native-windows.md#native-acceptance-and-execution-check).
+
+A successful launch opens Settings. Choose the actual microphone, Dictation model and
 language. Use Record to Review to check the microphone from this window.
 
 3. For direct dictation, quit TypeWhisper before enabling Ctrl+Shift in

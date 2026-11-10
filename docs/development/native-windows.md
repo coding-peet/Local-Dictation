@@ -80,19 +80,37 @@ both APIs. Keep TypeWhisper's shortcut inactive during Local Dictation acceptanc
 
 ## Native acceptance and execution check
 
-An automated launch of the development EXE under the build directory was
-blocked by corporate Defender rule:
+Both the development EXE and Peter's manual launch of the published app-folder
+EXE triggered Defender event 1121 for this ASR rule:
 
 ~~~text
 01443614-CD74-433A-B99E-2ECDC07BFC25
 ~~~
 
-Defender event 1121 confirmed an administrator-enforced block; ordinary file ACLs
-permit reading/execution. Do not change security policy, add exclusions, create
-an ad-hoc trust certificate, or launch the same application through an alternative
-host to evade the block. The published app-folder package has not been launched; Peter will test it
-manually. If that launch is also blocked, resolve the specific Windows message
-through the normal approved company process.
+Read-only Get-MpPreference and the corresponding Policies registry value both
+reported action 6 (Warn) on 2026-11-10. Event 1121 alone did not distinguish this
+from Block mode. This rule concerns unknown executable trust/prevalence/age;
+relocating the package to Program Files has not been established as a fix.
+
+Use the built-in approval flow when Windows Security offers Unblock:
+
+1. Peter selects Unblock in the Windows Security prompt.
+2. Complete any required administrator authentication directly in Windows.
+3. Retry the same EXE. For the first check use --no-hotkey.
+
+Microsoft documents that Warn-mode Unblock lasts 24 hours. Defender platform
+4.18.26060 and later require administrator approval; the recorded machine version
+is 4.18.26100.4. Unblock is temporary suppression, not a permanent exclusion.
+The agent does not automate Windows Security or authentication dialogs.
+
+If the prompt is unavailable or approval is rejected, report that specific result
+and use the normal company approval process. Do not change policy, add exclusions,
+create an ad-hoc trust certificate, or use an alternative host to evade the rule.
+
+References:
+
+- [Microsoft ASR rule modes](https://learn.microsoft.com/en-us/defender-endpoint/attack-surface-reduction-rules-overview#modes-for-asr-rules)
+- [Executable trust rule](https://learn.microsoft.com/en-us/defender-endpoint/attack-surface-reduction-rules-reference#block-executable-files-from-running-unless-they-meet-a-prevalence-age-or-trusted-list-criterion)
 
 Manual acceptance checklist:
 

@@ -58,11 +58,16 @@ original-format model fixtures.
 
 ## Native acceptance
 
-Native EXE execution, rendered layout, actual mixed-DPI behavior, microphone,
-keyboard hook and cursor insertion remain unverified. The recorded Defender event
-concerned the development EXE under the build directory. The published app-folder
-package has not been launched. Peter will perform that manual launch; the possible
-effect of the executable location has not been independently isolated.
+Successful native EXE execution, rendered layout, actual mixed-DPI behavior,
+microphone, keyboard hook and cursor insertion remain unverified. Peter's manual
+launch of the published app-folder EXE also triggered the same Defender rule.
+Read-only policy inspection now confirms action 6 (Warn), not an unconditional
+Block setting. The built-in Unblock flow is available with administrator approval
+on this Defender version. Peter must complete that Windows prompt personally and
+retry the EXE. See [the execution check](native-windows.md#native-acceptance-and-execution-check).
+
+The possible effect of the executable location has not been independently isolated;
+Program Files is not an established remedy for the observed executable trust rule.
 
 The client remains at:
 

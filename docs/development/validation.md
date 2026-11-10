@@ -36,9 +36,15 @@ ordinary executable ACLs and Microsoft Defender event 1121 for corporate ASR rul
 No native application window opened. Native visual, DPI/high-contrast, real
 microphone, global-hotkey and UIA insertion acceptance were therefore not completed.
 
+Later, Peter's manual launch of the published package triggered the same rule.
+Read-only Get-MpPreference and Policies registry inspection confirmed action 6
+(Warn). Event 1121 alone did not establish an unconditional Block-mode policy.
+The native prerequisite is now the built-in Windows Security Unblock flow and
+its administrator approval, completed by Peter directly in Windows. Successful
+execution remains pending. See [the current procedure](native-windows.md#native-acceptance-and-execution-check).
+
 No policy was changed, exclusion added, certificate created, or alternative
-application host used to evade this block. Official IT execution approval is the
-next prerequisite for those checks. The published artifact is:
+application host used to evade the rule. The published artifact is:
 
 ~~~text
 C:\AI\LocalDictation\app\LocalDictation.exe
@@ -144,6 +150,6 @@ Initially deferred items, completed in the later follow-up:
 - Missing initial built-in models cannot yet be installed through the catalog GUI.
 - Full immutable source transcripts are stored but not separately exposed as full-text views.
 
-Native acceptance remains blocked by corporate execution policy. Codex insertion
+Native acceptance awaits Windows approval and a successful launch. Codex insertion
 is specifically a manual user test. TypeWhisper and production handover have not
 been performed; the existing deployment remains available.
