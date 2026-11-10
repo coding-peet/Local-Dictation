@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parent
-os.environ['HF_HOME'] = str(ROOT / 'models' / '.hf')
+os.environ.setdefault('HF_HOME', str(ROOT / 'models' / '.hf'))
 os.environ['HF_HUB_DISABLE_IMPLICIT_TOKEN'] = '1'
 os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
 os.environ['HF_HUB_DISABLE_XET'] = '1'

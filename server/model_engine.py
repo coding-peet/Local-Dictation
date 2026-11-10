@@ -244,7 +244,7 @@ class WhisperEngine:
         LOG.info("Model activated: %s; load_seconds=%.3f", model_id, elapsed)
         return elapsed
 
-    def transcribe(self, data, prompt, model_id, language):
+    def transcribe(self, data, prompt, model_id, language, cancel_event=None):
         self._last_request_succeeded = False
         model_id, language = resolve_request(model_id, language)
         try:
@@ -284,9 +284,19 @@ class WhisperEngine:
                 if not fast:
                     options["prompt_condition_type"] = "all-segments"
             decoded = []
+            if cancel_event is not None:
+                from transformers import StoppingCriteria, StoppingCriteriaList
+                class Cancellation(StoppingCriteria):
+                    def __call__(self, input_ids, scores, **kwargs):
+                        return cancel_event.is_set()
+                options["stopping_criteria"] = StoppingCriteriaList([Cancellation()])
             for inputs in prepared:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise RuntimeError("Transcription cancelled.")
                 tokens = self.model.generate(**inputs, generation_config=config, **options)
                 decoded.append(self.processor.batch_decode(tokens, skip_special_tokens=True)[0].strip())
+        if cancel_event is not None and cancel_event.is_set():
+            raise RuntimeError("Transcription cancelled.")
         self.torch.cuda.synchronize()
         elapsed = time.perf_counter() - start
         self._last_request_succeeded = True
