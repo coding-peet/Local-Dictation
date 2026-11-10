@@ -37,7 +37,7 @@ public sealed class ApiClient : IDisposable
     readonly HttpClient http;
     public ApiClient(Settings settings)
     {
-        http = new() { BaseAddress = settings.ServerUri(), Timeout = TimeSpan.FromSeconds(45) };
+        http = new(new HttpClientHandler { UseProxy = false }) { BaseAddress = settings.ServerUri(), Timeout = TimeSpan.FromSeconds(45) };
     }
     public async Task<JsonElement> Get(string path, CancellationToken token = default)
     {
@@ -83,6 +83,7 @@ public sealed class SessionStream : IAsyncDisposable
     SessionDeadline? deadline;
     public async Task Connect(Settings settings, CancellationToken token)
     {
+        socket.Options.Proxy=null;
         var clock=Stopwatch.GetTimestamp();
         deadline=new SessionDeadline(()=>Stopwatch.GetElapsedTime(clock),TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(15),TimeSpan.FromSeconds(settings.Live?45:600),TimeSpan.FromMinutes(10));
