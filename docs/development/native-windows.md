@@ -94,7 +94,7 @@ host to evade the block. The published app-folder package has not been launched;
 manually. If that launch is also blocked, resolve the specific Windows message
 through the normal approved company process.
 
-When execution is allowed:
+Manual acceptance checklist:
 
 1. Launch LocalDictation.exe --no-hotkey.
 2. Check wide and narrow Settings/Review windows and display scaling.

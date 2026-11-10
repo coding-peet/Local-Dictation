@@ -20,7 +20,7 @@ using direct insertion for everyday work.
 
 ## Start on the development machine
 
-After official approval to run the executable:
+For the first manual launch, follow these steps:
 
 1. Start the separate session API from this checkout.
 
