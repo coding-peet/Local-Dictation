@@ -26,8 +26,8 @@ The source checkout and installed application are separate sibling trees.
 Do not launch a development binary accidentally in place of the installed
 client. Build/publish scripts must use explicit output paths.
 
-The client runtime directories are prepared. The Windows executable will
-appear only after implementation, build, and acceptance.
+The native executable is published in the app directory. Corporate execution
+policy currently blocks launch; native acceptance is pending. See validation.md.
 
 
 ## Canonical source
@@ -49,8 +49,8 @@ duplicating them.
 ## Build and publish
 
 Use C:\AI\build\Local-Dictation for generated compiler output and test
-artifacts. Future build scripts must isolate outputs by project/workspace
-when more than one worktree is active.
+artifacts. The SDK artifacts layout separates project/configuration output;
+override Build.ps1 -BuildRoot when building another worktree concurrently.
 
 Publish the Windows client to C:\AI\LocalDictation\app.
 
@@ -72,13 +72,14 @@ Peter selected only outstanding Review items with temporary audio.
 - Recordings and normal completed transcripts are not archived.
 - Operational logs do not contain transcript text or audio by default.
 
-Protection and persistence of Review items belong to the implementation.
-The browser concept does not write real user data.
+The native client protects pending Review with current-user Windows DPAPI.
+The browser concept remains a design artifact and writes no real user data.
 
 
 ## Existing deployment
 
-The current endpoint is http://127.0.0.1:8123.
+The existing endpoint is http://127.0.0.1:8123.
+The native client session API is separate at http://127.0.0.1:48125.
 
 Repository initialization does not change its model IDs, weights, startup
 shortcut, process, or TypeWhisper profiles. Test new server behavior on an
