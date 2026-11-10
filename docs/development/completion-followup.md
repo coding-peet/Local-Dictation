@@ -66,6 +66,10 @@ Block setting. The built-in Unblock flow is available with administrator approva
 on this Defender version. Peter must complete that Windows prompt personally and
 retry the EXE. See [the execution check](native-windows.md#native-acceptance-and-execution-check).
 
+After Peter reported confirming Unblock, the agent's normal launch was still
+rejected by the same ASR rule; no Local Dictation window opened. Native acceptance
+remains pending, including a direct user launch after approval.
+
 The possible effect of the executable location has not been independently isolated;
 Program Files is not an established remedy for the observed executable trust rule.
 

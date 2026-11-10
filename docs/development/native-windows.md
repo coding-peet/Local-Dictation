@@ -103,6 +103,11 @@ Microsoft documents that Warn-mode Unblock lasts 24 hours. Defender platform
 is 4.18.26100.4. Unblock is temporary suppression, not a permanent exclusion.
 The agent does not automate Windows Security or authentication dialogs.
 
+Peter reported confirming Unblock. The subsequent normal agent launch at 17:27
+(Europe/Bratislava) was still denied by the same ASR rule. File ACLs grant Users
+read/execute access. An effective allowance and successful native launch therefore
+remain unproven; the next controlled check is Peter's direct Explorer launch.
+
 If the prompt is unavailable or approval is rejected, report that specific result
 and use the normal company approval process. Do not change policy, add exclusions,
 create an ad-hoc trust certificate, or use an alternative host to evade the rule.
