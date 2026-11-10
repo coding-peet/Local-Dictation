@@ -24,7 +24,8 @@ Start with:
 - [Product design](docs/superpowers/specs/2026-11-10-live-dictation-design.md)
 - [Workspace layout](docs/development/workspace-layout.md)
 - [Backend baseline](server/README.md)
-- [UI concept](docs/prototypes/recording-review.html)
+- [Recording banner concept](docs/prototypes/recording-review.html)
+- [Interactive verification concept](docs/prototypes/verification-review.html)
 
 
 ## Source, build output, and installed application

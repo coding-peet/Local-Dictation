@@ -324,9 +324,14 @@ When enabled for a supported primary model:
 2. At stop, finish that transcript and make its outcome available immediately.
 3. Run the selected verification model on the retained original recording,
    using the same source language and no translation or model conversion.
-4. Show the original and the new transcript with suggested differences in
-   Review. Identify both models. Keep the original accessible; a different
-   model is not a guarantee that each changed word is better.
+4. Open an interactive Review: one working transcript with highlighted
+   disputed phrases. The user chooses Dictation, Verification, or custom
+   wording for each region and obtains one assembled result. Keep both model
+   originals accessible; neither disagreement nor a different model proves
+   which wording was actually spoken.
+
+See the focused [interactive verification review design](2026-11-10-interactive-verification-review.md).
+The annotations live in our Review window; destination apps receive plain text.
 
 Do not automatically replace text already delivered to the destination or
 manual edits in Review. The user chooses which reviewed version to copy.
@@ -613,8 +618,10 @@ The checked main foreground/background pairs have text contrast ratios
 between 5.91:1 and 14.40:1. The authenticated local preview serves the updated
 screen with HTTP 200. The production ASR health check remains ready and idle.
 
-Automatic browser rendering inspection was not completed: the computer-use
-tool returned "Computer Use app approval timed out". Native microphone,
+The initial recording-banner rendering inspection was not completed: the
+computer-use tool returned "Computer Use app approval timed out". The later
+interactive verification review layout was observed in Chrome; see its
+focused design for those checks. Native microphone,
 shortcut, insertion, model import, and live API behavior are not implemented
 or verified by this concept. Those require the implementation and acceptance
 work above.

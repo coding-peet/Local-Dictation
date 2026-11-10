@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local Dictation — Interactive Verification Review</title>
+<style>
+:root{color-scheme:light;font-family:"Segoe UI Variable","Segoe UI",system-ui,sans-serif;color:#243247;background:#f1f4f8;--ink:#243247;--muted:#5b687c;--line:#dce3ed;--accent:#255fc6;--amber:#805013;--amber-bg:#fff2d9;--blue:#28588e;--blue-bg:#eaf0fa;--green:#176452;--green-bg:#e7f4ee;--purple:#67429e;--purple-bg:#f0eafa}
+*{box-sizing:border-box}body{margin:0}button,textarea{font:inherit}button{cursor:pointer}button:disabled{cursor:default;opacity:.48}button:focus-visible,textarea:focus-visible,summary:focus-visible{outline:3px solid #4685ef;outline-offset:3px}button svg{width:16px;height:16px;flex:none}svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}h1,h2,h3,p{margin:0}[hidden]{display:none!important}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}.page{max-width:1170px;margin:0 auto;padding:30px 25px}.page-top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}.brand{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:650}.brand-mark{display:grid;place-items:center;width:30px;height:30px;background:#253144;color:#fff;border-radius:9px}.brand-mark svg{width:18px;height:18px}.concept-label{font-size:11px;color:#5b687c;border:1px solid #ccd6e4;border-radius:5px;padding:5px 8px;white-space:nowrap}.review-shell{border:1px solid #cbd6e4;background:#fff;border-radius:13px;box-shadow:0 14px 38px #1d355515;overflow:hidden}.review-header{padding:26px 29px 22px}.heading-row{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}.review-header h1{font-size:24px;line-height:1.3;letter-spacing:-.5px;font-weight:650}.review-header p{margin-top:7px;font-size:13px;line-height:20px;color:var(--muted)}.review-label{display:flex;align-items:center;gap:5px;color:#54647b;font-size:11px;white-space:nowrap;padding-top:6px}.review-label svg{width:13px;height:13px}.models{display:flex;gap:8px 25px;margin-top:20px;flex-wrap:wrap;font-size:12px}.model{display:flex;gap:7px;align-items:center;min-width:0}.model-dot{width:7px;height:7px;background:#6b86ad;border-radius:50%;flex:none}.model-dot.verification{background:#348673}.model-role{color:var(--muted)}.model-name{font-weight:600;color:#364861}.toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:13px 29px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:#f8fafd}.review-count{font-size:13px;line-height:20px;color:#45566e}.review-count strong{font-weight:650;color:#263b57}.small-button{display:inline-flex;align-items:center;gap:6px;border:1px solid #cdd7e5;border-radius:7px;background:#fff;color:#3c4e67;padding:7px 10px;font-size:12px;min-height:33px}.small-button:hover:enabled{background:#edf3ff;border-color:#a9bfdc}.layout{display:grid;grid-template-columns:minmax(0,1fr) 324px}.paper{padding:31px 30px 33px;min-width:0}.paper-heading{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:22px}.paper-heading h2{font-size:12px;letter-spacing:.65px;font-weight:650;color:#52637b;text-transform:uppercase}.paper-heading span{font-size:11px;color:#617189}.document{font-size:18px;line-height:2.12;color:#293b54;white-space:pre-wrap;overflow-wrap:anywhere;min-height:244px}.change{display:inline-block;max-width:100%;font:inherit;line-height:1.65;border:0;border-bottom:2px solid #b77a22;background:var(--amber-bg);color:#704510;border-radius:5px;padding:2px 4px;margin:0 1px;white-space:pre-wrap;box-decoration-break:clone;-webkit-box-decoration-break:clone;text-align:left;overflow-wrap:anywhere}.change:hover{filter:brightness(.97)}.change.active{outline:2px solid #496fbd;outline-offset:3px}.change[data-source=primary]{background:var(--blue-bg);color:var(--blue);border-bottom-color:#7292bf}.change[data-source=verification]{background:var(--green-bg);color:var(--green);border-bottom-color:#44937b}.change[data-source=custom]{background:var(--purple-bg);color:var(--purple);border-bottom-color:#9170bc}.change-number{font-size:9px;line-height:1;font-weight:650;vertical-align:super;padding-right:3px;white-space:nowrap}.empty-chip{font-size:13px;font-style:normal}.legend{display:flex;gap:10px 18px;flex-wrap:wrap;margin-top:25px;padding-top:16px;border-top:1px solid #e7ecf3;font-size:11px;color:#5a6b83}.legend span{display:flex;align-items:center;gap:6px}.legend-mark{width:13px;height:10px;border-bottom:2px solid #b77a22;background:var(--amber-bg);border-radius:2px}.legend-mark.verification{background:var(--green-bg);border-bottom-color:#44937b}.legend-mark.primary{background:var(--blue-bg);border-bottom-color:#7292bf}.legend-mark.custom{background:var(--purple-bg);border-bottom-color:#9170bc}
+.choice-panel{border-left:1px solid var(--line);padding:22px;background:#fafbfd;min-width:0}.choice-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}.choice-top h2{font-size:14px;font-weight:650;color:#30435e}.navigation{display:flex;gap:4px}.arrow{display:grid;place-items:center;width:28px;height:28px;border:1px solid #d5deea;border-radius:6px;color:#536782;background:#fff;padding:4px}.arrow:hover:enabled{background:#eaf1ff}.kind{font-size:11px;color:#62728a;line-height:18px;margin-bottom:17px}.source-card{display:block;width:100%;border:1px solid #cfd9e7;background:#fff;border-radius:9px;text-align:left;padding:13px 14px;margin-top:10px;min-height:84px;color:var(--ink)}.source-card:hover{border-color:#7e9dcc;background:#f8fbff}.source-card.selected{border:2px solid #3672cc;padding:12px 13px;background:#eff5ff}.source-card[data-source=verification].selected{border-color:#348b71;background:#edf7f2}.source-row{display:flex;align-items:center;justify-content:space-between;gap:7px;font-size:11px;line-height:17px;color:#566a84;font-weight:650}.selected-mark{font-size:10px;color:#2d62aa;font-weight:650}.source-card[data-source=verification] .selected-mark{color:#1f735a}.source-text{display:block;font-size:16px;line-height:1.55;margin-top:7px;white-space:pre-wrap;overflow-wrap:anywhere}.source-text.empty{font-size:13px;font-style:italic;color:#68778c}.custom{margin-top:15px;border-top:1px solid #dce4ef;padding-top:13px}.custom summary{font-size:12px;font-weight:600;color:#435977;cursor:pointer;padding:2px 0;line-height:22px}.custom textarea{margin-top:9px;width:100%;resize:vertical;min-height:74px;max-height:170px;border:1px solid #bfcde1;border-radius:7px;background:#fff;color:#2d405c;padding:9px 10px;font-size:15px;line-height:1.55}.custom-hint{font-size:11px;color:#64748a;line-height:17px;margin:5px 0 9px}.custom .small-button{font-size:12px}.selection-status{font-size:11px;color:#526a87;line-height:18px;margin-top:15px;min-height:18px}.next-button{margin-top:15px;width:100%;justify-content:center}.footer{border-top:1px solid var(--line);padding:16px 28px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}.footer-left{display:flex;align-items:center;gap:15px;flex-wrap:wrap}.ghost{display:inline-flex;align-items:center;gap:6px;border:0;background:transparent;font-size:12px;color:#526984;padding:7px 0}.ghost:hover:enabled{color:#2257ac}.finish-hint{font-size:12px;color:#61728a;line-height:20px}.primary-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;background:#255fc6;border:1px solid #255fc6;border-radius:8px;color:#fff;font-size:13px;font-weight:600;padding:10px 15px;min-height:39px}.primary-button:hover:enabled{background:#1b50af}.primary-button:disabled{opacity:.5}.result{padding:0 28px 20px}.result details{border-top:1px solid #e2e8f1;padding-top:13px}.result summary{font-size:12px;color:#526984;cursor:pointer;line-height:23px}.result textarea{display:block;width:100%;min-height:132px;resize:vertical;border:1px solid #c6d3e5;border-radius:8px;margin-top:10px;padding:12px 13px;background:#f9fbff;color:#293c58;font-size:15px;line-height:1.7}.feedback{font-size:12px;line-height:19px;min-height:19px;color:#315e89;margin-top:9px}.preview-note{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:11px;line-height:18px;color:#64748a;margin-top:13px}.preview-note a{color:#4c668f;text-underline-offset:3px}
+@media(max-width:850px){.page{padding:20px 15px}.layout{grid-template-columns:minmax(0,1fr)}.paper{padding:25px;min-height:0}.document{min-height:0}.choice-panel{border-left:0;border-top:1px solid var(--line);padding:22px 25px}.source-card{min-height:73px}.review-header{padding:23px 25px}.toolbar{padding:12px 25px}.footer{padding:15px 25px}.result{padding:0 25px 20px}}
+@media(max-width:480px){.page{padding:14px 9px}.review-shell{border-radius:10px}.review-header{padding:20px 18px}.review-header h1{font-size:22px}.review-label{display:none}.models{gap:7px;margin-top:16px}.model{flex-basis:100%;font-size:11px}.toolbar{padding:12px 18px}.toolbar .small-button{width:100%;justify-content:center}.paper{padding:23px 18px}.document{font-size:17px;line-height:2.2}.paper-heading{margin-bottom:18px}.paper-heading span{font-size:10px}.choice-panel{padding:20px 18px}.footer{padding:14px 18px;gap:10px}.footer-left{justify-content:space-between;width:100%;gap:9px}.primary-button{width:100%}.finish-hint{font-size:11px}.result{padding:0 18px 17px}.legend{gap:8px 13px}.concept-label{font-size:9px}.page-top{margin-bottom:12px}}
+@media(pointer:coarse){button{min-height:40px}.change{padding:5px 4px}.document{line-height:2.6}.arrow{width:40px;height:40px}.custom summary,.result summary{min-height:40px;line-height:40px}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+</style>
+</head>
+<body>
+<svg class="sr-only" aria-hidden="true"><defs>
+<symbol id="icon-lines" viewBox="0 0 24 24"><path d="M5 5h14M5 10h8M5 15h14M5 20h8"/></symbol>
+<symbol id="icon-shield" viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6z"/><path d="m8 12 3 3 5-6"/></symbol>
+<symbol id="icon-left" viewBox="0 0 24 24"><path d="m14 5-7 7 7 7"/></symbol>
+<symbol id="icon-right" viewBox="0 0 24 24"><path d="m10 5 7 7-7 7"/></symbol>
+<symbol id="icon-undo" viewBox="0 0 24 24"><path d="M8 5 3 10l5 5M3 10h10a7 7 0 0 1 0 14" transform="translate(0 -3)"/></symbol>
+<symbol id="icon-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M15 8V3H3v13h5"/></symbol>
+</defs></svg>
+<main class="page" id="verification-review">
+<div class="page-top"><div class="brand"><span class="brand-mark"><svg aria-hidden="true"><use href="#icon-lines"/></svg></span>Local Dictation</div><span class="concept-label">INTERACTIVE CONCEPT</span></div>
+<section class="review-shell" aria-labelledby="review-title">
+<header class="review-header">
+<div class="heading-row"><div><h1 id="review-title">Review verification</h1><p>Choose the wording for each difference.</p></div><span class="review-label"><svg aria-hidden="true"><use href="#icon-shield"/></svg>Local review</span></div>
+<div class="models"><span class="model"><span class="model-dot" aria-hidden="true"></span><span class="model-role">Dictation</span><span class="model-name" id="primary-model-name">KInIT Turbo</span></span><span class="model"><span class="model-dot verification" aria-hidden="true"></span><span class="model-role">Verification</span><span class="model-name" id="verification-model-name">Whisper Large v3</span></span></div>
+</header>
+<div class="toolbar"><p class="review-count" id="review-count" aria-live="polite"></p><button class="small-button" id="keep-remaining" type="button">Keep remaining dictation</button></div>
+<div class="layout">
+<section class="paper" aria-labelledby="transcript-label"><div class="paper-heading"><h2 id="transcript-label">Working transcript</h2><span>Click a highlighted phrase</span></div><div class="document" id="working-document" lang="sk"></div><div class="legend" aria-label="Highlight meaning"><span><i class="legend-mark" aria-hidden="true"></i>To review</span><span><i class="legend-mark primary" aria-hidden="true"></i>Dictation</span><span><i class="legend-mark verification" aria-hidden="true"></i>Verification</span><span><i class="legend-mark custom" aria-hidden="true"></i>Your wording</span></div></section>
+<aside class="choice-panel" aria-labelledby="difference-heading">
+<div class="choice-top"><h2 id="difference-heading"></h2><div class="navigation"><button class="arrow" id="previous-change" aria-label="Previous difference" type="button"><svg aria-hidden="true"><use href="#icon-left"/></svg></button><button class="arrow" id="next-change" aria-label="Next difference" type="button"><svg aria-hidden="true"><use href="#icon-right"/></svg></button></div></div>
+<p class="kind" id="difference-kind"></p>
+<button class="source-card" id="choose-primary" data-source="primary" aria-pressed="false" type="button"><span class="source-row">Keep dictation<span class="selected-mark" id="primary-selected" hidden>Selected</span></span><span class="source-text" id="primary-wording" lang="sk"></span></button>
+<button class="source-card" id="choose-verification" data-source="verification" aria-pressed="false" type="button"><span class="source-row">Use verification<span class="selected-mark" id="verification-selected" hidden>Selected</span></span><span class="source-text" id="verification-wording" lang="sk"></span></button>
+<details class="custom" id="custom-section"><summary>Use my wording</summary><label class="sr-only" for="custom-wording">Your wording for this phrase</label><textarea id="custom-wording" rows="2" lang="sk" spellcheck="false"></textarea><p class="custom-hint">Leave blank to remove this phrase.</p><button class="small-button" id="apply-custom" type="button">Apply my wording</button></details>
+<p class="selection-status" id="selection-status" aria-live="polite"></p>
+<button class="small-button next-button" id="next-unresolved" type="button">Next unreviewed difference<svg aria-hidden="true"><use href="#icon-right"/></svg></button>
+</aside>
+</div>
+<footer class="footer"><div class="footer-left"><button class="ghost" id="undo-choice" type="button" disabled><svg aria-hidden="true"><use href="#icon-undo"/></svg>Undo choice</button><p class="finish-hint" id="finish-hint"></p></div><button class="primary-button" id="copy-reviewed" type="button" disabled><svg aria-hidden="true"><use href="#icon-copy"/></svg>Copy reviewed text</button></footer>
+<div class="result"><details id="result-details"><summary>Resulting text</summary><label class="sr-only" for="merged-output">Plain text assembled from your choices</label><textarea id="merged-output" rows="4" readonly lang="sk"></textarea></details><p class="feedback" id="feedback" role="status" aria-live="polite"></p></div>
+</section>
+<div class="preview-note"><span>Sample comparison · No microphone or destination changes</span><span>Copy writes this example to your clipboard only when clicked.</span></div>
+</main>
+<script id="review-model">
+(function(global){
+'use strict';
+const modelNames=Object.freeze({primary:'KInIT Turbo',verification:'Whisper Large v3'});
+const samplePieces=Object.freeze([
+{text:'Chcem používať '},
+{id:'phrase-1',kind:'replacement',primary:'hlasové API',verification:'vlastné API'},
+{text:' na diktovanie. Rýchly prepis trval '},
+{id:'phrase-2',kind:'replacement',primary:'dve celé päť',verification:'2,5'},
+{text:' sekundy. Text vlož do '},
+{id:'phrase-3',kind:'replacement',primary:'aktívneho okná',verification:'aktívneho okna'},
+{text:'. Nahrávku po spracovaní '},
+{id:'phrase-4',kind:'deletion',primary:'potom ',verification:''},
+{text:'uvoľni'},
+{id:'phrase-5',kind:'insertion',primary:'',verification:' z pamäte'},
+{text:'.'}
+].map(piece=>Object.freeze(piece)));
+function createReview(pieces){
+const data=pieces.map(piece=>Object.freeze(Object.assign({},piece)));
+const regions=data.filter(piece=>piece.id);
+const byId=new Map(regions.map(piece=>[piece.id,piece]));
+if(byId.size!==regions.length)throw new Error('Duplicate region identity.');
+let choices=new Map();const history=[];
+function requireRegion(id){if(!byId.has(id))throw new RangeError('Unknown region.');return byId.get(id);}
+function snapshot(id){history.push({choices:new Map(Array.from(choices,entry=>[entry[0],Object.assign({},entry[1])])),id:id});}
+function decision(id){requireRegion(id);return choices.has(id)?Object.assign({},choices.get(id)):null;}
+function value(id){const region=requireRegion(id),choice=choices.get(id);return !choice?region.primary:choice.source==='custom'?choice.text:region[choice.source];}
+function choose(id,source,text){
+requireRegion(id);
+if(!['primary','verification','custom'].includes(source))throw new TypeError('Unknown source.');
+if(source==='custom'&&typeof text!=='string')throw new TypeError('Custom wording must be text.');
+const next=source==='custom'?{source:source,text:text}:{source:source},previous=choices.get(id);
+if(previous&&previous.source===next.source&&previous.text===next.text)return false;
+snapshot(id);choices.set(id,next);return true;
+}
+function unresolved(){return regions.filter(region=>!choices.has(region.id)).map(region=>region.id);}
+function keepRemaining(id){
+const pending=unresolved();if(!pending.length)return false;
+snapshot(id||pending[0]);pending.forEach(regionId=>choices.set(regionId,{source:'primary'}));return true;
+}
+function undo(){if(!history.length)return null;const item=history.pop();choices=item.choices;return item.id;}
+return Object.freeze({
+regions:Object.freeze(regions),decision:decision,value:value,choose:choose,unresolved:unresolved,keepRemaining:keepRemaining,undo:undo,
+canUndo:()=>history.length>0,text:()=>data.map(piece=>piece.id?value(piece.id):piece.text).join(''),
+original:()=>data.map(piece=>piece.id?piece.primary:piece.text).join(''),
+verified:()=>data.map(piece=>piece.id?piece.verification:piece.text).join('')
+});
+}
+global.VerificationReviewConcept=Object.freeze({createReview:createReview,pieces:samplePieces,modelNames:modelNames});
+})(globalThis);
+</script>
+<script id="review-ui">
+(function(){
+'use strict';
+const root=document.getElementById('verification-review'),el=id=>root.querySelector('#'+id);
+const api=globalThis.VerificationReviewConcept,review=api.createReview(api.pieces);
+const chipElements=new Map(),customDrafts=new Map();let activeId=review.regions[0].id;
+const sourceLabels={primary:'Using dictation',verification:'Using verification',custom:'Using your wording'};
+el('primary-model-name').textContent=api.modelNames.primary;
+el('verification-model-name').textContent=api.modelNames.verification;
+api.pieces.forEach(piece=>{
+if(!piece.id){el('working-document').append(document.createTextNode(piece.text));return;}
+const button=document.createElement('button'),number=document.createElement('span'),wording=document.createElement('span');
+button.type='button';button.className='change';button.dataset.regionId=piece.id;
+number.className='change-number';number.setAttribute('aria-hidden','true');number.textContent=String(review.regions.findIndex(region=>region.id===piece.id)+1);
+button.append(number,wording);button.addEventListener('click',()=>select(piece.id));
+chipElements.set(piece.id,{button:button,wording:wording});el('working-document').append(button);
+});
+function setCandidate(id,text){
+el(id).textContent=text===''?'No text in this version':text;
+el(id).classList.toggle('empty',text==='');
+}
+function refresh(){
+const pending=review.unresolved(),activeIndex=review.regions.findIndex(region=>region.id===activeId),region=review.regions[activeIndex],choice=review.decision(activeId);
+el('review-count').textContent=review.regions.length+' differences · '+(pending.length?pending.length+' to review':'All reviewed');
+review.regions.forEach(item=>{
+const itemChoice=review.decision(item.id),value=review.value(item.id),chip=chipElements.get(item.id);
+chip.button.dataset.source=itemChoice?itemChoice.source:'unresolved';
+chip.button.classList.toggle('active',item.id===activeId);
+chip.button.setAttribute('aria-pressed',String(item.id===activeId));
+chip.wording.textContent=value===''?(itemChoice?'∅ no text':'+ missing words'):value;
+chip.wording.classList.toggle('empty-chip',value==='');
+chip.button.setAttribute('aria-label','Difference '+(review.regions.indexOf(item)+1)+'. '+(itemChoice?sourceLabels[itemChoice.source]:'Not reviewed')+'. '+(value===''?'Empty text':value));
+chip.button.title=itemChoice?sourceLabels[itemChoice.source]:'Choose the wording for this difference';
+});
+el('difference-heading').textContent='Difference '+(activeIndex+1)+' of '+review.regions.length;
+el('difference-kind').textContent={replacement:'The models use different wording.',insertion:'Verification adds words here.',deletion:'Verification leaves these words out.'}[region.kind];
+setCandidate('primary-wording',region.primary);setCandidate('verification-wording',region.verification);
+['primary','verification'].forEach(source=>{
+const selected=!!choice&&choice.source===source;
+el('choose-'+source).classList.toggle('selected',selected);
+el('choose-'+source).setAttribute('aria-pressed',String(selected));
+el(source+'-selected').hidden=!selected;
+});
+el('custom-wording').value=customDrafts.has(activeId)?customDrafts.get(activeId):review.value(activeId);
+el('selection-status').textContent=choice?sourceLabels[choice.source]:'Choose a version, or write your own.';
+el('previous-change').disabled=activeIndex===0;el('next-change').disabled=activeIndex===review.regions.length-1;
+el('next-unresolved').disabled=pending.length===0;el('keep-remaining').disabled=pending.length===0;
+el('undo-choice').disabled=!review.canUndo();el('copy-reviewed').disabled=pending.length>0;
+el('finish-hint').textContent=pending.length?pending.length+(pending.length===1?' difference left to review.':' differences left to review.'):'Ready. Your choices form one final text.';
+el('merged-output').value=review.text();
+}
+function select(id){activeId=id;el('feedback').textContent='';refresh();}
+function choose(source,text){review.choose(activeId,source,text);el('feedback').textContent='';refresh();}
+el('choose-primary').addEventListener('click',()=>choose('primary'));
+el('choose-verification').addEventListener('click',()=>choose('verification'));
+el('custom-wording').addEventListener('input',()=>customDrafts.set(activeId,el('custom-wording').value));
+el('apply-custom').addEventListener('click',()=>choose('custom',el('custom-wording').value));
+el('previous-change').addEventListener('click',()=>select(review.regions[review.regions.findIndex(region=>region.id===activeId)-1].id));
+el('next-change').addEventListener('click',()=>select(review.regions[review.regions.findIndex(region=>region.id===activeId)+1].id));
+el('next-unresolved').addEventListener('click',()=>{const pending=review.unresolved();const index=review.regions.findIndex(region=>region.id===activeId);const next=review.regions.slice(index+1).find(region=>pending.includes(region.id));if(next||pending.length)select(next?next.id:pending[0]);});
+el('keep-remaining').addEventListener('click',()=>{review.keepRemaining(activeId);refresh();});
+el('undo-choice').addEventListener('click',()=>{const restored=review.undo();if(restored)activeId=restored;refresh();el('feedback').textContent='The last choice was undone.';});
+el('copy-reviewed').addEventListener('click',async()=>{
+if(review.unresolved().length)return;
+const text=review.text();
+try{if(!navigator.clipboard||!navigator.clipboard.writeText)throw new Error('Clipboard unavailable');await navigator.clipboard.writeText(text);el('feedback').textContent='Reviewed text copied. Your choices are kept.';}
+catch(error){el('result-details').open=true;el('merged-output').value=text;el('merged-output').focus();el('merged-output').select();el('feedback').textContent='Select the resulting text below and copy it manually.';}
+});
+refresh();
+})();
+</script>
+</body>
+</html>
