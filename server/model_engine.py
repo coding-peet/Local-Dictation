@@ -14,6 +14,7 @@ MODELS = {
     FAST_MODEL_ID: "kinit-turbo",
     PRECISE_MODEL_ID: "whisper-large",
 }
+MODEL_LANGUAGES = {}
 LOG = logging.getLogger("local-asr")
 
 
@@ -30,6 +31,9 @@ def resolve_request(model_id, language):
         if language == "en":
             raise ValueError("The fast Slovak profile does not support English; select the precise SK/EN profile.")
         language = "sk"
+    if MODEL_LANGUAGES.get(model_id)==["en"]:
+        if language not in (None,"en"):raise ValueError("This model supports English only.")
+        language="en"
     return model_id, language
 
 
@@ -40,6 +44,9 @@ def generation_options(model_id, language):
                    return_timestamps=not fast)
     if not fast:
         options["condition_on_prev_tokens"] = True
+    if MODEL_LANGUAGES.get(model_id)==["en"]:
+        options.pop("language",None)
+        options.pop("task",None)
     return options
 
 

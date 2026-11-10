@@ -21,6 +21,7 @@ public sealed class AppController : IDisposable
         public MicrophoneCapture Capture=new();
         public SessionStream Stream=new();
         public WindowsTextDelivery? Delivery;
+        public DestinationStamp Destination;
         public bool CanDeliver, NeedsReview, PrimaryFinal, Completed, Verifying, Recording=true;
         public DateTimeOffset Started=DateTimeOffset.Now;
         public string Text="";
@@ -62,6 +63,7 @@ public sealed class AppController : IDisposable
         if(store.Errors.Count>0)ConnectionMessage=$"{store.Errors.Count} protected Review item(s) could not be read. Files were preserved.";
         input=new GlobalInput();
         input.UserEdited+=()=>active?.Delivery?.Invalidate();
+        input.Cancel+=()=>System.Windows.Application.Current.Dispatcher.InvokeAsync(Cancel);
         input.Toggle+=()=>System.Windows.Application.Current.Dispatcher.InvokeAsync(Toggle);
         RecheckShortcut();
         banner=new BannerWindow(this);
@@ -78,10 +80,10 @@ public sealed class AppController : IDisposable
         {
             if(active!=null)
             {
-                var elapsed=DateTimeOffset.Now-active.Started;
+                var elapsed=TimeSpan.FromSeconds(active.Capture.CapturedBytes/32000.0);
                 DetailLabel=$"{(int)elapsed.TotalMinutes:00}:{elapsed.Seconds:00} · {Models.FirstOrDefault(m=>m.Id==active.Settings.PrimaryModel)?.Name??active.Settings.PrimaryModel}"+
                     (active.CanDeliver?" · At cursor":" · Review")+
-                    (active.Recording?" · Mic active":" · Mic stopped");
+                    " · "+active.Capture.DeviceName+(active.Recording?" · Mic active":" · Mic stopped");
             }
             banner.Refresh();
         };
@@ -116,7 +118,7 @@ public sealed class AppController : IDisposable
             Models=await api.Models();
             Connected=health.GetProperty("ready").GetBoolean();
             ConnectionMessage=Connected?(health.GetProperty("busy").GetBoolean()?"API connected · GPU busy":"API connected · Ready"):
-                "API is not ready. Check the candidate server.";
+                "API preparing or unavailable. Wait for runtime readiness, then Reconnect.";
         }
         catch(Exception ex) when(ex is HttpRequestException or TaskCanceledException or InvalidOperationException or JsonException or ArgumentException)
         {
@@ -141,11 +143,12 @@ public sealed class AppController : IDisposable
         var snapshot=JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(Settings))!;
         var model=Models.FirstOrDefault(m=>m.Id==snapshot.PrimaryModel&&m.Installed);
         if(model==null){ShowSettings();return;}
-        if(snapshot.VerifyAfterRecording&&!Models.Any(m=>m.Id==snapshot.VerificationModel&&m.VerificationEligible&&m.Id!=model.Id))
+        if(snapshot.VerifyAfterRecording&&!Models.Any(m=>m.Id==snapshot.VerificationModel&&ModelEligibility.CanVerify(m,snapshot.Language,model)&&m.Id!=model.Id))
         {ConnectionMessage="Choose an installed, runtime-tested verification model distinct from Dictation.";ShowSettings();Changed?.Invoke();return;}
         if(active?.Verifying==true)active.Cancel.Cancel();
-        var run=new Run(snapshot);
-        active=run;
+        var destination=input.Epoch.Capture((long)WindowsTextDelivery.ForegroundWindow);
+        var run=new Run(snapshot){Destination=destination};
+        active=run;input.SessionActive=true;
         StateLabel="Preparing";DetailLabel="Opening the selected microphone…";hideAt=DateTimeOffset.MinValue;
         Changed?.Invoke();banner.Refresh();
         _=Record(run);
@@ -158,11 +161,20 @@ public sealed class AppController : IDisposable
         {
             run.Capture.Faulted+=message=>System.Windows.Application.Current.Dispatcher.BeginInvoke(()=>
             {if(active!=run)return;ConnectionMessage=message;run.NeedsReview=true;run.Cancel.Cancel();Changed?.Invoke();});
+            run.Capture.LimitReached+=()=>System.Windows.Application.Current.Dispatcher.InvokeAsync(()=>
+            {if(active!=run)return;run.Recording=false;StateLabel="Finishing · recording limit";Changed?.Invoke();});
             run.Capture.Start(run.Settings.MicrophoneId);
             run.Started=DateTimeOffset.Now;
             if(run.Settings.InsertAtCursor)
             {
-                try {run.Delivery=await automation.Run(token=>WindowsTextDelivery.Capture(token));run.CanDeliver=true;}
+                try
+                {
+                    if(!input.FocusTrackingAvailable)throw new InvalidOperationException("Focus tracking unavailable.");
+                    var delivery=await automation.Run(token=>WindowsTextDelivery.Capture(token));
+                    if(!input.Epoch.CanAdopt(run.Destination,(long)WindowsTextDelivery.ForegroundWindow))
+                    {delivery.Invalidate();throw new InvalidOperationException("The initial destination changed.");}
+                    run.Delivery=delivery;run.CanDeliver=true;
+                }
                 catch(Exception){run.Review.Reason="The original cursor could not be validated. Review before inserting.";run.NeedsReview=true;}
             }
             else {run.NeedsReview=true;run.Review.Reason="Review before inserting";}
@@ -210,7 +222,7 @@ public sealed class AppController : IDisposable
             }
             if(active==run)
             {
-                active=null;hideAt=DateTimeOffset.Now.AddSeconds(6);
+                active=null;input.SessionActive=false;hideAt=DateTimeOffset.Now.AddSeconds(6);
                 if(StateLabel!="Unavailable")StateLabel=run.NeedsReview?"Review ready":"Inserted";
                 DetailLabel=run.NeedsReview?"Open Review to choose or copy the wording.":"Dictation completed.";
                 if(run.NeedsReview&&run.Text.Length>0)OpenReview(run.Review,false);
@@ -227,13 +239,18 @@ public sealed class AppController : IDisposable
             try {await run.Stream.SendAudio(frame,run.Cancel.Token);}
             finally {Array.Clear(frame);}
         }
-        await run.Stream.Send(new {type="finish"},run.Cancel.Token);
+        await run.Stream.Finish(run.Cancel.Token);
     }
 
     async Task Handle(Run run,JsonElement e)
     {
         var type=e.GetProperty("type").GetString();
-        if(type is "transcript.updated" or "transcript.final")
+        if(type=="recording.limit_reached")
+        {
+            run.Recording=false;run.Capture.Stop();
+            if(active==run)StateLabel="Finishing · recording limit";
+        }
+        else if(type is "transcript.updated" or "transcript.final")
         {
             run.Text=e.GetProperty("text").GetString()??"";
             run.Review.SetPrimary(run.Text);

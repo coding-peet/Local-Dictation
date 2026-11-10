@@ -1,25 +1,27 @@
 namespace LocalDictation.Core;
 
-/// <summary>Toggle once on release of a modifier-only Ctrl+Shift chord.</summary>
+/// <summary>Toggle once when a modifier-only Ctrl+Shift chord ends.</summary>
 public sealed class ModifierChord
 {
-    readonly HashSet<int> down = [];
-    bool armed, other;
-    static bool Ctrl(int key) => key is 0x11 or 0xA2 or 0xA3;
-    static bool Shift(int key) => key is 0x10 or 0xA0 or 0xA1;
-    public bool Update(int key, bool pressed)
+    readonly HashSet<int> down=[];
+    bool armed,contaminated;
+    static bool Ctrl(int key)=>key is 0x11 or 0xA2 or 0xA3;
+    static bool Shift(int key)=>key is 0x10 or 0xA0 or 0xA1;
+    bool Combo=>down.Any(Ctrl)&&down.Any(Shift);
+    public bool Update(int key,bool pressed)
     {
-        if (pressed)
+        var before=Combo;
+        if(pressed)
         {
-            if (!down.Add(key)) return false;
-            if (!Ctrl(key) && !Shift(key)) other = true;
-            if (down.Any(Ctrl) && down.Any(Shift)) armed = true;
+            if(!down.Add(key))return false;
+            if(!Ctrl(key)&&!Shift(key)&&armed)contaminated=true;
+            if(!before&&Combo){armed=true;contaminated=down.Any(k=>!Ctrl(k)&&!Shift(k));}
             return false;
         }
         down.Remove(key);
-        var trigger = armed && !other && (Ctrl(key) || Shift(key));
-        if (Ctrl(key) || Shift(key)) armed = false;
-        if (!down.Any(Ctrl) && !down.Any(Shift)) other = false;
+        var trigger=armed&&before&&!Combo&&!contaminated&&!down.Any(k=>!Ctrl(k)&&!Shift(k));
+        if(before&&!Combo)armed=false;
+        if(!down.Any(Ctrl)&&!down.Any(Shift))contaminated=false;
         return trigger;
     }
 }

@@ -1,5 +1,6 @@
 """Replay local audio at real-time pace; private results stay in the chosen output directory."""
 import argparse
+from collections import Counter
 import asyncio
 import json
 from pathlib import Path
@@ -49,7 +50,7 @@ async def run(args):
     output.parent.mkdir(parents=True,exist_ok=True)
     output.write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
     print(json.dumps({k:v for k,v in result.items() if k!="events"}))
-    print("event_types:",[e["type"] for e in events])
+    print("event_counts:",dict(Counter(e["type"] for e in events)))
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)

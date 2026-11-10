@@ -12,6 +12,7 @@ public sealed class WindowsTextDelivery
     readonly nint window;
     readonly TargetGuard guard;
     int invalid;
+    public static nint ForegroundWindow=>GetForegroundWindow();
     public string Reason { get; private set; } = "";
     public string InsertedText => guard.OwnedText;
 
@@ -52,7 +53,7 @@ public sealed class WindowsTextDelivery
         var element = AutomationElement.FocusedElement ?? throw new InvalidOperationException("No editable field has focus.");
         if (!allowOwnProcess && element.Current.ProcessId == Environment.ProcessId)
             throw new InvalidOperationException("Choose a destination outside Local Dictation; this recording will open in Review.");
-        if (Integrity(element.Current.ProcessId) > Integrity(Environment.ProcessId))
+        if (!TargetPrivileges.CanInsert(Integrity(element.Current.ProcessId), Integrity(Environment.ProcessId)))
             throw new InvalidOperationException("The destination is elevated. Continue in Review.");
         var info = Inspect(element);
         token.ThrowIfCancellationRequested();

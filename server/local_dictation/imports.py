@@ -10,6 +10,7 @@ import uuid
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 from .downloads import inspect_repository, download_snapshot
+from .installation import validate_installation
 
 class Imports:
     def __init__(self,config,catalog):
@@ -57,15 +58,20 @@ class Imports:
         if not stage.is_relative_to(root) or not final.is_relative_to(root):
             job.update(state="failed",message="Invalid installation path.")
             return
+        published=False
+        registered=False
         try:
             job["state"]="downloading"
             def progress(done,total): job["downloaded_bytes"]=done
             download_snapshot(spec,stage,job["cancel"],progress)
             if job["cancel"].is_set(): raise InterruptedError()
+            validate_installation(stage,spec["files"])
             if final.exists(): raise ValueError("An installation already exists at this revision.")
             root.mkdir(parents=True,exist_ok=True)
             os.replace(stage,final)
+            published=True
             self.catalog.add({**spec,"path":str(final)})
+            registered=True
             job["state"]="completed"
         except InterruptedError:
             job.update(state="cancelled",message="Download cancelled.")
@@ -73,6 +79,7 @@ class Imports:
             job.update(state="failed",message="Download or installation failed; existing models were preserved.")
         finally:
             if stage.exists(): shutil.rmtree(stage)
+            if published and not registered and final.exists():shutil.rmtree(final)
 
     async def status(self,request):
         job=self.jobs.get(request.path_params["job"])

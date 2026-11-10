@@ -50,7 +50,7 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
                          {"model":"fast"}, self.sender([]))
         with self.assertRaises(ValueError): s.feed(b"x")
         s.feed(b"\0" * 32000)
-        with self.assertRaises(ValueError): s.feed(b"\0\0")
+        self.assertFalse(s.feed(b"\0\0"))
         s.cancel()
         await s.run()
         self.assertEqual(s.retained_bytes, 0)

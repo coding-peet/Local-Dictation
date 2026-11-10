@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import threading
+from .installation import validate_installation
 
 BUILTINS = [
     {"id":"kinit/whisper-large-v3-turbo-sk","name":"KInIT Turbo · Slovak","folder":"kinit-turbo",
@@ -19,9 +20,13 @@ class Catalog:
         self.file=config.data_root/"models.json"
         self.lock=threading.RLock()
         self.entries={}
+        self.validations={}
         for model in BUILTINS:
             path=config.model_root/model["folder"]
-            installed=(path/"config.json").exists()
+            try:
+                validate_installation(path)
+                installed=True
+            except (OSError,ValueError,KeyError,TypeError):installed=False
             pinned=False
             try:
                 manifest=json.loads((path/"local-manifest.json").read_text(encoding="utf-8"))
@@ -34,7 +39,10 @@ class Catalog:
             saved=json.loads(self.file.read_text(encoding="utf-8"))
             for model in saved:
                 if model["id"] not in self.entries:
-                    model["installed"]=Path(model["path"]).is_dir()
+                    try:
+                        validate_installation(model["path"],model.get("files"))
+                        model["installed"]=True
+                    except (OSError,ValueError,KeyError,TypeError):model["installed"]=False
                     self.entries[model["id"]]=model
 
     def save(self):
@@ -44,8 +52,19 @@ class Catalog:
             if m["id"] not in {b["id"] for b in BUILTINS}],ensure_ascii=False,indent=2),encoding="utf-8")
         os.replace(temporary,self.file)
 
+    def check(self,entry):
+        try:
+            path=Path(entry["path"])
+            signature=tuple(sorted((p.name,p.stat().st_size,p.stat().st_mtime_ns) for p in path.iterdir() if p.is_file()))
+            if self.validations.get(entry["id"])!=signature:
+                validate_installation(path,entry.get("files"))
+                self.validations[entry["id"]]=signature
+            entry["installed"]=True
+        except (OSError,ValueError,KeyError,TypeError):entry["installed"]=False
+
     def models(self):
         with self.lock:
+            for entry in self.entries.values():self.check(entry)
             return [{"object":"model","owned_by":"local",**m,
                      "verification_eligible":m["installed"] and m["runtime_tested"]}
                     for m in self.entries.values()]
@@ -55,7 +74,8 @@ class Catalog:
         with self.lock:
             entry=self.entries.get(aliases.get(model,model))
             if not entry: raise ValueError("Unknown model. Select an installed model from Models.")
-            if not entry["installed"]: raise ValueError("This model is not installed.")
+            self.check(entry)
+            if not entry["installed"]: raise ValueError("This model installation is missing or incomplete.")
             return dict(entry)
 
     def add(self,spec):
@@ -64,7 +84,10 @@ class Catalog:
                 raise ValueError("This model is already registered; its installed revision is preserved.")
             self.entries[spec["id"]]={**spec,"installed":True,"compatible":True,
                 "runtime_tested":False,"quality_verified":False,"live_supported":False,"live_ready":False}
-            self.save()
+            try:self.save()
+            except Exception:
+                self.entries.pop(spec["id"],None)
+                raise
 
     def mark_tested(self,model):
         with self.lock:

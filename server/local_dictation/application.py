@@ -5,6 +5,7 @@ from email.parser import BytesParser
 import json
 import os
 import threading
+import time
 from urllib.parse import urlsplit
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -13,6 +14,8 @@ from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocketDisconnect
 from .config import RuntimeConfig
 from .sessions import AudioSession, Admission, BusyError
+from .workers import run_worker, join
+from .installation import supports_language
 
 def error(message, status=400):
     return JSONResponse({"error":{"message":message,"type":"invalid_request_error"}},status_code=status)
@@ -42,8 +45,11 @@ def create_app(config, engine, catalog=None):
     async def health(request):
         runtime=engine.status() if hasattr(engine,"status") else {}
         return JSONResponse({"service":"local-dictation","protocol_version":1,"process_id":os.getpid(),
-                             "ready":not admission.unavailable,"busy":admission.lock.locked(),
+                             "ready":not admission.unavailable and runtime.get("ready",True),"busy":admission.lock.locked(),
                              "phase":admission.kind,"max_seconds":config.max_seconds,"runtime":runtime})
+
+    def ready():
+        return not admission.unavailable and (not hasattr(engine,"status") or engine.status().get("ready",True))
 
     async def models(request):
         return JSONResponse({"object":"list","data":catalog.models()})
@@ -64,8 +70,9 @@ def create_app(config, engine, catalog=None):
             if verifier == model["id"]: raise ValueError("Choose a different verification model.")
         language=options.get("language","sk")
         if language not in ("sk","en","auto"): raise ValueError("Select sk, en or auto.")
-        if model.get("languages") == ["sk"] and language == "en":
-            raise ValueError("This model supports Slovak. Choose a multilingual model for English.")
+        language=supports_language(model,language)
+        if verifier:
+            supports_language(verified,language)
         return {**options,"model":model["id"],"verification_model":verifier,
                 "live":live,"language":language}
 
@@ -77,19 +84,28 @@ def create_app(config, engine, catalog=None):
             raw = await asyncio.wait_for(ws.receive_text(),timeout=10)
             if len(raw)>8192: raise ValueError("Start message is too large.")
             options=validate(json.loads(raw))
-            if admission.unavailable: raise BusyError("API cleanup failed. Restart the candidate server.")
+            if not ready(): raise BusyError("The API is preparing or unavailable. Wait for /health ready before recording.")
             session=AudioSession(config,engine,options,ws.send_json,admission)
             await admission.acquire("primary",session.cancelled)
             owned=True
             runner=asyncio.create_task(session.run())
+            session_start=time.monotonic()
             while not runner.done():
-                receive=asyncio.create_task(ws.receive())
+                remaining=config.max_seconds-(time.monotonic()-session_start)
+                if remaining<=0 and not session.finishing:
+                    session.limit_reached=True;session.finish()
+                receive=asyncio.create_task(ws.receive() if session.finishing else
+                    asyncio.wait_for(ws.receive(),min(config.idle_timeout_seconds,max(0.001,remaining))))
                 done,_=await asyncio.wait((receive,runner),return_when=asyncio.FIRST_COMPLETED)
                 if runner in done:
                     receive.cancel()
                     await asyncio.gather(receive,return_exceptions=True)
                     break
-                message=receive.result()
+                try:message=receive.result()
+                except TimeoutError:
+                    if time.monotonic()-session_start>=config.max_seconds:
+                        session.limit_reached=True;session.finish();continue
+                    raise
                 if message["type"] == "websocket.disconnect":
                     session.cancel()
                     break
@@ -102,12 +118,12 @@ def create_app(config, engine, catalog=None):
                     elif control.get("type") == "cancel": session.cancel()
                     else: raise ValueError("Unknown control message.")
             if runner:
-                await runner
+                await asyncio.shield(runner)
         except (WebSocketDisconnect, asyncio.CancelledError):
             if session: session.cancel()
         except (ValueError, BusyError, TimeoutError) as exc:
             if session: session.cancel()
-            try: await ws.send_json({"type":"session.error","message":str(exc)})
+            try: await ws.send_json({"type":"session.error","message":"Audio stream stalled. Received text is preserved." if isinstance(exc,TimeoutError) else str(exc)})
             except Exception: pass
         except Exception:
             if session: session.cancel()
@@ -116,7 +132,8 @@ def create_app(config, engine, catalog=None):
         finally:
             if runner:
                 # Cancellation is cooperative. Join before releasing model ownership.
-                await asyncio.gather(runner,return_exceptions=True)
+                try:await join(runner)
+                except (asyncio.CancelledError,Exception):pass
             if owned: admission.release()
             try: await ws.close()
             except Exception: pass
@@ -124,7 +141,7 @@ def create_app(config, engine, catalog=None):
     async def batch(request):
         cancelled=threading.Event()
         try:
-            if admission.unavailable: raise BusyError("API unavailable after cleanup failure.")
+            if not ready(): raise BusyError("The API is preparing or unavailable.")
             async with admission.own("primary",cancelled):
                 tested_model=None
                 try:
@@ -153,23 +170,18 @@ def create_app(config, engine, catalog=None):
                             fields[name]=value.decode("utf-8")
                     if len(files)!=1 or not files[0]: raise ValueError("Exactly one audio file is required.")
                     model=catalog.require(fields.get("model",""))
+                    language=supports_language(model,fields.get("language","auto"))
                     fmt=fields.get("response_format","json")
                     if fmt not in ("json","text","verbose_json"): raise ValueError("Unsupported response format.")
-                    work=asyncio.create_task(asyncio.to_thread(engine.transcribe,files[0],fields.get("prompt",""),
-                                          model["id"],fields.get("language","auto"),cancelled))
-                    try:
-                        result=await asyncio.shield(work)
-                    except asyncio.CancelledError:
-                        cancelled.set()
-                        await asyncio.gather(work,return_exceptions=True)
-                        raise
+                    result=await run_worker(engine.transcribe,files[0],fields.get("prompt",""),
+                        model["id"],language,cancelled,cancelled=cancelled,timeout=config.inference_timeout_seconds)
                     if request.url.path.endswith("/test"):
                         tested_model=model["id"]
                     if fmt=="text": return PlainTextResponse(result["text"])
                     return JSONResponse({"text":result["text"]} if fmt=="json" else
                                         {"task":"transcribe",**result,"segments":[]})
                 finally:
-                    try: await asyncio.to_thread(engine.unload)
+                    try: await run_worker(engine.unload,cancelled=cancelled)
                     except Exception:
                         admission.unavailable=True
                         raise RuntimeError("Model cleanup failed.") from None

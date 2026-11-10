@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Http.Json;
 using System.Net.WebSockets;
 using System.Text.Json;
@@ -79,13 +80,22 @@ public sealed class SessionStream : IAsyncDisposable
     readonly SemaphoreSlim sendGate = new(1);
     string? session;
     int revision;
+    SessionDeadline? deadline;
     public async Task Connect(Settings settings, CancellationToken token)
     {
+        var clock=Stopwatch.GetTimestamp();
+        deadline=new SessionDeadline(()=>Stopwatch.GetElapsedTime(clock),TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(15),TimeSpan.FromSeconds(settings.Live?45:600),TimeSpan.FromMinutes(10));
         var uri = new UriBuilder(settings.ServerUri()) { Scheme = "ws", Path = "/v1/audio/sessions" }.Uri;
         await socket.ConnectAsync(uri, token);
         await Send(new { type = "start", protocol_version = 1, model = settings.PrimaryModel,
             language = settings.Language, live = settings.Live,
             verification_model = settings.VerifyAfterRecording ? settings.VerificationModel : null }, token);
+    }
+    public async Task Finish(CancellationToken token)
+    {
+        deadline?.Finish();
+        await Send(new {type="finish"},token);
     }
     public async Task Send(object data, CancellationToken token) =>
         await SendBytes(JsonSerializer.SerializeToUtf8Bytes(data, Protocol.Json), WebSocketMessageType.Text, token);
@@ -103,7 +113,8 @@ public sealed class SessionStream : IAsyncDisposable
         using var message = new MemoryStream();
         while (!token.IsCancellationRequested && socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
         {
-            var result = await socket.ReceiveAsync(buffer.AsMemory(), token);
+            var result = await socket.ReceiveAsync(buffer.AsMemory(), token).AsTask().WaitAsync(
+                deadline?.Remaining()??TimeSpan.FromSeconds(10),token);
             if (result.MessageType == WebSocketMessageType.Close) break;
             if (result.MessageType != WebSocketMessageType.Text) throw new InvalidDataException("Unexpected API frame.");
             message.Write(buffer, 0, result.Count);
@@ -120,6 +131,7 @@ public sealed class SessionStream : IAsyncDisposable
                     throw new InvalidDataException("Stale or foreign session revision.");
                 revision = next;
             }
+            deadline?.Observe(e.GetProperty("type").GetString()??"");
             await handle(e);
             if (e.GetProperty("type").GetString() is "session.completed" or "session.cancelled" or "session.error") break;
         }

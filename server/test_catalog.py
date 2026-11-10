@@ -20,7 +20,14 @@ class CatalogTests(unittest.TestCase):
             if "/api/models/" in url:
                 return {"sha":"a"*40,"siblings":[{"rfilename":"config.json","size":100},
                     {"rfilename":"preprocessor_config.json","size":100},
-                    {"rfilename":"model.safetensors","size":200}]}
+                    {"rfilename":"model.safetensors","size":200},
+                    {"rfilename":"generation_config.json","size":100},
+                    {"rfilename":"tokenizer_config.json","size":100},
+                    {"rfilename":"vocab.json","size":100},{"rfilename":"merges.txt","size":100}]}
+            if url.endswith("/generation_config.json"):
+                return {"is_multilingual":True,"lang_to_id":{"<|sk|>":1,"<|en|>":2}}
+            if url.endswith("/tokenizer_config.json"):
+                return {"tokenizer_class":"WhisperTokenizer"}
             if url.endswith("/config.json"):
                 return {"model_type":"whisper","architectures":["WhisperForConditionalGeneration"],
                         **({"auto_map":{"AutoModel":"bad.code"}} if remote_code else {})}
@@ -30,7 +37,7 @@ class CatalogTests(unittest.TestCase):
     def test_original_whisper_only_and_pinned_size(self):
         spec=inspect_repository("openai/whisper-tiny",self.metadata())
         self.assertEqual(spec["revision"],"a"*40)
-        self.assertEqual(spec["download_bytes"],400)
+        self.assertEqual(spec["download_bytes"],800)
         with self.assertRaises(ValueError):
             inspect_repository("openai/whisper-tiny",self.metadata(True))
 
@@ -52,7 +59,8 @@ class CatalogTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             c=Catalog(RuntimeConfig(Path(d),Path(d)/"data"))
             folder=Path(d)/"new"
-            folder.mkdir()
+            from test_model_files import make_model
+            make_model(folder)
             c.add({"id":"test/whisper","revision":"a"*40,"path":str(folder),"name":"Test",
                    "languages":["sk","en","auto"]})
             c2=Catalog(c.config)

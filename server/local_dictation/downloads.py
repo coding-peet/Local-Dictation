@@ -6,6 +6,7 @@ import threading
 from urllib.error import HTTPError
 from urllib.parse import quote, urlsplit, unquote
 from urllib.request import Request, urlopen
+from .installation import required_names, languages_from_metadata
 
 REPO = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
 FILES = {"config.json","generation_config.json","preprocessor_config.json","tokenizer.json",
@@ -52,7 +53,13 @@ def inspect_repository(value, fetch=get_json):
     processor=fetch(base+"preprocessor_config.json")
     if processor.get("sampling_rate")!=16000 or processor.get("auto_map"):
         raise ValueError("Expected a built-in Whisper 16 kHz audio processor.")
+    generation=fetch(base+"generation_config.json")
+    languages=languages_from_metadata(config,generation)
+    tokenizer=fetch(base+"tokenizer_config.json")
+    if tokenizer.get("auto_map") or tokenizer.get("tokenizer_class") not in (None,"WhisperTokenizer","WhisperTokenizerFast"):
+        raise ValueError("Unsupported remote-code tokenizer.")
     siblings={s["rfilename"]:s for s in info.get("siblings",[]) if "rfilename" in s}
+    required_names(siblings)
     weights=[]
     if "model.safetensors" in siblings:
         weights=["model.safetensors"]
@@ -76,7 +83,7 @@ def inspect_repository(value, fetch=get_json):
     if size>20*1024**3: raise ValueError("This original model exceeds the 20 GiB import limit.")
     return {"id":repo,"revision":sha,"files":files,"download_bytes":size,
             "compatible":True,"runtime_tested":False,"quality_verified":False,"live_ready":False,
-            "name":repo,"languages":["sk","en","auto"]}
+            "name":repo,"languages":languages}
 
 def download_snapshot(spec,stage,cancelled,progress,opener=urlopen):
     stage=Path(stage)

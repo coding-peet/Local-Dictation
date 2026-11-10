@@ -1,5 +1,10 @@
 # Existing batch ASR backend
 
+The native client uses the additional api_main.py session server and
+local_dictation package on candidate port 48125. See
+[session API documentation](../docs/development/api.md). The legacy batch
+service described below remains available separately.
+
 ## What is included
 
 This directory contains the working Python batch-server source imported

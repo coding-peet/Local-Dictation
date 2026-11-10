@@ -56,6 +56,7 @@ public sealed class SettingsWindow : Window
         controller.Changed+=Refresh;
         Closed+=(_,_)=>{controller.Changed-=Refresh;poll.Stop();};
         poll.Tick+=(_,_)=>_ = PollDownload();
+        language.SelectionChanged+=(_,_)=>{if(!loading)UpdateModelChoices();};
         primary.SelectionChanged+=(_,_)=>{if(!loading)UpdateModelChoices();};
         repository.TextChanged+=(_,_)=>{inspection=null;download.IsEnabled=false;};
         Refresh(true);
@@ -154,7 +155,7 @@ public sealed class SettingsWindow : Window
     {
         var selected=primary.SelectedItem as ModelInfo;
         var previous=verifier.SelectedValue as string??controller.Settings.VerificationModel;
-        verifier.ItemsSource=controller.Models.Where(m=>m.VerificationEligible&&m.Id!=selected?.Id).ToList();
+        verifier.ItemsSource=controller.Models.Where(m=>selected!=null&&m.Id!=selected.Id&&ModelEligibility.CanVerify(m,language.SelectedItem as string??"sk",selected)).ToList();
         if(previous!=null)verifier.SelectedValue=previous;
         else if(verifier.Items.Count>0)verifier.SelectedIndex=0;
         live.IsEnabled=selected?.LiveSupported==true;
@@ -176,7 +177,7 @@ public sealed class SettingsWindow : Window
             if(selectedLanguage!="auto"&&!model.Languages.Contains(selectedLanguage))
                 throw new ArgumentException("The selected model does not support this language.");
             var verification=verifier.SelectedValue as string;
-            if(verify.IsChecked==true&&verification==null)throw new ArgumentException("Choose an eligible Verification model.");
+            if(verify.IsChecked==true&&(verification==null||!controller.Models.Any(m=>m.Id==verification&&ModelEligibility.CanVerify(m,selectedLanguage,model))))throw new ArgumentException("Choose an eligible Verification model.");
             controller.SaveSettings(new Settings{
                 Endpoint=endpoint.Text.Trim(),MicrophoneId=microphone.SelectedValue as string,
                 PrimaryModel=model.Id,VerificationModel=verification,

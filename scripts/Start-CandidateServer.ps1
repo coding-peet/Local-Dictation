@@ -27,4 +27,4 @@ $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $script = Join-Path $repoRoot 'server\api_main.py'
 $process = Start-Process py -ArgumentList @('-B', ('"' + $script + '"'), '--port', $Port) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $logDirectory "api-$stamp.stdout.log") -RedirectStandardError (Join-Path $logDirectory "api-$stamp.stderr.log")
 Write-Output "Candidate launcher PID: $($process.Id); loopback port: $Port"
-Write-Output 'Warm-up takes several seconds. Check /health before recording. Production was not restarted.'
+Write-Output 'Warm-up can take one to two minutes. Check /health ready before recording. Production was not restarted.'

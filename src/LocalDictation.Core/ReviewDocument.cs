@@ -21,6 +21,7 @@ public sealed class ReviewDocument
     public List<ReviewSnapshot> History { get; set; } = [];
     public string? ManualFinalDraft { get; set; }
     public string? PreviousManualDraft { get; set; }
+    public List<string> ManualDraftArchive { get; set; } = [];
 
     [JsonIgnore] public int UnresolvedCount => Pieces.Count(p => p.Different && !Choices.ContainsKey(p.Id));
     [JsonIgnore] public string WorkingText => string.Concat(Pieces.Select(p =>
@@ -56,14 +57,17 @@ public sealed class ReviewDocument
         var previous = History[^1];
         History.RemoveAt(History.Count - 1);
         Choices = new(previous.Choices);
-        ManualFinalDraft = previous.ManualFinalDraft;
+        // Choice history never replaces a later authoritative manual edit.
     }
 
     public void RebuildDraft()
     {
-        Remember();
-        PreviousManualDraft = ManualFinalDraft;
-        ManualFinalDraft = null;
+        if(ManualFinalDraft!=null)
+        {
+            if(!ManualDraftArchive.Contains(ManualFinalDraft))ManualDraftArchive.Add(ManualFinalDraft);
+            PreviousManualDraft=ManualFinalDraft;
+        }
+        ManualFinalDraft=null;
     }
 
     public void SetPrimary(string text)

@@ -9,7 +9,16 @@ public sealed class GlobalInput : IDisposable
 {
     public static readonly nuint InjectionTag = 0x4C444943;
     readonly Hook keyboardCallback, mouseCallback;
-    readonly ModifierChord chord = new();
+    readonly InputCommands commands = new();
+    public DestinationEpoch Epoch {get;}=new();
+    public bool SessionActive {get;set;}
+    public bool FocusTrackingAvailable=>focusHook!=0;
+    public event Action? Cancel;
+    readonly FocusCallback focusCallback;
+    nint focusHook;
+    delegate void FocusCallback(nint hook,uint evt,nint hwnd,int obj,int child,uint thread,uint time);
+    [DllImport("user32.dll")] static extern nint SetWinEventHook(uint min,uint max,nint module,FocusCallback callback,uint process,uint thread,uint flags);
+    [DllImport("user32.dll")] static extern bool UnhookWinEvent(nint hook);
     nint keyboard, mouse;
     public event Action? Toggle;
     public event Action? UserEdited;
@@ -27,6 +36,8 @@ public sealed class GlobalInput : IDisposable
 
     public GlobalInput()
     {
+        focusCallback=(_,_,_,_,_,_,_)=>ObserveEdit();
+        focusHook=SetWinEventHook(0x8005,0x8005,0,focusCallback,0,0,0);
         keyboardCallback = Keyboard;
         mouseCallback = Mouse;
         keyboard = SetWindowsHookEx(13, keyboardCallback, GetModuleHandle(null), 0);
@@ -46,8 +57,11 @@ public sealed class GlobalInput : IDisposable
             {
                 var pressed = message == 0x100 || message == 0x104;
                 if (pressed && key.Key is not (0x10 or 0x11 or 0xA0 or 0xA1 or 0xA2 or 0xA3))
-                    UserEdited?.Invoke();
-                if (chord.Update((int)key.Key, pressed) && ShortcutEnabled) Toggle?.Invoke();
+                    ObserveEdit();
+                var decision=commands.Update((int)key.Key,pressed,SessionActive,ShortcutEnabled);
+                if(decision.Command==InputCommand.Toggle)Toggle?.Invoke();
+                if(decision.Command==InputCommand.Cancel)Cancel?.Invoke();
+                if(decision.Suppress)return 1;
             }
         }
         return CallNextHookEx(keyboard, code, message, data);
@@ -57,15 +71,17 @@ public sealed class GlobalInput : IDisposable
         if (code >= 0 && (message == 0x201 || message == 0x204 || message == 0x207 || message == 0x20B))
         {
             var mouseData = Marshal.PtrToStructure<MouseData>(data);
-            if (mouseData.Extra != InjectionTag) UserEdited?.Invoke();
+            if (mouseData.Extra != InjectionTag) ObserveEdit();
         }
         return CallNextHookEx(mouse, code, message, data);
     }
+    void ObserveEdit(){Epoch.UserInput();UserEdited?.Invoke();}
     public void Dispose()
     {
         if (keyboard != 0) UnhookWindowsHookEx(keyboard);
         if (mouse != 0) UnhookWindowsHookEx(mouse);
         keyboard = mouse = 0;
+        if(focusHook!=0)UnhookWinEvent(focusHook);focusHook=0;
     }
     public static bool TypeWhisperRunning() =>
         Process.GetProcesses().Any(p => { try { return p.ProcessName.Contains("typewhisper", StringComparison.OrdinalIgnoreCase); } catch { return false; } });

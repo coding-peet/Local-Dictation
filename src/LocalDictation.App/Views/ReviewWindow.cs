@@ -66,11 +66,7 @@ public sealed class ReviewWindow : Window
                 "Rebuild final text",MessageBoxButton.YesNo,MessageBoxImage.Question)==MessageBoxResult.Yes)
             {document.RebuildDraft();Changed();}
         });
-        restore=Ui.Button("Restore previous draft",()=>
-        {
-            (document.ManualFinalDraft,document.PreviousManualDraft)=(document.PreviousManualDraft,document.ManualFinalDraft);
-            Changed();
-        });
+        restore=Ui.Button("Restore saved manual draft",ShowDraftArchive);
         manualPanel.Children.Add(Ui.Row(rebuild,restore)); working.Children.Add(manualPanel);
         var left=Ui.Card(working); left.Margin=new(0,0,16,12);
 
@@ -166,12 +162,30 @@ public sealed class ReviewWindow : Window
             manual.Visibility=document.ManualFinalDraft!=null?Visibility.Visible:Visibility.Collapsed;
             manual.Text=document.ManualFinalDraft??"";
             rebuild.IsEnabled=document.ManualFinalDraft!=null;
-            restore.IsEnabled=document.PreviousManualDraft!=null;
+            restore.IsEnabled=document.PreviousManualDraft!=null||document.ManualDraftArchive.Count>0;
             note.Text=document.UnresolvedCount>0
                 ?"Resolve each difference, or use Keep remaining dictation to enable Copy. ∅ marks an empty alternative."
                 :"Ready to copy plain text. Check any text already inserted before pasting.";
         }
         finally {refreshing=false;}
+    }
+    void ShowDraftArchive()
+    {
+        var menu=new ContextMenu();
+        var versions=document.ManualDraftArchive.ToList();
+        if(document.PreviousManualDraft!=null&&!versions.Contains(document.PreviousManualDraft))versions.Add(document.PreviousManualDraft);
+        foreach(var version in versions.AsEnumerable().Reverse())
+        {
+            var item=new MenuItem{Header=version.Length==0?"Empty draft":version[..Math.Min(version.Length,70)],ToolTip=version};
+            item.Click+=(_,_)=>
+            {
+                if(document.ManualFinalDraft!=null&&!document.ManualDraftArchive.Contains(document.ManualFinalDraft))
+                    document.ManualDraftArchive.Add(document.ManualFinalDraft);
+                document.ManualFinalDraft=version;Changed();
+            };
+            menu.Items.Add(item);
+        }
+        menu.PlacementTarget=restore;menu.IsOpen=true;
     }
     void Copy()
     {

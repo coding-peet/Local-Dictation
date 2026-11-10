@@ -65,7 +65,7 @@ class ModelTestSafety(unittest.TestCase):
     def test_cleanup_failure_does_not_mark_model_runtime_tested(self):
         class Catalog:
             marked=False
-            def require(self,model):return {"id":"test/model"}
+            def require(self,model):return {"id":"test/model","languages":["sk","en","auto"]}
             def mark_tested(self,model):self.marked=True
         class Engine:
             def transcribe(self,*args):return {"text":"sample"}

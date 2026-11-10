@@ -10,7 +10,9 @@ class EngineAdapter:
     def register(self, model):
         if self.catalog:
             import model_engine
-            model_engine.MODELS[model] = self.catalog.require(model)["path"]
+            entry=self.catalog.require(model)
+            model_engine.MODELS[model] = entry["path"]
+            model_engine.MODEL_LANGUAGES[model] = entry["languages"]
 
     def _call(self, data, prompt, model, language, cancelled):
         failure=None

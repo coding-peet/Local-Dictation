@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Threading.Channels;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
+using LocalDictation.Core;
 
 namespace LocalDictation.App.Services;
 
@@ -13,6 +14,10 @@ public sealed class MicrophoneCapture : IAsyncDisposable
     MMDevice? device;
     WasapiRecorder? recorder;
     long? expectedPosition;
+    readonly AudioBudget budget=new(600L*32000);
+    bool limitSignaled;
+    public string DeviceName {get;private set;}="Microphone";
+    public event Action? LimitReached;
     public Channel<byte[]> Frames { get; } = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(256)
     {
         SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.Wait
@@ -33,9 +38,10 @@ public sealed class MicrophoneCapture : IAsyncDisposable
         device = string.IsNullOrEmpty(id)
             ? enumerator.GetDefaultAudioEndpoint(DataFlow.Capture, Role.Multimedia)
             : enumerator.GetDevice(id);
+        DeviceName=device.FriendlyName;
         recorder = new WasapiRecorderBuilder().WithDevice(device)
             .WithFormat(new WaveFormat(16000, 16, 1)).WithBufferLength(30).Build();
-        recorder.DataAvailable += (buffer, flags, position, _) =>
+        recorder.DataAvailable += (buffer, flags, position, qpcPosition) =>
         {
             var current = Convert.ToInt64(position);
             if (expectedPosition.HasValue && current != expectedPosition.Value)
@@ -44,23 +50,24 @@ public sealed class MicrophoneCapture : IAsyncDisposable
                 return;
             }
             expectedPosition = current + buffer.Length / 2;
-            var bytes = buffer.ToArray();
+            var accepted=budget.Accept(buffer.Length);
+            var bytes = buffer[..accepted].ToArray();
             if (((uint)flags & 2) != 0) Array.Clear(bytes);
             float peak = 0;
             for (var i = 0; i + 1 < bytes.Length; i += 2)
                 peak = Math.Max(peak, Math.Abs(BinaryPrimitives.ReadInt16LittleEndian(bytes.AsSpan(i, 2)) / 32768f));
             Level = peak;
             CapturedBytes += bytes.Length;
-            if (CapturedBytes > 600L * 32000)
-            {
-                Array.Clear(bytes);
-                Fail("The 10-minute recording limit was reached.");
-                return;
-            }
-            if (!Frames.Writer.TryWrite(bytes))
+            if (bytes.Length>0&&!Frames.Writer.TryWrite(bytes))
             {
                 Array.Clear(bytes);
                 Fail("The API cannot keep up with microphone audio. Your received text is in Review.");
+                return;
+            }
+            if(budget.Reached&&!limitSignaled)
+            {
+                limitSignaled=true;Frames.Writer.TryComplete();LimitReached?.Invoke();
+                _=Task.Run(()=>recorder?.StopRecording());
             }
         };
         recorder.RecordingStopped += (_, e) =>
