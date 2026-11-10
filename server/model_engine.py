@@ -146,7 +146,7 @@ class WhisperEngine:
             return
         from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
         folder = model_path(MODELS[FAST_MODEL_ID])
-        processor = AutoProcessor.from_pretrained(folder, local_files_only=True)
+        processor = AutoProcessor.from_pretrained(folder, local_files_only=True, trust_remote_code=False)
         model = AutoModelForSpeechSeq2Seq.from_pretrained(
             folder, local_files_only=True, use_safetensors=True, trust_remote_code=False,
             dtype=self.torch.float16, low_cpu_mem_usage=True, attn_implementation="sdpa",
@@ -221,7 +221,7 @@ class WhisperEngine:
             from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
             from accelerate import cpu_offload
             folder = model_path(MODELS[model_id])
-            processor = AutoProcessor.from_pretrained(folder, local_files_only=True)
+            processor = AutoProcessor.from_pretrained(folder, local_files_only=True, trust_remote_code=False)
             model = AutoModelForSpeechSeq2Seq.from_pretrained(
                 folder, local_files_only=True, use_safetensors=True, trust_remote_code=False,
                 dtype=self.torch.float16, low_cpu_mem_usage=True, attn_implementation="sdpa",

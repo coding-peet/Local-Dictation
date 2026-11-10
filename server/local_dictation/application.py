@@ -3,6 +3,7 @@ import asyncio
 from email import policy
 from email.parser import BytesParser
 import json
+import os
 import threading
 from urllib.parse import urlsplit
 from starlette.applications import Starlette
@@ -39,9 +40,10 @@ def create_app(config, engine, catalog=None):
     admission.unavailable = False
 
     async def health(request):
-        return JSONResponse({"service":"local-dictation","protocol_version":1,
+        runtime=engine.status() if hasattr(engine,"status") else {}
+        return JSONResponse({"service":"local-dictation","protocol_version":1,"process_id":os.getpid(),
                              "ready":not admission.unavailable,"busy":admission.lock.locked(),
-                             "phase":admission.kind,"max_seconds":config.max_seconds})
+                             "phase":admission.kind,"max_seconds":config.max_seconds,"runtime":runtime})
 
     async def models(request):
         return JSONResponse({"object":"list","data":catalog.models()})
@@ -124,6 +126,7 @@ def create_app(config, engine, catalog=None):
         try:
             if admission.unavailable: raise BusyError("API unavailable after cleanup failure.")
             async with admission.own("primary",cancelled):
+                tested_model=None
                 try:
                     length=int(request.headers.get("content-length","0"))
                     if request.headers.get("transfer-encoding") or not 0<length<=26*1024*1024:
@@ -161,7 +164,7 @@ def create_app(config, engine, catalog=None):
                         await asyncio.gather(work,return_exceptions=True)
                         raise
                     if request.url.path.endswith("/test"):
-                        catalog.mark_tested(model["id"])
+                        tested_model=model["id"]
                     if fmt=="text": return PlainTextResponse(result["text"])
                     return JSONResponse({"text":result["text"]} if fmt=="json" else
                                         {"task":"transcribe",**result,"segments":[]})
@@ -170,6 +173,8 @@ def create_app(config, engine, catalog=None):
                     except Exception:
                         admission.unavailable=True
                         raise RuntimeError("Model cleanup failed.") from None
+                    if tested_model is not None:
+                        catalog.mark_tested(tested_model)
         except BusyError as exc: return error(str(exc),409)
         except ValueError as exc: return error(str(exc))
         except Exception: return error("Transcription failed. Check candidate API availability.",500)

@@ -137,9 +137,9 @@ class Handler(BaseHTTPRequestHandler):
                     self.server.completed += 1
                     LOG.info('Transcription completed and model released; audio_seconds=%.3f; processing_seconds=%.3f',
                         duration, self.server.last_seconds)
-                self.reply(status, payload, content_type)
             finally:
                 self.server.gate.release()
+            self.reply(status, payload, content_type)
 
     def read_upload(self):
         if self.headers.get('Transfer-Encoding'):

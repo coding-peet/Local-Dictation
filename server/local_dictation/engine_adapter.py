@@ -12,6 +12,21 @@ class EngineAdapter:
             import model_engine
             model_engine.MODELS[model] = self.catalog.require(model)["path"]
 
+    def _call(self, data, prompt, model, language, cancelled):
+        failure=None
+        result=None
+        try:
+            result=self.engine.transcribe(data,prompt,model,language,cancel_event=cancelled)
+        except ValueError as exc:
+            failure=(ValueError,str(exc))
+        except Exception:
+            failure=(RuntimeError,"Local model inference failed or was cancelled.")
+        # Leave the original exception scope before raising across the worker
+        # boundary. Its traceback may own CUDA tensors from generation frames.
+        if failure:
+            raise failure[0](failure[1]) from None
+        return result
+
     def transcribe_pcm(self, pcm, model, language, cancelled):
         if cancelled.is_set():
             raise RuntimeError("Cancelled.")
@@ -22,11 +37,11 @@ class EngineAdapter:
             wav.setframerate(16000)
             wav.writeframes(pcm)
         self.register(model)
-        return self.engine.transcribe(stream.getvalue(), "", model, language, cancel_event=cancelled)
+        return self._call(stream.getvalue(),"",model,language,cancelled)
 
     def transcribe(self, data, prompt, model, language, cancelled):
         self.register(model)
-        return self.engine.transcribe(data, prompt, model, language, cancel_event=cancelled)
+        return self._call(data,prompt,model,language,cancelled)
 
     def unload(self):
         self.engine.unload()

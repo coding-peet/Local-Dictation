@@ -59,6 +59,8 @@ class AudioSession:
         self.last_decode = 0
         self.committed = ""
         self.previous = ""
+        self.decoded_until = -1
+        self.last_snapshot = None
         self.draft = ""
         self.needs_cleanup = False
         self.max_buffer_bytes = 32 * 32000
@@ -136,7 +138,7 @@ class AudioSession:
                 while not self.finishing and not self.cancelled.is_set():
                     self.changed.clear()
                     await self.changed.wait()
-                if not self.cancelled.is_set() and self.full_audio:
+                if not self.cancelled.is_set() and self.full_audio and self.last_voice:
                     result = await self.decode(bytes(self.full_audio), self.options["model"])
                     self.committed = result["text"].strip()
             if self.cancelled.is_set():
@@ -147,7 +149,7 @@ class AudioSession:
             # Primary is already delivered; verification is a separate optional phase.
             await self.cleanup()
             verifier = self.options.get("verification_model")
-            if verifier and self.full_audio:
+            if verifier and self.full_audio and self.last_voice:
                 self.verifying = True
                 if self.admission:
                     self.admission.kind = "verification"
@@ -159,7 +161,7 @@ class AudioSession:
                     else:
                         await self.emit("verification.completed", primary=primary,
                                         verification=result["text"], model=verifier,
-                                        pieces=compare(primary, result["text"]))
+                                        pieces=await asyncio.to_thread(compare,primary,result["text"]))
                 except Exception:
                     await self.emit("verification.cancelled" if self.cancelled.is_set() else "verification.failed",
                                     primary=primary, message="Verification did not finish. Your dictation is preserved.")
@@ -177,6 +179,9 @@ class AudioSession:
             # Re-check after clear to avoid losing finish/feed signals.
             self.changed.clear()
             size = len(self.buffer)
+            if self.decoded_until == self.total_bytes and not self.finishing:
+                await self.changed.wait()
+                continue
             if not size:
                 if self.finishing: break
                 await self.changed.wait()
@@ -195,6 +200,7 @@ class AudioSession:
                 continue
             end = self.cut()
             final_chunk = self.finishing or should_cut
+            self.decoded_until = self.total_bytes - size + end
             result = await self.decode(bytes(self.buffer[:end]), self.options["model"])
             self.last_decode = time.monotonic()
             if self.cancelled.is_set(): break
@@ -205,6 +211,13 @@ class AudioSession:
                 del self.buffer[:end]
             else:
                 self.draft, self.previous = text, text
-            await self.emit("transcript.updated", text=self.snapshot_text(self.draft),
-                            committed_text=self.committed, draft_text=self.draft)
+            snapshot = (self.committed, self.draft)
+            if snapshot != self.last_snapshot:
+                await self.emit("transcript.updated", text=self.snapshot_text(self.draft),
+                                committed_text=self.committed, draft_text=self.draft,
+                                audio_received_seconds=self.total_bytes/32000,
+                                decoded_until_seconds=self.decoded_until/32000,
+                                pending_audio_seconds=max(0,(self.total_bytes-self.decoded_until)/32000),
+                                inference_seconds=result.get("inference_seconds"),load_seconds=result.get("load_seconds"))
+                self.last_snapshot = snapshot
             if self.finishing and not self.buffer: break
