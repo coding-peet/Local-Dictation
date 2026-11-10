@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Local Dictation — Recording & Review Concept</title>
+  <style>
+    :root{color-scheme:light;--page:#f3f5f8;--surface:#fff;--ink:#1b2432;--muted:#586579;--accent:#245fc5;--accent-soft:#e9f0ff;--line:#dce2eb;--bar:#202631;--bar-text:#f7f9fc;--bar-muted:#bdc8d9;--record:#ff858d;--safe:#88dfbe;--warning:#ffcf80;--danger:#ffc0c4;font-family:"Segoe UI Variable","Segoe UI",system-ui,sans-serif;font-size:15px}
+    *{box-sizing:border-box}body{margin:0;background:var(--page);color:var(--ink)}button,input,select,textarea{font:inherit}button{cursor:pointer}button:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid #4d8bff;outline-offset:3px}button:disabled{cursor:default;opacity:.6}button svg{width:18px;height:18px;flex:none}svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}h1,h2,p{margin:0}[hidden]{display:none!important}.sr-only{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}.muted{color:var(--muted)}
+    .page{max-width:1160px;margin:0 auto;padding:30px 30px 24px}.page-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:24px}.identity{display:flex;align-items:center;gap:12px}.brand-mark{height:42px;width:42px;background:#202631;color:white;border-radius:13px;display:grid;place-items:center}.brand-mark svg{width:23px;height:23px}.page-head h1{font-size:21px;font-weight:650;letter-spacing:-.45px}.page-head p{font-size:13px;color:var(--muted);margin-top:4px}.concept-label{font-size:12px;color:#566377;border:1px solid #cfd7e2;border-radius:6px;padding:6px 9px;white-space:nowrap}
+    .demo-toolbar{display:flex;gap:18px;align-items:flex-end;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap}.control-label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin:0 0 7px}.scenes{display:flex;gap:3px;background:#e7ebf1;border:1px solid #d7dfe9;padding:4px;border-radius:10px;flex-wrap:wrap}.scene-choice{border:0;color:#4c596c;background:transparent;padding:9px 12px;border-radius:6px;font-size:13px;line-height:18px}.scene-choice:hover{background:#f4f7fb}.scene-choice.active{background:white;color:#172333;box-shadow:0 1px 4px #182a4219;font-weight:600}.mode-select{border:1px solid #cad3df;border-radius:8px;padding:9px 30px 9px 11px;background:white;color:#263247;font-size:13px;min-height:40px;max-width:100%}
+    .desktop{isolation:isolate;position:relative;min-height:612px;overflow:hidden;border:1px solid #ced8e6;border-radius:16px;background:radial-gradient(ellipse at 85% 16%,#dbe7f9 0,transparent 56%),linear-gradient(130deg,#e8edf5,#dfe6f1);padding:34px 44px 170px}.desktop-name{display:flex;gap:7px;align-items:center;color:#506078;font-size:12px;margin-bottom:14px}.desktop-name svg{width:15px;height:15px}.notes{max-width:780px;margin:0 auto;background:#fff;border:1px solid #c9d2df;border-radius:10px;box-shadow:0 13px 34px #273b5720;min-height:340px;overflow:hidden;transition:opacity .15s}.notes.inactive{opacity:.62}.notes-chrome{height:45px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;background:#f8f9fc;border-bottom:1px solid #e1e6ee;font-size:12px;color:#4c5b70}.notes-tab{display:flex;align-items:center;gap:8px}.notes-tab svg{width:15px;height:15px;color:#506079}.window-controls{display:flex;gap:22px;color:#718096;font-size:16px;align-items:center}.window-controls span{width:10px;text-align:center}.note-content{padding:30px 34px 38px}.note-date{font-size:12px;color:#69768a;margin-bottom:10px}.note-content h2{font-size:25px;font-weight:600;letter-spacing:-.55px;margin-bottom:23px}.dictated-text{font-size:18px;line-height:1.8;letter-spacing:.02px;color:#2d394a;min-height:83px}.draft{background:#edf3ff;border-bottom:2px dotted #245fc5;border-radius:2px;padding-bottom:2px}.caret{display:inline-block;vertical-align:-3px;width:2px;height:22px;background:#245fc5;margin-left:2px}.note-hint{display:flex;align-items:center;gap:6px;margin-top:20px;color:#647185;font-size:12px}.note-hint svg{width:14px;height:14px}.draft-key{display:inline-block;width:18px;height:8px;background:#edf3ff;border-bottom:2px dotted #245fc5;margin-right:2px}
+    .banner-wrap{position:absolute;bottom:28px;left:20px;right:20px;display:flex;justify-content:center;z-index:4;pointer-events:none}.banner{position:relative;width:580px;max-width:100%;background:var(--bar);color:var(--bar-text);padding:15px 17px 12px;border:1px solid #ffffff27;border-radius:17px;box-shadow:0 13px 35px #14223935;pointer-events:auto}.banner-main{display:flex;gap:12px;align-items:center}.status-mark{display:grid;place-items:center;flex:none;height:39px;width:39px;background:#383039;color:var(--record);border-radius:12px}.status-mark svg{height:20px;width:20px}.status-mark[data-kind=working]{background:#2c3850;color:#c2d7ff}.status-mark[data-kind=attention]{background:#423b2e;color:var(--warning)}.status-mark[data-kind=error]{background:#463039;color:var(--danger)}.status-mark[data-kind=complete]{background:#293d38;color:var(--safe)}.status-copy{min-width:0;flex:1}.status-title{font-weight:600;font-size:15px;display:flex;gap:9px;align-items:center;flex-wrap:wrap;line-height:21px}.timer{font-size:12px;font-weight:400;color:var(--bar-muted);font-variant-numeric:tabular-nums}.status-detail{font-size:12px;line-height:18px;margin-top:2px;color:var(--bar-muted)}.wave{display:flex;gap:3px;align-items:center;height:33px;width:88px;justify-content:center;flex:none;color:var(--record)}.wave i{width:3px;border-radius:3px;background:currentColor;display:block;height:var(--h);transform-origin:center}.wave.active i{animation:signal 1.15s ease-in-out infinite alternate;animation-delay:var(--d)}.wave.quiet i{height:3px!important;animation:none;color:#7e8da4}.banner-action{display:inline-flex;align-items:center;justify-content:center;gap:7px;background:#f4f6fa;border:1px solid transparent;border-radius:8px;min-height:35px;padding:7px 12px;color:#1f2937;font-weight:600;font-size:13px;white-space:nowrap}.banner-action:hover{background:#dce7fb}.icon-button{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:0;background:transparent;color:var(--bar-muted);border-radius:7px;flex:none;padding:6px}.icon-button:hover{background:#ffffff12;color:white}.banner-meta{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin:12px 0 0;padding-top:10px;border-top:1px solid #ffffff17;color:var(--bar-muted);font-size:11.5px;line-height:16px}.banner-meta svg{width:13px;height:13px;vertical-align:-2px;margin-right:3px}.model-name{color:#e5edf9}.meta-spacer{flex:1}.shortcut{display:flex;gap:4px;align-items:center;white-space:nowrap}.shortcut kbd{background:#ffffff0c;border:1px solid #ffffff26;border-bottom-color:#ffffff42;color:#dbe5f4;font-size:10px;border-radius:4px;padding:0 4px;min-height:16px;font-family:inherit;line-height:15px}.status-note{font-size:12px;color:var(--warning);margin-top:9px;line-height:18px}.status-note.error{color:var(--danger)}
+    .review{position:absolute;top:54px;left:50%;transform:translateX(-50%);width:510px;max-width:calc(100% - 40px);z-index:3;background:white;border:1px solid #b8c5d8;border-radius:12px;box-shadow:0 22px 70px #1d304947;overflow:hidden}.review-top{padding:17px 21px 0;display:flex;align-items:flex-start;gap:11px}.review-symbol{width:34px;height:34px;display:grid;place-items:center;color:var(--accent);background:var(--accent-soft);border-radius:10px;flex:none}.review-symbol svg{width:19px;height:19px}.review-heading{flex:1;min-width:0}.review-heading h2{font-size:17px;font-weight:650;letter-spacing:-.25px;line-height:24px}.review-heading p{font-size:12px;color:#5a687c;line-height:18px;margin-top:3px}.review-close{background:transparent;border:0;color:#5c697b;display:grid;place-items:center;padding:4px;border-radius:5px}.review-close:hover{background:#edf0f5}.review-body{padding:17px 21px 18px}.inserted{background:#f3f6fa;border-radius:7px;padding:10px 12px;margin-bottom:14px}.inserted-label{display:flex;gap:5px;align-items:center;font-size:11px;font-weight:600;color:#536174;margin-bottom:5px}.inserted-label svg{width:13px;height:13px}.inserted p{font-size:13px;line-height:20px;color:#536174}.review-label{display:flex;justify-content:space-between;gap:8px;font-size:12px;font-weight:600;color:#344153;margin-bottom:7px}.review-count{font-weight:400;color:#67758a}.review textarea{resize:vertical;min-height:90px;max-height:145px;width:100%;border:1px solid #bfcada;border-radius:7px;padding:11px 12px;line-height:1.65;color:#253349;background:white;font-size:15px}.review-actions{display:flex;align-items:center;justify-content:space-between;gap:9px;flex-wrap:wrap;margin-top:14px}.review-primary{display:inline-flex;align-items:center;gap:7px;border:1px solid #245fc5;border-radius:7px;color:white;background:#245fc5;min-height:36px;padding:8px 13px;font-weight:600;font-size:13px}.review-primary:hover{background:#1d50aa}.review-secondary{border:1px solid #ccd5e1;border-radius:7px;background:white;color:#344257;min-height:36px;padding:8px 11px;font-size:13px}.review-secondary:hover{background:#f0f4fa}.review-copy-all{color:#245fc5;background:transparent;border:0;font-size:12px;padding:8px 0;text-decoration:underline;text-underline-offset:3px}.review-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.review-foot p{font-size:11px;color:#637186}.review[data-mode=all] textarea{min-height:126px}.review[data-mode=all] .review-body{padding-top:20px}.review-confirm{color:#1e694d;font-size:12px;line-height:18px;min-height:18px;margin-top:10px}
+    .settings{position:absolute;z-index:6;right:0;bottom:calc(100% + 13px);width:300px;max-width:calc(100vw - 60px);padding:18px;background:#fff;color:#263349;border:1px solid #becbdc;box-shadow:0 13px 40px #10213835;border-radius:11px}.settings h2{font-size:15px;font-weight:650;margin-bottom:15px}.settings label{display:block;font-size:12px;color:#536174;margin:12px 0 5px}.settings select{width:100%;max-width:100%;border:1px solid #c8d1df;border-radius:6px;padding:7px;background:#fff;color:#2b394e;font-size:13px}.settings-shortcut{display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-top:15px}.settings-shortcut span{color:#4c5d73}.settings-shortcut strong{font-weight:600;background:#f0f3f8;border:1px solid #d1d9e5;padding:4px 7px;border-radius:5px}.settings p{font-size:11px;color:#61718a;margin-top:14px;display:flex;gap:5px;align-items:center}.settings p svg{width:13px;height:13px}
+    .demo-footer{display:flex;gap:10px;justify-content:space-between;flex-wrap:wrap;margin-top:14px;color:#657286;font-size:12px;line-height:20px}.demo-footer strong{font-weight:600;color:#47566c}.outcome{margin-top:15px;font-size:13px;color:#43536a;min-height:21px}.outcome strong{font-weight:600;color:#22354f}.footer-key{display:flex;gap:7px;align-items:center}.footer-key svg{width:13px;height:13px}.scene-description{color:#536279;font-size:13px;line-height:20px;max-width:580px;margin-top:12px;min-height:40px}.complete-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--safe)}
+    .settings{max-height:430px;overflow-y:auto}.settings .verification-choice{display:flex;align-items:flex-start;gap:8px;padding:5px 0;margin-top:15px;font-size:13px;line-height:19px;color:#263349}.verification-choice input{width:16px;height:16px;flex:none;margin:2px 0 0;accent-color:#245fc5}.settings .verification-hint{display:block;margin-top:6px;line-height:17px;min-height:34px;font-size:11px;color:#586579}.settings .storage-note{display:block;padding-top:12px;border-top:1px solid #dce2eb;line-height:18px;color:#586579}
+    @keyframes signal{0%{transform:scaleY(.35)}60%{transform:scaleY(1)}100%{transform:scaleY(.6)}}
+    @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+    @media(max-width:760px){.page{padding:20px 18px}.desktop{padding:24px 24px 170px;min-height:630px}.page-head{margin-bottom:20px}.note-content{padding:25px}.wave{width:58px;gap:2px}.wave i:nth-child(n+15){display:none}.banner{padding:14px}.banner-main{gap:9px}.banner-meta{gap:6px}.shortcut{display:none}.review{top:54px}.page-head p{font-size:12px}}
+    @media(max-width:520px){.page{padding:18px 12px}.page-head{gap:9px}.page-head h1{font-size:19px}.brand-mark{width:35px;height:35px;border-radius:10px}.concept-label{font-size:10px;padding:5px 6px}.desktop{border-radius:12px;padding:20px 14px 200px;min-height:650px}.desktop.has-review{min-height:742px}.note-content{padding:24px 19px}.note-content h2{font-size:22px}.dictated-text{font-size:16px}.banner-wrap{left:10px;right:10px;bottom:18px}.banner{border-radius:13px;padding:12px}.status-mark{width:33px;height:33px;border-radius:9px}.status-copy{flex:1}.status-title{font-size:14px;gap:5px}.status-detail{font-size:11px}.timer{font-size:11px}.wave{display:none}.banner-action{padding:7px 9px;min-height:34px;font-size:12px}.banner-action svg{width:13px;height:13px}.icon-button{width:26px;height:30px;padding:4px}.banner-meta{font-size:11px;gap:6px;margin-top:10px;padding-top:8px}.meta-spacer{display:none}.banner-meta .model-name{margin-right:auto}.banner-meta .mic-name{flex-basis:100%}.review{max-width:calc(100% - 20px);top:50px}.review-top{padding:15px 16px 0;gap:8px}.review-body{padding:14px 16px}.review-heading h2{font-size:16px}.review-symbol{width:29px;height:29px;border-radius:8px}.review textarea{font-size:16px;min-height:105px}.review-confirm{min-height:36px}.review-actions{gap:7px}.scenes{gap:2px}.scene-choice{padding:8px 9px;font-size:12px}.demo-toolbar{gap:12px}.mode-select{font-size:13px}.settings{right:-2px;width:280px}.desktop-name{font-size:11px}.window-controls{gap:16px}.note-hint{align-items:flex-start;line-height:18px}}
+  </style>
+</head>
+<body>
+  <svg class="sr-only" aria-hidden="true"><defs>
+    <symbol id="ic-mic" viewBox="0 0 24 24"><rect x="8" y="2.5" width="8" height="12" rx="4"/><path d="M5 10v1a7 7 0 0 0 14 0v-1M12 18v4M8 22h8"/></symbol>
+    <symbol id="ic-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="ic-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="ic-settings" viewBox="0 0 24 24"><path d="m10 3-1 3-3 1-3-1-1 4 2 2-1 3 3 2 2-1 3 1 1 3 4-1v-3l2-2 3-1-1-4-3-1-1-3z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="ic-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="ic-file" viewBox="0 0 24 24"><path d="M14 3H5v18h14V8zM14 3v5h5M8 12h8M8 16h6"/></symbol>
+    <symbol id="ic-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M15 8V3H3v13h5"/></symbol>
+    <symbol id="ic-link" viewBox="0 0 24 24"><path d="m9 15 6-6M8 12 5 15a4 4 0 0 0 6 6l3-3M10 6l3-3a4 4 0 0 1 6 6l-3 3"/></symbol>
+    <symbol id="ic-window" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></symbol>
+    <symbol id="ic-alert" viewBox="0 0 24 24"><path d="m12 3 10 18H2zM12 9v5M12 17v.1"/></symbol>
+    <symbol id="ic-loader" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-8-8M16 3h5v5"/></symbol>
+    <symbol id="ic-keyboard" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h.1M10 9h.1M14 9h.1M18 9h.1M6 12h.1M10 12h.1M14 12h.1M18 12h.1M7 16h10"/></symbol>
+  </defs></svg>
+  <main class="page" id="dictation-concept">
+    <header class="page-head">
+      <div class="identity"><div class="brand-mark"><svg aria-hidden="true"><use href="#ic-mic"/></svg></div><div><h1>Local Dictation</h1><p>Recording banner & review window</p></div></div>
+      <span class="concept-label">INTERACTIVE CONCEPT</span>
+    </header>
+    <div class="demo-toolbar">
+      <div><span class="control-label">Preview a state</span><div class="scenes" role="group" aria-label="Preview state">
+        <button type="button" class="scene-choice active" data-choice="listening" aria-pressed="true">Recording</button>
+        <button type="button" class="scene-choice" data-choice="finishing" aria-pressed="false">Finishing</button>
+        <button type="button" class="scene-choice" data-choice="changed" aria-pressed="false">Target changed</button>
+        <button type="button" class="scene-choice" data-choice="offline" aria-pressed="false">API unavailable</button>
+      </div></div>
+      <label><span class="control-label">Text delivery</span><select class="mode-select" id="delivery-mode"><option value="live">Live insertion</option><option value="review">Review before inserting</option></select></label>
+    </div>
+    <section class="desktop" id="desktop" aria-label="Windows desktop concept">
+      <div class="desktop-name"><svg aria-hidden="true"><use href="#ic-window"/></svg><span id="desktop-label">Your active app</span></div>
+      <section class="notes" id="notes" aria-label="Example destination app">
+        <div class="notes-chrome"><div class="notes-tab"><svg aria-hidden="true"><use href="#ic-file"/></svg><span>Voice notes.txt</span></div><div class="window-controls" aria-hidden="true"><span>−</span><span>□</span><span>×</span></div></div>
+        <div class="note-content"><p class="note-date">TUESDAY, 10 NOVEMBER</p><h2>Model comparison</h2><div class="dictated-text" role="textbox" aria-label="Example destination text" aria-readonly="true"><span id="stable-text"></span><span class="draft" id="draft-text"></span><span class="caret" id="caret" aria-hidden="true"></span></div><p class="note-hint" id="note-hint"><span class="draft-key" aria-hidden="true"></span><span>The current phrase can still be corrected.</span></p></div>
+      </section>
+      <section class="review" id="review-window" role="region" aria-labelledby="review-title" hidden>
+        <div class="review-top"><div class="review-symbol"><svg aria-hidden="true"><use href="#ic-file"/></svg></div><div class="review-heading"><h2 id="review-title">Review dictation</h2><p id="review-reason">The active text field changed. Remaining text is ready to copy.</p></div><button type="button" class="review-close" aria-label="Keep review for later" id="review-close"><svg aria-hidden="true"><use href="#ic-x"/></svg></button></div>
+        <div class="review-body">
+          <div class="inserted" id="inserted-section"><div class="inserted-label"><svg aria-hidden="true"><use href="#ic-check"/></svg>Already inserted into Voice notes.txt</div><p id="inserted-text"></p></div>
+          <label class="review-label" for="review-text"><span id="review-text-label">Not inserted</span><span class="review-count" id="review-count">5 words</span></label>
+          <textarea id="review-text" spellcheck="false" lang="sk"></textarea>
+          <div class="review-actions"><button type="button" class="review-primary" id="copy-pending"><svg aria-hidden="true"><use href="#ic-copy"/></svg><span id="copy-label">Copy remaining text</span></button><button type="button" class="review-secondary" id="review-later">Keep for later</button></div>
+          <div class="review-foot"><button type="button" class="review-copy-all" id="copy-all">Copy full transcript</button><p>Paste into the text field you choose.</p></div>
+          <p class="review-confirm" id="review-confirm" aria-live="polite"></p>
+        </div>
+      </section>
+      <div class="banner-wrap"><section class="banner" aria-label="Local Dictation recording banner">
+        <div class="settings" id="settings-panel" hidden>
+          <h2>Dictation settings</h2>
+          <label for="mic-select">Microphone</label><select id="mic-select"><option>Microphone Array</option><option>USB microphone</option></select>
+          <label for="model-select">Dictation model</label><select id="model-select"><option value="turbo" data-model-id="kinit/whisper-large-v3-turbo-sk">KInIT Turbo · Slovak</option><option value="large" data-model-id="openai/whisper-large-v3">Whisper Large v3 · Multilingual</option></select>
+          <label class="verification-choice"><input type="checkbox" id="verify-after-recording"><span>Verify after recording</span></label>
+          <label for="verification-model-select">Verification model</label><select id="verification-model-select" disabled><option value="openai/whisper-large-v3">Whisper Large v3</option></select>
+          <p class="verification-hint" id="verification-hint" aria-live="polite">Off. The original audio is kept only while processing.</p>
+          <div class="settings-shortcut"><span>Start / stop</span><strong>Ctrl + Shift</strong></div>
+          <p class="storage-note">Only pending reviews are saved. Audio is temporary.</p>
+        </div>
+        <div class="banner-main"><div class="status-mark" id="status-mark" data-kind="record"><svg aria-hidden="true"><use id="status-icon" href="#ic-mic"/></svg></div><div class="status-copy"><p class="status-title"><span id="status-title">Listening</span><span class="timer" id="timer">00:12</span></p><p class="status-detail" id="status-detail">Live text · Voice notes.txt</p></div><div class="wave active" id="wave" role="img" aria-label="Example microphone level"><i style="--h:7px;--d:-.8s"></i><i style="--h:12px;--d:-.3s"></i><i style="--h:20px;--d:-.5s"></i><i style="--h:29px;--d:-.1s"></i><i style="--h:16px;--d:-.6s"></i><i style="--h:24px;--d:-.2s"></i><i style="--h:31px;--d:-.7s"></i><i style="--h:18px;--d:-.4s"></i><i style="--h:25px;--d:-.9s"></i><i style="--h:14px;--d:-.2s"></i><i style="--h:21px;--d:-.6s"></i><i style="--h:32px;--d:-.4s"></i><i style="--h:23px;--d:-.8s"></i><i style="--h:15px;--d:-.3s"></i><i style="--h:25px;--d:-.5s"></i><i style="--h:18px;--d:-.2s"></i><i style="--h:11px;--d:-.7s"></i><i style="--h:6px;--d:-.4s"></i></div><button type="button" class="banner-action" id="main-action"><svg aria-hidden="true"><use id="action-icon" href="#ic-stop"/></svg><span id="action-label">Finish</span></button><button type="button" class="icon-button" id="cancel-action" aria-label="Cancel dictation"><svg aria-hidden="true"><use href="#ic-x"/></svg></button></div>
+        <div class="banner-meta"><span class="mic-name"><svg aria-hidden="true"><use href="#ic-mic"/></svg><span id="mic-name">Microphone Array</span></span><span class="model-name" id="model-name">KInIT Turbo · SK</span><span class="meta-spacer"></span><span class="shortcut"><kbd>Ctrl</kbd><span>+</span><kbd>Shift</kbd></span><button type="button" class="icon-button" aria-label="Dictation settings" aria-expanded="false" aria-controls="settings-panel" id="settings-action"><svg aria-hidden="true"><use href="#ic-settings"/></svg></button></div>
+        <p class="status-note" id="status-note" hidden></p><button type="button" class="review-copy-all" id="recovery-review" style="color:#d4e3ff" hidden>Review available text</button>
+      </section></div>
+    </section>
+    <p class="scene-description" id="scene-description">Text appears in your active field while you speak. Only the current phrase is revised; the banner leaves your typing focus in place.</p>
+    <footer class="demo-footer"><span>Concept preview · Example text and devices · Microphone stays off</span><span class="footer-key"><svg aria-hidden="true"><use href="#ic-keyboard"/></svg><strong>Ctrl + Shift</strong> start / stop · <strong>Esc</strong> cancel</span></footer>
+    <p class="outcome" id="prototype-action" role="status" aria-live="polite"></p>
+  </main>
+  <script>
+    (()=>{
+      'use strict';
+      const root=document.getElementById('dictation-concept');
+      const el=id=>root.querySelector('#'+id);
+      const prefix='Potrebujem porovnať oba modely na rovnakej nahrávke';
+      const pending='a zmerať čas prepisu.';
+      const full=prefix+' '+pending;
+      let scene='listening',mode='live',step=0,reviewSaved=false,finishTimer=null,model='turbo',reviewKey=null;
+      const reviewDrafts=new Map();
+      const drafts=[' a zmerať čas',' a zmerať čas prepis',' a zmerať čas prepisu.'];
+      function setCopy(icon,label){el('action-icon').setAttribute('href','#ic-'+icon);el('action-label').textContent=label;}
+      function setStatus(kind,icon,title,detail){el('status-mark').dataset.kind=kind;el('status-icon').setAttribute('href','#ic-'+icon);el('status-title').textContent=title;el('status-detail').textContent=detail;}
+      function setReview(show){
+        el('review-window').hidden=!show;
+        el('desktop').classList.toggle('has-review',show);
+        if(!show)return;
+        const partial=mode==='live' && scene==='changed';
+        const interrupted=scene==='offline';
+        el('review-window').dataset.mode=partial?'remaining':'all';
+        el('inserted-section').hidden=!partial;
+        el('inserted-text').textContent=prefix;
+        el('review-reason').textContent=interrupted?'This is the text received before the connection failed. Some may already be in your previous text field.':partial?'The active text field changed. Remaining text is ready to copy.':'Read or edit the transcript, then copy it into the app you choose.';
+        el('review-text-label').textContent=interrupted?'Available transcript':partial?'Not inserted':'Transcript';
+        reviewKey=mode+':'+(scene==='idle'?'complete':scene);
+        if(!reviewDrafts.has(reviewKey))reviewDrafts.set(reviewKey,interrupted?prefix:partial?pending:full);
+        el('review-text').value=reviewDrafts.get(reviewKey);
+        el('copy-label').textContent=partial?'Copy remaining text':'Copy text';
+        el('copy-all').hidden=!partial;
+        el('review-confirm').textContent='';
+        updateCount();
+      }
+      function updateCount(){const n=el('review-text').value.trim().split(/\s+/).filter(Boolean).length;el('review-count').textContent=n+' words';if(reviewKey!==null)reviewDrafts.set(reviewKey,el('review-text').value);}
+      function render(){
+        el('notes').classList.toggle('inactive',scene==='changed');
+        el('desktop-label').textContent=scene==='changed'?'You switched to another window':'Your active app';
+        el('timer').textContent=scene==='idle'?'':'00:12';
+        el('status-note').hidden=true;
+        el('recovery-review').hidden=scene!=='offline';
+        el('status-note').classList.remove('error');
+        el('cancel-action').hidden=scene==='complete'||scene==='idle';
+        el('main-action').disabled=false;
+        el('wave').className='wave '+(scene==='listening'?'active':'quiet');
+        el('stable-text').textContent=mode==='live'&&scene!=='idle'?prefix:'';
+        el('draft-text').textContent=mode==='live'&&scene==='listening'?drafts[step]:'';
+        el('draft-text').hidden=scene!=='listening'||mode!=='live';
+        el('caret').hidden=scene==='changed'||scene==='offline'||scene==='complete';
+        el('note-hint').hidden=scene!=='listening';
+        el('note-hint').lastElementChild.textContent=mode==='live'?'The current phrase can still be corrected.':'Text stays in review until you choose to copy it.';
+        el('note-hint').firstElementChild.hidden=mode!=='live';
+        if(scene==='idle'){setStatus('complete','mic','Ready',reviewSaved?'Review saved · Open it when you are ready':'Press Ctrl + Shift to start');setCopy(reviewSaved?'file':'mic',reviewSaved?'Review':'Start');}
+        if(scene==='listening'){setStatus('record','mic',model==='large'?'Recording':'Listening',mode==='live'?'Live text · Voice notes.txt':model==='large'?'After recording · Review mode':'Review mode · Text stays here');setCopy('stop','Finish');}
+        if(scene==='finishing'){setStatus('working','loader','Finishing last phrase','Recording stopped · Waiting for the model');setCopy('loader','Finishing');el('main-action').disabled=true;}
+        if(scene==='changed'){setStatus('attention','window',reviewSaved?'Text kept for review':'Insertion paused','The active text field changed');setCopy('file','Review');el('status-note').hidden=false;el('status-note').textContent='Further text goes to review. Your new window stays untouched.';}
+        if(scene==='offline'){setStatus('error','alert','API unavailable','The local transcription service is not responding');setCopy('link','Retry');el('status-note').hidden=false;el('status-note').classList.add('error');el('status-note').textContent='Recording stopped. Available text is kept for review.';}
+        if(scene==='complete'){setStatus('complete','check',mode==='live'?'Inserted':'Ready for review',mode==='live'?'Voice notes.txt · Dictation complete':'Your transcript is ready');setCopy(mode==='live'?'mic':'file',mode==='live'?'New':'Review');if(mode==='live')el('stable-text').textContent=full;}
+        const descriptions={listening:mode==='live'?'Text appears in your active field while you speak. Only the current phrase is revised; the banner leaves your typing focus in place.':'The model transcribes while you speak. The complete transcript opens for review when you finish.',finishing:'The microphone has stopped. The banner stays visible while the model finishes the last phrase.',changed:'Changing the active field pauses delivery. Review separates text already inserted from the remainder, so you can choose what to copy.',offline:'A connection failure has a distinct state and a retry action. A moving microphone meter alone never stands for a working transcription.',complete:mode==='live'?'The last phrase has been confirmed and delivered. In the app, this small confirmation would then disappear.':'The transcript stays available for editing and copying.',idle:'The app stays available in the system tray. Start the next dictation with Ctrl + Shift.'};
+        el('scene-description').textContent=descriptions[scene];
+        root.querySelectorAll('.scene-choice').forEach(b=>{const chosen=b.dataset.choice===scene;b.classList.toggle('active',chosen);b.setAttribute('aria-pressed',String(chosen));});
+        setReview((scene==='changed'&&!reviewSaved)||(scene==='complete'&&mode==='review'));
+      }
+      function choose(next){clearTimeout(finishTimer);scene=next;reviewSaved=false;el('prototype-action').textContent='';el('settings-panel').hidden=true;el('settings-action').setAttribute('aria-expanded','false');render();}
+      root.querySelectorAll('.scene-choice').forEach(b=>b.addEventListener('click',()=>{choose(b.dataset.choice);if(typeof window.toggleSelect==='function')window.toggleSelect(b);}));
+      el('delivery-mode').addEventListener('change',()=>{mode=el('delivery-mode').value;reviewSaved=false;render();});
+      el('main-action').addEventListener('click',()=>{
+        if(scene==='listening'){choose('finishing');finishTimer=setTimeout(()=>choose('complete'),1300);return;}
+        if(scene==='changed'||(scene==='complete'&&mode==='review')||(scene==='idle'&&reviewSaved)){setReview(true);return;}
+        choose('listening');
+      });
+      function keepReview(){reviewSaved=true;setReview(false);el('review-confirm').textContent='';if(scene==='complete')scene='idle';render();el('prototype-action').textContent='Review stays available from the banner and system tray.';}
+      el('review-close').addEventListener('click',keepReview);el('review-later').addEventListener('click',keepReview);
+      el('cancel-action').addEventListener('click',()=>{clearTimeout(finishTimer);const delivered=mode==='live'&&scene!=='idle';const deliveredText=el('stable-text').textContent+(el('draft-text').hidden?'':el('draft-text').textContent);scene='idle';reviewSaved=false;render();if(delivered){el('stable-text').textContent=deliveredText;el('prototype-action').textContent='Cancelled. Previously inserted text is kept; no further text is delivered.';}else el('prototype-action').textContent='Cancelled. Nothing was inserted.';});
+      el('recovery-review').addEventListener('click',()=>setReview(true));
+      el('settings-action').addEventListener('click',()=>{const open=el('settings-panel').hidden;el('settings-panel').hidden=!open;el('settings-action').setAttribute('aria-expanded',String(open));});
+      function refreshVerificationControls(){
+        const enabled=el('verify-after-recording').checked;
+        const primaryId=el('model-select').selectedOptions[0].dataset.modelId;
+        const choices=Array.from(el('verification-model-select').options).filter(option=>option.value!==primaryId&&!option.disabled);
+        el('verification-model-select').disabled=!enabled||choices.length===0;
+        if(!enabled){el('verification-hint').textContent='Off. The original audio is kept only while processing.';return;}
+        const selected=choices.find(option=>option.value===el('verification-model-select').value);
+        el('verification-hint').textContent=selected?'Second pass: '+selected.textContent+'. Applies to the next recording.':'Choose a different dictation model or turn verification off.';
+      }
+      el('mic-select').addEventListener('change',()=>el('mic-name').textContent=el('mic-select').value);
+      el('model-select').addEventListener('change',()=>{model=el('model-select').value;el('model-name').textContent=model==='turbo'?'KInIT Turbo · SK':'Large v3 · After recording';el('delivery-mode').options[0].disabled=model==='large';if(model==='large'){mode='review';el('delivery-mode').value='review';}render();refreshVerificationControls();});
+      el('verify-after-recording').addEventListener('change',refreshVerificationControls);
+      el('verification-model-select').addEventListener('change',refreshVerificationControls);
+      el('review-text').addEventListener('input',updateCount);
+      el('copy-pending').addEventListener('click',()=>{el('review-confirm').textContent='Prototype action: this button would copy the editable text above.';});
+      el('copy-all').addEventListener('click',()=>{el('review-confirm').textContent='Prototype action: this button would copy the full transcript, including text already inserted.';});
+      setInterval(()=>{if(scene==='listening'&&mode==='live'&&!window.matchMedia('(prefers-reduced-motion: reduce)').matches){step=(step+1)%drafts.length;el('draft-text').textContent=drafts[step];}},1900);
+      render();
+      refreshVerificationControls();
+    })();
+  </script>
+</body>
+</html>

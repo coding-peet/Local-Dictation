@@ -1,0 +1,78 @@
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# .NET and IDE build state
+.vs/
+**/bin/
+**/obj/
+TestResults/
+*.user
+*.suo
+
+# Local build and runtime folders
+/artifacts/
+/build/
+/dist/
+/publish/
+/runtime/
+/data/
+/logs/
+/models/
+/recordings/
+/transcripts/
+/results/
+/backups/
+/.superpowers/
+/.worktrees/
+
+# Legacy/backend runtime folders
+/server/.venv/
+/server/.work/
+/server/models/
+/server/logs/
+/server/samples/
+/server/results/
+/server/benchmarks/
+/server/backups/
+
+# Model weights and downloaded runtime assets
+*.safetensors
+*.gguf
+*.ggml
+*.onnx
+*.pt
+*.pth
+*.bin
+
+# Audio/video data; generate synthetic test audio at test time
+*.wav
+*.mp3
+*.m4a
+*.webm
+*.ogg
+*.flac
+*.aac
+*.mp4
+
+# Published binaries, packages, and diagnostics
+*.exe
+*.dll
+*.pdb
+*.msi
+*.msix
+*.msixbundle
+*.zip
+*.log
+*.dmp
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+local.settings.json
