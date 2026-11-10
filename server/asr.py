@@ -20,7 +20,7 @@ MODELS = {
 
 
 def model_path(name):
-    return ROOT / 'models' / name
+    return Path(os.environ.get('LOCAL_DICTATION_MODEL_ROOT', str(ROOT / 'models'))) / name
 
 
 def download(name):
