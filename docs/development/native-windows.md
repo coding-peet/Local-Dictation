@@ -104,9 +104,11 @@ is 4.18.26100.4. Unblock is temporary suppression, not a permanent exclusion.
 The agent does not automate Windows Security or authentication dialogs.
 
 Peter reported confirming Unblock. The subsequent normal agent launch at 17:27
-(Europe/Bratislava) was still denied by the same ASR rule. File ACLs grant Users
-read/execute access. An effective allowance and successful native launch therefore
-remain unproven; the next controlled check is Peter's direct Explorer launch.
+(Europe/Bratislava) was still denied by the same ASR rule. Peter then confirmed
+that direct launch and Run as administrator also failed. Subsequent event 1121
+records corroborated the manual attempts. File ACLs grant Users read/execute.
+No effective allowance or successful native launch has been confirmed. The next
+step is approval/deployment of this specific client through the company process.
 
 If the prompt is unavailable or approval is rejected, report that specific result
 and use the normal company approval process. Do not change policy, add exclusions,

@@ -67,8 +67,11 @@ on this Defender version. Peter must complete that Windows prompt personally and
 retry the EXE. See [the execution check](native-windows.md#native-acceptance-and-execution-check).
 
 After Peter reported confirming Unblock, the agent's normal launch was still
-rejected by the same ASR rule; no Local Dictation window opened. Native acceptance
-remains pending, including a direct user launch after approval.
+rejected by the same ASR rule; no Local Dictation window opened. Peter confirmed
+that manual launch and Run as administrator also failed; later Defender events
+corroborated those attempts. Native acceptance awaits an effective application
+approval/deployment through the company process. A local support report and
+filtered event evidence are stored outside Git under the runtime diagnostics.
 
 The possible effect of the executable location has not been independently isolated;
 Program Files is not an established remedy for the observed executable trust rule.
