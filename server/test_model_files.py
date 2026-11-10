@@ -10,7 +10,7 @@ from local_dictation.installation import validate_installation
 from local_dictation.downloads import inspect_repository
 from local_dictation.imports import Imports
 
-def make_model(folder):
+def make_model(folder,repo="test/whisper",revision="a"*40):
     folder=Path(folder);folder.mkdir(parents=True,exist_ok=True)
     values={"config.json":{"model_type":"whisper","architectures":["WhisperForConditionalGeneration"]},
         "generation_config.json":{"is_multilingual":True,"lang_to_id":{"<|sk|>":1,"<|en|>":2}},
@@ -22,6 +22,7 @@ def make_model(folder):
     header=json.dumps({"synthetic":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}).encode()
     header+=b" "*((-len(header))%8)
     (folder/"model.safetensors").write_bytes(struct.pack("<Q",len(header))+header+b"\0"*4)
+    (folder/"local-manifest.json").write_text(json.dumps({"repo":repo,"revision":revision}))
     return folder
 
 class ModelFilesTests(unittest.TestCase):
@@ -49,7 +50,7 @@ class ModelFilesTests(unittest.TestCase):
             c=Catalog(config);manager=Imports(config,c)
             job={"id":"safe-stage","cancel":__import__("threading").Event(),"state":"queued"}
             spec={"id":"test/model","revision":"a"*40,"files":[],"languages":["sk","en","auto"],"download_bytes":1}
-            def staged(spec,stage,*args):make_model(stage)
+            def staged(spec,stage,*args):make_model(stage,spec["id"],spec["revision"])
             with patch("local_dictation.imports.download_snapshot",side_effect=staged),patch.object(c,"save",side_effect=OSError("full")):
                 manager.run(job,spec)
             self.assertEqual(job["state"],"failed")

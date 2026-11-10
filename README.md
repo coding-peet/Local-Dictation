@@ -13,7 +13,8 @@ and cursor-insertion acceptance remain pending. Live transcription is
 experimental: its first measured Slovak result was less accurate than the
 after-recording result.
 
-See [validation and remaining checks](docs/development/validation.md) before
+See [the completion follow-up](docs/development/completion-followup.md) and
+[validation and remaining checks](docs/development/validation.md) before
 using direct insertion for everyday work.
 
 
@@ -76,6 +77,9 @@ Keep remaining dictation resolves only untouched differences. Undo restores
 prior choices. A final manual draft is separate and takes precedence until
 you explicitly rebuild it from choices.
 
+The Original tabs show the complete immutable source transcripts. Recording
+details preserve model revisions and comparison identity when available.
+
 Copy reviewed text returns plain text. It does not automatically replace
 text already inserted in another app. Copy and Close preserve the pending
 Review item. Dismiss explicitly removes it.
@@ -86,7 +90,8 @@ establishing which wording is correct.
 
 ## Try another model
 
-In Settings, select Models.
+In Settings, select Models. Missing catalog models can be selected there for
+pinned installation or same-revision repair.
 
 - Choose an installed model from the Dictation dropdown and use Test selected
   model with audio.

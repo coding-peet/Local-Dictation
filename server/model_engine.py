@@ -89,7 +89,7 @@ class WhisperEngine:
         if self.runtime_ready:
             return self.runtime_warmup_seconds
         start = time.perf_counter()
-        LOG.info("Preparing transcription libraries, CUDA and fast CPU cache...")
+        LOG.info("Preparing transcription libraries and CUDA; fast_cpu_cache_requested=%s", cache_fast)
         # Resolve lazy model/processor imports now, rather than on first dictation.
         from transformers import (AutoModelForSpeechSeq2Seq, AutoProcessor,
                                   WhisperForConditionalGeneration, WhisperProcessor)

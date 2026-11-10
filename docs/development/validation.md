@@ -1,5 +1,9 @@
 # Validation — 2026-11-10
 
+The later [completion follow-up](completion-followup.md) supersedes the initial
+deferred list below: those four items are implemented; native acceptance remains
+open. Current automated totals are 86 Python and 39 native core tests.
+
 ## Build and automated tests
 
 - Backend: 77 tests passed.
@@ -133,7 +137,7 @@ disk-write failure could strand a downloaded model and prevent retry; it was
 also fixed with regression coverage. Slow runtime initialization and the
 cooperative-cancellation outcome received additional regressions during validation.
 
-Deferred minor items:
+Initially deferred items, completed in the later follow-up:
 
 - Pending Review provenance lacks both pinned revisions/comparison snapshot identity.
 - Banner placement uses the primary monitor.

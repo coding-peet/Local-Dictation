@@ -91,6 +91,9 @@ session.error
 ~~~
 
 A validation error before session admission can be a session.error without an ID.
+session.started additionally snapshots model_revision, verification_model,
+verification_revision and session_started_utc. Unknown revisions stay null.
+
 transcript.updated carries text, committed_text and draft_text, plus decoder/
 audio-backlog measurements. The committed prefix is finalized at phrase boundaries;
 the draft may change.
@@ -99,7 +102,7 @@ transcript.final means primary text is final. It does not mean optional verifica
 or model cleanup has finished. Wait for session.completed for the complete lifecycle.
 
 verification.completed includes immutable primary and verification strings and
-ordered pieces. Each piece has id, primary, verification and different. Compose
+ordered pieces, both pinned revisions and comparison_id. Each piece has id, primary, verification and different. Compose
 by concatenating the chosen exact strings. Empty alternatives are meaningful.
 Do not interpret string offsets across Python Unicode and .NET UTF-16.
 
@@ -130,6 +133,10 @@ Inspect with a repository URL or owner/name:
 ~~~json
 {"repository":"https://huggingface.co/openai/whisper-tiny"}
 ~~~
+
+For a catalog model, send catalog_model_id instead of repository; the server
+uses its pinned revision. Registered models also retain their pin when inspected
+for repair. Healthy installed models cannot be replaced by this operation.
 
 The response identifies the pinned commit, original files, total bytes and
 compatibility. It does not download the model or establish quality.

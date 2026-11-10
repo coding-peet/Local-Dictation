@@ -61,6 +61,8 @@ class Catalog:
                 validate_installation(path,entry.get("files"))
                 entry["installed_revision"]=None
                 manifest=path/"local-manifest.json"
+                if entry.get("managed") and not manifest.exists():
+                    raise ValueError("Managed model has no pinned installation manifest.")
                 if manifest.exists():
                     pinned=json.loads(manifest.read_text(encoding="utf-8"))
                     if pinned.get("repo")!=entry["id"] or pinned.get("revision")!=entry.get("revision"):
@@ -71,6 +73,10 @@ class Catalog:
         except (OSError,ValueError,KeyError,TypeError):
             entry["installed"]=False
             entry["installed_revision"]=None
+            entry["runtime_tested"]=False
+            entry["quality_verified"]=False
+            entry["live_ready"]=False
+            self.validations.pop(entry["id"],None)
 
     def models(self):
         with self.lock:

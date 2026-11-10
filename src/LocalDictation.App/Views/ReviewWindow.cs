@@ -97,10 +97,10 @@ public sealed class ReviewWindow : Window
         var scroller=new ScrollViewer { Content=middle,VerticalScrollBarVisibility=ScrollBarVisibility.Auto };
         var tabs=new TabControl();
         tabs.Items.Add(new TabItem{Header="_Reviewed text",Content=scroller});
-        tabs.Items.Add(new TabItem{Header="_Dictation original",Content=Original(document.Primary,document.PrimaryModel,true)});
+        tabs.Items.Add(new TabItem{Header="_Dictation original",Content=Original(document.Primary,document.PrimaryModel,true,ReviewCopySource.Dictation)});
         if(document.VerificationModel!=null)
             tabs.Items.Add(new TabItem{Header="_Verification original",Content=Original(document.Verification,
-                document.VerificationModel,document.VerificationCompleted)});
+                document.VerificationModel,document.HasCompletedVerification,ReviewCopySource.Verification)});
         root.Children.Add(tabs); Content=root;
         SizeChanged+=(_,_) =>
         {
@@ -122,7 +122,7 @@ public sealed class ReviewWindow : Window
         Refresh();
     }
 
-    UIElement Original(string source,string model,bool confirmed)
+    UIElement Original(string source,string model,bool confirmed,ReviewCopySource kind)
     {
         var page=new StackPanel{Margin=new(16)};
         page.Children.Add(Ui.Text("Original model output",17,true));
@@ -130,12 +130,12 @@ public sealed class ReviewWindow : Window
         page.Children.Add(Ui.Text(confirmed?"This source stays unchanged when you choose phrases or edit the final draft.":
             "This item has no confirmed completed verification. Your dictation is preserved.",13));
         var text=Ui.Box(false,240);text.Text=confirmed?source:"";
+        text.Background=Ui.Brush("Canvas");text.BorderBrush=Ui.Brush("Border");
         System.Windows.Automation.AutomationProperties.SetName(text,"Original transcript from "+model);
         page.Children.Add(text);
         var copySource=Ui.Button("Copy this original",()=>
         {
-            System.Windows.Clipboard.SetText(source);
-            note.Text="Original copied. Your phrase choices and final draft are unchanged.";
+            note.Text=ReviewCopy.Copy(document,kind,System.Windows.Clipboard.SetText).Message;
         });
         copySource.IsEnabled=confirmed&&source.Length>0;page.Children.Add(copySource);
         if(confirmed&&source.Length==0)page.Children.Add(Ui.Text("This model returned no text.",13));
@@ -222,9 +222,7 @@ public sealed class ReviewWindow : Window
     }
     void Copy()
     {
-        if(document.UnresolvedCount!=0)return;
-        System.Windows.Clipboard.SetText(document.OutputText);
-        note.Text="Copied. This item remains in Review until you dismiss it.";
+        note.Text=ReviewCopy.Copy(document,ReviewCopySource.Reviewed,System.Windows.Clipboard.SetText).Message;
     }
     void Dismiss()
     {

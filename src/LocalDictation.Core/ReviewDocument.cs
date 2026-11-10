@@ -25,6 +25,11 @@ public sealed class ReviewDocument
     public string? PreviousManualDraft { get; set; }
     public List<string> ManualDraftArchive { get; set; } = [];
 
+    [JsonIgnore] public bool HasCompletedVerification => VerificationCompleted ||
+        VerificationModel!=null && Pieces.Count>0 &&
+        Pieces.All(p=>p.Id.Length==16&&p.Id.All(Uri.IsHexDigit)) &&
+        string.Concat(Pieces.Select(p=>p.Primary))==Primary &&
+        string.Concat(Pieces.Select(p=>p.Verification))==Verification;
     [JsonIgnore] public int UnresolvedCount => Pieces.Count(p => p.Different && !Choices.ContainsKey(p.Id));
     [JsonIgnore] public string WorkingText => string.Concat(Pieces.Select(p =>
         Choices.TryGetValue(p.Id, out var choice)

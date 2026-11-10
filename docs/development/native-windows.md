@@ -118,8 +118,13 @@ It inspects model/processor/tokenizer/generation metadata and exact file sizes.
 
 Downloads go to a staging directory. Complete configuration, tokenizer files,
 safetensors headers/shards and pinned file lengths are validated before atomic
-publication. A failed registry write rolls back the new registration and newly
-published directory. Existing installed models are preserved.
+publication. A failed registry write rolls back the registration and newly published
+directory; same-revision repair restores the prior incomplete managed directory.
+Healthy installed models are preserved. This is in-process rollback; durable
+crash journaling/startup reconciliation is not implemented.
+
+Managed models require their matching pinned manifest. Missing or invalid
+identity clears runtime/quality evidence and enables repair.
 
 Registry restoration checks installation completeness. File changes invalidate
 the cached validation. A deleted/truncated weight or missing tokenizer disables
