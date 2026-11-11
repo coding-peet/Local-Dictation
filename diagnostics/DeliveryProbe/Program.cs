@@ -1,12 +1,18 @@
 using System.Diagnostics;
+using System.Reflection;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
+using System.Windows.Input;
+using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Threading;
+using LocalDictation.App;
 using LocalDictation.App.Services;
+using LocalDictation.App.Views;
+using LocalDictation.Core;
 
 namespace LocalDictation.DeliveryProbe;
 
@@ -14,17 +20,26 @@ static class Program
 {
     [STAThread] static void Main(string[] args)
     {
+        if(args.Length==3&&args[0]=="--clipboard-checks"&&args[1]=="--report")
+        {
+            var path=Path.GetFullPath(args[2]);Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            try{ClipboardChecks.Run();File.WriteAllText(path,JsonSerializer.Serialize(new{Passed=true,NativeFormatCloningOnly=true,UserClipboardUnchanged=true}));}
+            catch(Exception error){Environment.ExitCode=1;File.WriteAllText(path,JsonSerializer.Serialize(new{Passed=false,NativeFormatCloningOnly=true,Error=error.ToString()}));}
+            return;
+        }
         var report=args.Length==2&&args[0]=="--report"?Path.GetFullPath(args[1]):
             Path.Combine(@"C:\AI\LocalDictation\diagnostics","delivery-probe-"+DateTime.Now.ToString("yyyyMMdd-HHmmss")+".json");
         var application=new System.Windows.Application{ShutdownMode=ShutdownMode.OnMainWindowClose};
+        application.Resources.MergedDictionaries.Add(new ResourceDictionary{Source=new Uri("/LocalDictation;component/Theme.xaml",UriKind.Relative)});
         application.Run(new ProbeWindow(report));
     }
 }
 
-sealed record StepResult(string Name,bool Passed,double Milliseconds,string Detail,string Target,string Other,bool? Conflict);
+sealed record StepResult(string Name,bool Passed,double Milliseconds,string Detail,string Target,string Other,bool? Conflict,DeliveryDiagnostic? Diagnostic);
 
 sealed class ProbeWindow : Window
 {
+    const BindingFlags Members=BindingFlags.Instance|BindingFlags.Public|BindingFlags.NonPublic;
     const string Prefix="Prefix | ",Suffix=" | Suffix",OtherText="Other field must stay untouched.";
     const string Draft="pôvodný diktát",Expanded="pôvodný diktát pokračuje",Approved="overený diktát";
     readonly TextBox target=new(){MinHeight=62,FontSize=16,VerticalContentAlignment=VerticalAlignment.Center};
@@ -85,18 +100,74 @@ sealed class ProbeWindow : Window
         }
         reviewSurface.Show();reviewSurface.Activate();((Button)reviewSurface.Content).Focus();await Settle();
     }
-    async Task Step(string name,Func<Task> check)
+    async Task Step(string name,Func<Task> check,bool continueAfterFailure=false)
     {
         status.Text="Running: "+name;var watch=Stopwatch.StartNew();
         try
         {
-            await check();results.Add(new(name,true,watch.Elapsed.TotalMilliseconds,"Passed",target.Text,other.Text,current?.IsConflict));
+            await check();results.Add(new(name,true,watch.Elapsed.TotalMilliseconds,"Passed",target.Text,other.Text,current?.IsConflict,current?.LastDiagnostic));
             log.Text+=$"PASS  {name} ({watch.Elapsed.TotalMilliseconds:F0} ms)\n";
         }
         catch(Exception exception)
         {
-            results.Add(new(name,false,watch.Elapsed.TotalMilliseconds,exception.ToString(),target.Text,other.Text,current?.IsConflict));
-            log.Text+=$"FAIL  {name}\n{exception}\n";throw;
+            results.Add(new(name,false,watch.Elapsed.TotalMilliseconds,exception.ToString(),target.Text,other.Text,current?.IsConflict,current?.LastDiagnostic));
+            log.Text+=$"FAIL  {name}\n{exception}\n";if(!continueAfterFailure)throw;
+        }
+    }
+
+    static T Field<T>(object instance,string name)=>(T)instance.GetType().GetField(name,Members)!.GetValue(instance)!;
+    static void Set(object instance,string name,object? value)=>instance.GetType().GetField(name,Members)!.SetValue(instance,value);
+    async Task ControllerCompletion(AutomationWorker worker,bool verify)
+    {
+        var previousHome=Environment.GetEnvironmentVariable("LOCAL_DICTATION_HOME");
+        var syntheticHome=Path.Combine(Path.GetTempPath(),"LocalDictation-NativeCompletion-"+Guid.NewGuid().ToString("N"));
+        AppController? controller=null;object? runState=null;
+        try
+        {
+            Environment.SetEnvironmentVariable("LOCAL_DICTATION_HOME",syntheticHome);
+            controller=new AppController(noHotkey:true);
+            foreach(var name in new[]{"timer","reconnectTimer","resumeTimer"})Field<DispatcherTimer>(controller,name).Stop();
+            ResetText();await FocusTarget(Prefix.Length);current=await CaptureOwn(worker,this);
+            var settings=new Settings{InsertAtCursor=false,VerifyAfterRecording=verify,PrimaryModel="native-fixture/dictation",VerificationModel="native-fixture/verification"};
+            var runType=typeof(AppController).GetNestedType("Run",BindingFlags.NonPublic)!;
+            runState=Activator.CreateInstance(runType,Members,null,[settings],null)!;
+            var document=Field<ReviewDocument>(runState,"Review");
+            Set(runState,"Delivery",current);Set(runState,"DestinationChecked",true);Set(runState,"Recording",false);Set(runState,"Closing",true);
+            Set(controller,"active",runState);
+            Field<Dictionary<string,ITextDelivery>>(controller,"destinations")[document.Id]=current;
+            async Task Handle(object payload)
+            {
+                using var parsed=JsonDocument.Parse(JsonSerializer.Serialize(payload));
+                await (Task)typeof(AppController).GetMethod("Handle",Members)!.Invoke(controller,[runState,parsed.RootElement.Clone()])!;
+            }
+            await Handle(new{type="transcript.final",text=Approved});
+            Require(target.Text==Prefix+Suffix,"Preview-only final event inserted before completion.");
+            if(verify)await Handle(new{type="verification.completed",verification=Approved,pieces=new[]{new ReviewPiece("common",Approved,Approved,false)}});
+            await Handle(new{type="session.completed"});
+            await (Task)typeof(AppController).GetMethod("CompleteRun",Members)!.Invoke(controller,[runState])!;
+            Require(target.Text==Prefix+Approved+Suffix,"Controller did not complete native delivery: "+current.Reason+" / "+document.Reason);
+            Require(document.InsertedAt!=null,"Native controller completion did not retain an insertion receipt.");
+            Require(controller.BannerReview==null,"Successful native completion left a pending Review.");
+            Require(other.Text==OtherText,"Native controller completion changed the unrelated field.");
+            await (Task)typeof(AppController).GetMethod("CompleteRun",Members)!.Invoke(controller,[runState])!;
+            Require(target.Text==Prefix+Approved+Suffix,"Repeated completion duplicated native text.");
+        }
+        finally
+        {
+            controller?.Dispose();
+            if(controller!=null)Field<BannerWindow>(controller,"banner").Close();
+            if(runState!=null)
+            {
+                await Field<SessionStream>(runState,"Stream").DisposeAsync();
+                await Field<MicrophoneCapture>(runState,"Capture").DisposeAsync();
+                Field<CancellationTokenSource>(runState,"Cancel").Dispose();
+            }
+            Environment.SetEnvironmentVariable("LOCAL_DICTATION_HOME",previousHome);
+            // Only the exact private synthetic fixture directory is eligible for cleanup.
+            var full=Path.GetFullPath(syntheticHome);var temp=Path.GetFullPath(Path.GetTempPath());
+            if(full.StartsWith(temp,StringComparison.OrdinalIgnoreCase)&&Path.GetFileName(full).StartsWith("LocalDictation-NativeCompletion-",StringComparison.Ordinal))
+                if(Directory.Exists(full))Directory.Delete(full,true);
+            await FocusTarget(Prefix.Length);
         }
     }
 
@@ -107,6 +178,8 @@ sealed class ProbeWindow : Window
         using var worker=new AutomationWorker();
         try
         {
+            await Step("Native clipboard format cloning preserves synthetic memory and GDI resources",()=>{ClipboardChecks.Run();return Task.CompletedTask;});
+            await Step("Failed native clipboard restoration retains every original backup format",()=>{ClipboardChecks.RecoveryChecks();return Task.CompletedTask;});
             observer=new GlobalInput{ShortcutEnabled=false,SessionActive=false};
             observer.UserEdited+=input=>
             {
@@ -175,13 +248,99 @@ sealed class ProbeWindow : Window
                 Require(!applied&&current.IsConflict,"Closed target was not rejected.");
                 Require(target.Text==before&&other.Text==OtherText,"Missing-target delivery wrote into a surviving field.");
             });
-            status.Text=$"PASS — {results.Count} native delivery checks";status.Foreground=Brushes.DarkGreen;
+            await Step("Controller completion inserts final text at the real captured cursor",async()=>
+            {
+                await ControllerCompletion(worker,verify:false);
+            },continueAfterFailure:true);
+            await Step("Controller verification agreement inserts at the real captured cursor",async()=>
+            {
+                await ControllerCompletion(worker,verify:true);
+            },continueAfterFailure:true);
+            await Step("Long Unicode live delivery fits the original two-second worker deadline",async()=>
+            {
+                ResetText();await FocusTarget(Prefix.Length);current=await CaptureOwn(worker,this);
+                var before=ClipboardChecks.Fingerprint();
+                var text=string.Concat(Enumerable.Repeat("  č. 42 😀 — žĺťučký kôň; technical term  ",80));
+                var applied=await worker.Run(token=>current.Apply(text,token));
+                Require(applied,"Long live delivery failed: "+current.Reason);
+                Require(target.Text==Prefix+text+Suffix,"Long live delivery changed Unicode or surrounding text.");
+                Require(current.LastDiagnostic?.QueuedInputEvents==4,"Live text was not delivered in one guarded paste burst.");
+                ClipboardChecks.RequireSame(before,ClipboardChecks.Fingerprint());
+            });
+            await Step("Long Unicode final delivery preserves the entire draft",async()=>
+            {
+                ResetText();await FocusTarget(Prefix.Length);current=await CaptureOwn(worker,this);
+                var unicode=string.Concat(Enumerable.Repeat("  č. 42 😀 — žĺťučký kôň; technical term  ",80));
+                using var longWorker=new AutomationWorker();
+                var finished=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var clipboardBefore=ClipboardChecks.Fingerprint();
+                bool applied=false;
+                try{applied=await longWorker.Run(token=>{try{return current.Apply(unicode,token,restoreFocus:true);}finally{finished.TrySetResult();}});}
+                finally{if(!applied)current.Invalidate();await finished.Task.WaitAsync(TimeSpan.FromSeconds(5));await Settle();}
+                Require(applied,"Long Unicode delivery failed: "+current.Reason);
+                ClipboardChecks.RequireSame(clipboardBefore,ClipboardChecks.Fingerprint());
+                Require(current.LastDiagnostic?.QueuedInputEvents==4,"A complete final draft was not delivered in one paste burst.");
+                Require(target.Text==Prefix+unicode+Suffix,"Long Unicode delivery lost or changed text.");
+                Require(other.Text==OtherText,"Unrelated field changed.");
+            },continueAfterFailure:true);
+            await Step("Rich-text final delivery preserves formatting and surrounding text",async()=>
+            {
+                var field=new RichTextBox{Margin=new(16),FontSize=16};
+                var paragraph=new Paragraph();paragraph.Inlines.Add(new Bold(new Run(Prefix)));paragraph.Inlines.Add(new Italic(new Run(Suffix)));
+                field.Document=new FlowDocument(paragraph);
+                var initialRichText=new TextRange(field.Document.ContentStart,field.Document.ContentEnd).Text;
+                Require(initialRichText==Prefix+Suffix+"\r\n","The synthetic rich-text baseline is invalid: "+JsonSerializer.Serialize(initialRichText));
+                temporaryTarget=new Window{Title="Delivery probe — synthetic rich-text target",Width=780,Height=210,Owner=this,Content=field,WindowStartupLocation=WindowStartupLocation.CenterOwner};
+                temporaryTarget.Show();temporaryTarget.Activate();field.Focus();
+                var prefixRun=((Bold)paragraph.Inlines.FirstInline).Inlines.FirstInline;
+                field.CaretPosition=prefixRun.ContentEnd;await Settle();using var richWorker=new AutomationWorker();current=await CaptureOwn(richWorker,temporaryTarget);
+                var applied=await richWorker.Run(token=>current.Apply(Approved,token,restoreFocus:true));
+                Require(applied,"Rich-text delivery failed: "+current.Reason);
+                var observedRichText=new TextRange(field.Document.ContentStart,field.Document.ContentEnd).Text;
+                Require(observedRichText==Prefix+Approved+Suffix+"\r\n","Rich-text delivery changed surrounding text: "+JsonSerializer.Serialize(observedRichText));
+                Require(paragraph.Inlines.OfType<Bold>().Any(),"Rich-text delivery removed existing formatting.");
+                Require(other.Text==OtherText,"Unrelated field changed.");
+                temporaryTarget.Close();temporaryTarget=null;await Settle();
+            });
+            await Step("A delayed native paste keeps its own payload until deliberate clipboard recovery",async()=>
+            {
+                ResetText();await FocusTarget(Prefix.Length);using var delayedWorker=new AutomationWorker();current=await CaptureOwn(delayedWorker,this);
+                var before=ClipboardChecks.Fingerprint();
+                const string delayedText="Delayed synthetic payload č. 42 😀";
+                var pasted=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var delay=new DispatcherTimer{Interval=TimeSpan.FromMilliseconds(1600)};
+                delay.Tick+=(_,_)=>{delay.Stop();target.Paste();pasted.TrySetResult();};
+                KeyEventHandler intercept=(_,e)=>
+                {
+                    if(e.Key==Key.V&&(Keyboard.Modifiers&ModifierKeys.Control)!=0){e.Handled=true;delay.Start();}
+                };
+                target.PreviewKeyDown+=intercept;
+                try
+                {
+                    var applied=await delayedWorker.Run(token=>current.Apply(delayedText,token,restoreFocus:true),TimeSpan.FromSeconds(5));
+                    Require(!applied&&ClipboardRecovery.HasPending,"An unconfirmed queued paste restored/discarded its clipboard lease.");
+                    Require(System.Windows.Clipboard.GetText()==delayedText,"Unknown paste exposed unrelated restored clipboard text.");
+                    await pasted.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    Require(target.Text==Prefix+delayedText+Suffix,"The deferred native paste consumed unrelated clipboard data.");
+                    Require(!await delayedWorker.Run(token=>current.Apply(delayedText,token,true)),"An unknown completed paste was automatically repeated.");
+                    Require(target.Text==Prefix+delayedText+Suffix,"Retry duplicated the delayed text.");
+                }
+                finally
+                {
+                    target.PreviewKeyDown-=intercept;delay.Stop();
+                    // The fixture has now inspected the known destination and stopped its deferred paste.
+                    var recovery=ClipboardRecovery.RestoreAfterInspection();
+                    Require(recovery.Succeeded,"Deliberate recovery failed: "+recovery.Message);
+                }
+                ClipboardChecks.RequireSame(before,ClipboardChecks.Fingerprint());
+            });
+            var passed=results.All(r=>r.Passed);status.Text=$"{(passed?"PASS":"FAIL")} — {results.Count(r=>r.Passed)}/{results.Count} native delivery checks";status.Foreground=passed?Brushes.DarkGreen:Brushes.DarkRed;
         }
         catch(Exception exception)
         {
             if(results.LastOrDefault()?.Passed!=false)
             {
-                results.Add(new("Probe initialization",false,0,exception.ToString(),target.Text,other.Text,current?.IsConflict));
+                results.Add(new("Probe initialization",false,0,exception.ToString(),target.Text,other.Text,current?.IsConflict,current?.LastDiagnostic));
                 log.Text+="FAIL  Probe initialization\n"+exception+"\n";
             }
             status.Text=$"FAIL — {results.Last().Name}";status.Foreground=Brushes.DarkRed;
@@ -190,7 +349,7 @@ sealed class ProbeWindow : Window
         {
             current=null;observer?.Dispose();observer=null;reviewSurface?.Hide();temporaryTarget?.Close();temporaryTarget=null;
             var report=new{StartedUtc=started,CompletedUtc=DateTimeOffset.UtcNow,Fixture="Local Dictation DeliveryProbe",NativeProductCode=true,
-                SyntheticFieldsOnly=true,Passed=results.Count==7&&results.All(r=>r.Passed),ObservedInputs=observedInputs,
+                SyntheticFieldsOnly=true,Passed=results.Count==15&&results.All(r=>r.Passed),ObservedInputs=observedInputs,
                 IgnoredProgrammaticFocus=ignoredProgrammaticFocus,Results=results};
             try
             {

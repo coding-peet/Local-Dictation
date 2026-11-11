@@ -22,7 +22,7 @@ public sealed class AppController : IDisposable
         public SessionStream Stream=new();
         public ITextDelivery? Delivery;
         public DestinationStamp Destination;
-        public bool CanDeliver,NeedsReview,PrimaryFinal,Completed,NormalCompletion,AutoInsertBlocked,Verifying,Closing,Recording=true;
+        public bool CanDeliver,NeedsReview,PrimaryFinal,Completed,NormalCompletion,AutoInsertBlocked,Verifying,Closing,DestinationChecked,Recording=true;
         public DateTimeOffset Started=DateTimeOffset.Now;
         public string Text="";
         public string Stage="microphone",Failure="";
@@ -40,7 +40,7 @@ public sealed class AppController : IDisposable
     readonly HashSet<string> inserting=[];
     readonly Dictionary<string,ReviewDocument> canonicalReviews=[];
     readonly HashSet<Task> recordingTasks=[];
-    bool exiting;
+    bool exiting,disposed,restoringClipboard;
     ReviewDocument? placementReview;
     CompactReviewProgress? bannerProgress;
     string? applyingBannerId;
@@ -54,6 +54,7 @@ public sealed class AppController : IDisposable
     readonly AutomationWorker automation=new();
     readonly GlobalInput input;
     readonly Forms.NotifyIcon tray;
+    readonly Forms.ToolStripMenuItem clipboardRecoveryAction;
     readonly DispatcherTimer timer=new() {Interval=TimeSpan.FromMilliseconds(80)};
     readonly BannerWindow banner;
     readonly bool noHotkey;
@@ -73,14 +74,14 @@ public sealed class AppController : IDisposable
     public string DetailLabel {get;private set;}="";
     public string LatestText => active?.Text??BannerReview?.OutputText??lastTranscript;
     public bool LiveTranscription=>active?.Settings.Live??Settings.Live;
-    public string DeliveryMessage=>active is {} run
+    public string DeliveryMessage=>ClipboardRecovery.HasPending?ClipboardRecovery.Message:active is {} run
         ?run.CanDeliver?"Text is also inserted at the original cursor.":run.Review.Reason
         :BannerReview?.Reason??lastDeliveryMessage;
     public float Level => active?.Capture.Level??0;
     public bool IsRecording => active?.Recording==true;
     public bool AtCursor=>active?.CanDeliver==true;
     public bool IsBusy => active!=null;
-    public bool ShowBanner => IsBusy||BannerReview!=null||DateTimeOffset.Now<hideAt;
+    public bool ShowBanner => ClipboardRecovery.HasPending||active is {DestinationChecked:true}||BannerReview!=null||DateTimeOffset.Now<hideAt;
     public string MicrophoneLabel=>active?.Capture.DeviceName??"Microphone";
     public string ModelLabel=>Models.FirstOrDefault(m=>m.Id==(active?.Settings.PrimaryModel??Settings.PrimaryModel))?.Name??Settings.PrimaryModel;
     public string ElapsedLabel=>active is {} run?TimeSpan.FromSeconds(run.Capture.CapturedBytes/32000.0).ToString(@"mm\:ss"):"";
@@ -114,13 +115,19 @@ public sealed class AppController : IDisposable
         menu.Items.Add("Settings",null,(_,_)=>ShowSettings());
         menu.Items.Add("Pending Review",null,(_,_)=>OpenLatestReview());
         menu.Items.Add("History",null,(_,_)=>ShowHistory());
+        clipboardRecoveryAction=(Forms.ToolStripMenuItem)menu.Items.Add("Restore previous clipboard…",null,async(_,_)=>await RestoreClipboardAfterInspection());
+        clipboardRecoveryAction.Enabled=ClipboardRecovery.HasPending;
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Exit",null,(_,_)=>Exit());
         tray=new Forms.NotifyIcon {Text="Local Dictation",Icon=System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!)??System.Drawing.SystemIcons.Application,
             ContextMenuStrip=menu,Visible=true};
         tray.DoubleClick+=(_,_)=>ShowSettings();
+        ClipboardRecovery.Changed+=ClipboardRecoveryChanged;
         timer.Tick+=(_,_) =>
         {
+            // Neither showing nor hiding our UI may change focus before the
+            // initial external element and cursor have been captured.
+            if(active is {DestinationChecked:false})return;
             if(active!=null)
             {
                 var elapsed=TimeSpan.FromSeconds(active.Capture.CapturedBytes/32000.0);
@@ -139,6 +146,54 @@ public sealed class AppController : IDisposable
                 WindowsTextDelivery.ForegroundWindow==target.Window)await Deliver(run);
         };
         resumeTimer.Start();
+    }
+
+    void ClipboardRecoveryChanged()
+    {
+        System.Windows.Application.Current.Dispatcher.BeginInvoke(()=>
+        {
+            if(disposed)return;
+            clipboardRecoveryAction.Enabled=ClipboardRecovery.HasPending&&!restoringClipboard;
+            if(ClipboardRecovery.HasPending)ShowClipboardRecovery();
+            else{Changed?.Invoke();banner.Refresh();}
+        });
+    }
+
+    void ShowClipboardRecovery()
+    {
+        var message=ClipboardRecovery.Message;
+        ConnectionMessage=message;DetailLabel=message;lastDeliveryMessage=message;
+        if(BannerReview is {} document){document.Reason=message;SaveReview(document);}
+        else if(!IsBusy)StateLabel="Clipboard recovery";
+        Changed?.Invoke();banner.Refresh();
+    }
+
+    async Task RestoreClipboardAfterInspection()
+    {
+        if(restoringClipboard||!ClipboardRecovery.HasPending)return;
+        if(MessageBox.Show("Inspect or stop the original destination first. It may still have a queued paste. Select OK only after it can no longer process that paste.\n\nRestore your previous clipboard now? Your saved dictation stays in Review.",
+            "Restore previous clipboard",MessageBoxButton.OKCancel,MessageBoxImage.Warning)!=MessageBoxResult.OK)return;
+        restoringClipboard=true;clipboardRecoveryAction.Enabled=false;
+        try
+        {
+            // A stalled UIA worker must not prevent the deliberate recovery action.
+            var result=await Task.Run(ClipboardRecovery.RestoreAfterInspection);
+            ConnectionMessage=result.Message;DetailLabel=result.Message;lastDeliveryMessage=result.Message;
+            if(BannerReview is {} document){document.Reason=result.Message;SaveReview(document);}
+            else if(result.Succeeded)StateLabel="Clipboard restored";
+            hideAt=DateTimeOffset.Now.AddSeconds(6);
+        }
+        catch(Exception error)
+        {
+            Diagnostics.Error("clipboard recovery",error);
+            ConnectionMessage="The previous clipboard is still held. Inspect the destination and retry Restore previous clipboard from the tray.";
+            DetailLabel=lastDeliveryMessage=ConnectionMessage;
+        }
+        finally
+        {
+            restoringClipboard=false;clipboardRecoveryAction.Enabled=ClipboardRecovery.HasPending;
+            Changed?.Invoke();banner.Refresh();
+        }
     }
 
     public void SetRecordingControlWindow(nint window)=>input.NonActivatingWindow=window;
@@ -186,7 +241,7 @@ public sealed class AppController : IDisposable
 
     async Task WithdrawForReview(Run run,bool restoreFocus)
     {
-        if(run.Delivery==null||run.Delivery.IsConflict||run.Text.Length==0)return;
+        if(run.Delivery==null||run.Delivery.IsConflict||run.Delivery.InsertedText.Length==0)return;
         await deliveryGate.WaitAsync();
         deliveryBusy=true;
         try
@@ -210,6 +265,7 @@ public sealed class AppController : IDisposable
     {
         document=CanonicalReview(document);
         if(document.InsertedAt!=null)return new(true,"This Review was already inserted.");
+        if(ClipboardRecovery.HasPending)return new(false,ClipboardRecovery.Message);
         if(!document.CanInsert)return new(false,"Resolve the remaining choices before inserting.");
         if(exiting||IsBusy||deliveryBusy||!inserting.Add(document.Id))return new(false,"Finish the current operation, then try Accept again.");
         try
@@ -220,12 +276,13 @@ public sealed class AppController : IDisposable
             SaveReview(document);
             if(pending.UnsavedIds.Contains(document.Id))return new(false,"Protected saving failed. Your choices are preserved in this window; fix storage before inserting.");
             bool inserted;
-            try{inserted=await automation.Run(token=>target.Apply(document.OutputText,token,true));}
+            try{inserted=await automation.Run(token=>target.Apply(document.OutputText,token,true),TimeSpan.FromSeconds(5));}
             catch(Exception){inserted=false;}
             if(!inserted)return new(false,target.Reason.Length>0?target.Reason:"The original destination could not be validated. Choose another destination.");
             // Persist the receipt before cleanup. A cleanup failure must never trigger another insertion.
             document.InsertedAt=DateTimeOffset.UtcNow;document.DraftWithdrawn=false;
-            lastTranscript=document.OutputText;lastDeliveryMessage="Finished text was inserted at the original cursor.";
+            var deliveryWarning=target.Reason;
+            lastTranscript=document.OutputText;lastDeliveryMessage=deliveryWarning.Length>0?deliveryWarning:"Finished text was inserted at the original cursor.";
             SaveReview(document);
             if(BannerReview?.Id==document.Id)bannerProgress=null;
             if(pending.UnsavedIds.Contains(document.Id))
@@ -235,15 +292,16 @@ public sealed class AppController : IDisposable
                 try{DismissReview(document.Id);}
                 catch(Exception){ConnectionMessage="Text was inserted. Pending cleanup failed; this Review is marked as already inserted.";}
             }
-            placementReview=null;StateLabel="Inserted";DetailLabel="Reviewed text inserted. Nothing was submitted.";
+            placementReview=null;StateLabel="Inserted";DetailLabel=deliveryWarning.Length>0?deliveryWarning:"Reviewed text inserted. Nothing was submitted.";
             hideAt=DateTimeOffset.Now.AddSeconds(4);Changed?.Invoke();
-            return new(true,"Reviewed text inserted.");
+            return new(true,deliveryWarning.Length>0?deliveryWarning:"Reviewed text inserted.");
         }
         finally{inserting.Remove(document.Id);Changed?.Invoke();}
     }
 
     void ShowBannerReview(ReviewDocument document)
     {
+        if(ClipboardRecovery.HasPending)document.Reason=ClipboardRecovery.Message;
         placementReview=null;
         if(reviewWindow?.IsApplying==true||IsApplyingReview)return;
         reviewWindow?.Close();
@@ -255,27 +313,27 @@ public sealed class AppController : IDisposable
 
     public void SelectBannerPiece(string id)
     {
-        if(IsApplyingReview||bannerProgress==null)return;
+        if(IsBusy||IsApplyingReview||bannerProgress==null)return;
         bannerProgress.Select(id);Changed?.Invoke();
     }
 
     public void ChooseBannerPiece(string kind)
     {
-        if(IsApplyingReview||bannerProgress==null||BannerReview?.InsertedAt!=null)return;
+        if(IsBusy||IsApplyingReview||bannerProgress==null||BannerReview?.InsertedAt!=null)return;
         bannerProgress.Choose(kind);SaveReview(bannerProgress.Document);Changed?.Invoke();
         if(bannerProgress.IsComplete)_ = ApplyBannerReview();
     }
 
     public void EditBannerPiece(string text)
     {
-        if(IsApplyingReview||bannerProgress==null||BannerReview?.InsertedAt!=null)return;
+        if(IsBusy||IsApplyingReview||bannerProgress==null||BannerReview?.InsertedAt!=null)return;
         bannerProgress.Choose("custom",text);SaveReview(bannerProgress.Document);Changed?.Invoke();
         if(bannerProgress.IsComplete)_ = ApplyBannerReview();
     }
 
     public void KeepBannerWording()
     {
-        if(IsApplyingReview||bannerProgress==null||BannerReview?.InsertedAt!=null)return;
+        if(IsBusy||IsApplyingReview||bannerProgress==null||BannerReview?.InsertedAt!=null)return;
         bannerProgress.KeepRemaining();SaveReview(bannerProgress.Document);Changed?.Invoke();
         _ = ApplyBannerReview();
     }
@@ -298,7 +356,7 @@ public sealed class AppController : IDisposable
 
     public async Task ApplyBannerReview()
     {
-        if(IsApplyingReview||BannerReview is not {} document||!document.CanInsert)return;
+        if(IsBusy||IsApplyingReview||BannerReview is not {} document||!document.CanInsert)return;
         applyingBannerId=document.Id;
         try
         {
@@ -315,17 +373,18 @@ public sealed class AppController : IDisposable
     }
 
     public void ChooseBannerDestination()
-    {if(BannerReview is {} document&&!IsApplyingReview)ChooseReviewDestination(document);}
+    {if(!IsBusy&&BannerReview is {} document&&!IsApplyingReview)ChooseReviewDestination(document);}
 
     public void OpenBannerDetails()
     {
-        if(BannerReview is not {} document||IsApplyingReview)return;
+        if(IsBusy||BannerReview is not {} document||IsApplyingReview)return;
         bannerProgress=null;Changed?.Invoke();banner.Refresh();
         OpenReviewDetails(document);
     }
 
     void ChooseReviewDestination(ReviewDocument document)
     {
+        if(ClipboardRecovery.HasPending){ShowClipboardRecovery();return;}
         if(IsBusy||!document.CanInsert){reviewWindow?.ShowStatus("Finish the current recording and resolve the choices before selecting a destination.");return;}
         if(IsApplyingReview)return;
         if(BannerReview?.Id==document.Id)bannerProgress=null;
@@ -435,6 +494,7 @@ public sealed class AppController : IDisposable
     public void ToggleReview(){if(IsRecording)Stop();else Start(true);}
     public void Start(bool reviewOnly=false)
     {
+        if(ClipboardRecovery.HasPending){ShowClipboardRecovery();return;}
         if(exiting||reviewWindow?.IsApplying==true||IsApplyingReview||inserting.Count>0||deliveryBusy||active?.Closing==true)return;
         placementReview=null;
         if(active!=null&&!active.Verifying)return;
@@ -450,12 +510,8 @@ public sealed class AppController : IDisposable
         var destination=input.Epoch.Capture((long)WindowsTextDelivery.ForegroundWindow);
         bannerAnchor=(nint)destination.Window;
         var run=new Run(snapshot){Destination=destination};
-        bannerProgress=null;
-        reviewWindow?.Close();
-        lastTranscript=lastDeliveryMessage="";
         active=run;input.SessionActive=true;
         StateLabel="Preparing";DetailLabel="Opening the selected microphone…";hideAt=DateTimeOffset.MinValue;
-        Changed?.Invoke();banner.Refresh();
         var recording=Record(run);
         recordingTasks.Add(recording);
         _=ObserveRecording(recording);
@@ -478,9 +534,9 @@ public sealed class AppController : IDisposable
         try
         {
             run.Capture.Faulted+=message=>System.Windows.Application.Current.Dispatcher.BeginInvoke(()=>
-            {if(active!=run)return;ConnectionMessage=message;run.Failure=message;run.NeedsReview=true;run.Cancel.Cancel();Changed?.Invoke();});
+            {if(active!=run)return;ConnectionMessage=message;run.Failure=message;run.NeedsReview=true;run.Cancel.Cancel();if(run.DestinationChecked)Changed?.Invoke();});
             run.Capture.LimitReached+=()=>System.Windows.Application.Current.Dispatcher.InvokeAsync(()=>
-            {if(active!=run)return;run.Recording=false;StateLabel="Finishing · recording limit";Changed?.Invoke();});
+            {if(active!=run)return;run.Recording=false;StateLabel="Finishing · recording limit";if(run.DestinationChecked)Changed?.Invoke();});
             run.Capture.Start(run.Settings.MicrophoneId);
             run.Started=DateTimeOffset.Now;
             run.Stage="destination";
@@ -492,6 +548,8 @@ public sealed class AppController : IDisposable
                     var delivery=await automation.Run(token=>WindowsTextDelivery.Capture(token));
                     if(!input.Epoch.CanAdopt(run.Destination,(long)WindowsTextDelivery.ForegroundWindow))
                     {delivery.Invalidate();throw new InvalidOperationException("The initial destination changed.");}
+                    if(active!=run||run.Cancel.IsCancellationRequested)
+                    {delivery.Invalidate();run.Cancel.Token.ThrowIfCancellationRequested();return;}
                     run.Delivery=delivery;destinations[run.Review.Id]=delivery;run.CanDeliver=run.Settings.InsertAtCursor;
                     if(!run.Settings.InsertAtCursor)
                     {run.NeedsReview=true;run.Review.Reason="Preview only while recording. The completed text will return to the original cursor.";}
@@ -500,6 +558,12 @@ public sealed class AppController : IDisposable
                     "The original cursor could not be validated. Dictation continues in this preview.";run.NeedsReview=true;}
             }
             run.Cancel.Token.ThrowIfCancellationRequested();
+            if(active!=run)return;
+            run.DestinationChecked=true;
+            bannerProgress=null;
+            reviewWindow?.Close();
+            lastTranscript=lastDeliveryMessage="";
+            Changed?.Invoke();banner.Refresh();
             run.Stage="connection";
             using(var timeout=CancellationTokenSource.CreateLinkedTokenSource(run.Cancel.Token))
             {
@@ -579,12 +643,21 @@ public sealed class AppController : IDisposable
             DetailLabel="No transcript was returned. Check the microphone level and try again.";
             Changed?.Invoke();banner.Refresh();return;
         }
-        ShowBannerReview(run.Review);
         var action=CompactCompletion.Decide(run.NormalCompletion&&!run.AutoInsertBlocked,run.PrimaryFinal,
             run.Settings.VerifyAfterRecording,run.Review.HasCompletedVerification,run.Review.UnresolvedCount);
-        if(action==CompactCompletionAction.Insert&&destinations.ContainsKey(run.Review.Id))await ApplyBannerReview();
-        else if(action==CompactCompletionAction.Insert)
-        {run.Review.Reason="The text is ready. Choose destination to place it in your selected field.";Changed?.Invoke();}
+        if(action==CompactCompletionAction.Insert)
+        {
+            if(destinations.ContainsKey(run.Review.Id))
+            {
+                // Ordinary completion and verification agreement return to the
+                // captured field before any interactive Review surface appears.
+                var result=await AcceptReview(run.Review);
+                if(result.Success){banner.Refresh();return;}
+                run.Review.Reason=result.Message;
+            }
+            else run.Review.Reason="The text is ready. Choose destination to place it in your selected field.";
+        }
+        ShowBannerReview(run.Review);
     }
 
     async Task SendAudio(Run run)
@@ -658,7 +731,7 @@ public sealed class AppController : IDisposable
     {
         if(active==null||!active.Recording)return;
         active.Recording=false;StateLabel="Finishing";
-        active.Capture.Stop();Changed?.Invoke();
+        active.Capture.Stop();if(active.DestinationChecked)Changed?.Invoke();
     }
     public void Cancel()
     {
@@ -747,23 +820,43 @@ public sealed class AppController : IDisposable
         historyWindow=new HistoryWindow(this);historyWindow.Closed+=(_,_)=>historyWindow=null;
         historyWindow.Show();historyWindow.Activate();
     }
-    async Task PrepareForExit()
+    bool ClipboardBlocksExit()
     {
+        if(!ClipboardRecovery.HasUnsettledTransaction)return false;
+        exiting=false;
+        if(ClipboardRecovery.HasPending)ShowClipboardRecovery();
+        else
+        {
+            const string message="Clipboard delivery is still running or waiting for the destination. Keep Local Dictation open and wait for it to finish before exiting.";
+            ConnectionMessage=DetailLabel=lastDeliveryMessage=message;
+            clipboardRecoveryAction.Enabled=false;
+            if(BannerReview is {} document){document.Reason=message;SaveReview(document);}
+            hideAt=DateTimeOffset.Now.AddSeconds(6);Changed?.Invoke();banner.Refresh();
+        }
+        return true;
+    }
+
+    async Task<bool> PrepareForExit()
+    {
+        if(ClipboardBlocksExit())return false;
         exiting=true;
         EmergencyReview();active?.Capture.Stop();
         // Include older runs cancelled when a new recording superseded verification.
         await Task.WhenAll(recordingTasks.ToArray());
+        if(ClipboardBlocksExit())return false;
+        return true;
     }
 
     async void Exit()
     {
         if(exiting)return;
+        if(ClipboardBlocksExit())return;
         if(IsBusy&&MessageBox.Show("Stop this session and exit? Received text and its original recording will be saved before closing.",
             "Exit Local Dictation",MessageBoxButton.YesNo,MessageBoxImage.Question)!=MessageBoxResult.Yes)return;
         // The confirmation pumps the dispatcher; insertion may have started while it was open.
         if(IsApplyingReview||reviewWindow?.IsApplying==true||inserting.Count>0)
         {ConnectionMessage="Wait for the insertion check before exiting.";Changed?.Invoke();return;}
-        try{await PrepareForExit();}
+        try{if(!await PrepareForExit())return;}
         catch(Exception)
         {exiting=false;ConnectionMessage="Recording cleanup did not finish. Check pending Review before exiting.";Changed?.Invoke();return;}
         if(pending.UnsavedIds.Count>0)
@@ -776,6 +869,7 @@ public sealed class AppController : IDisposable
     }
     public void Dispose()
     {
+        disposed=true;ClipboardRecovery.Changed-=ClipboardRecoveryChanged;
         timer.Stop();reconnectTimer.Stop();resumeTimer.Stop();input.Dispose();tray.Visible=false;tray.Dispose();active?.Cancel.Cancel();automation.Dispose();
     }
 }

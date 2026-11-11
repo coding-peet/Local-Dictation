@@ -44,6 +44,15 @@ def generation_options(model_id, language):
                    return_timestamps=not fast)
     if not fast:
         options["condition_on_prev_tokens"] = True
+        # Use Whisper's acoustic re-decoding policy when a segment loops.
+        # The Transformers ratio is measured in token
+        # space (1.35), not OpenAI Whisper's text-space ratio (2.4).
+        # This retries recognition; it never removes repeated user words.
+        # Do not request logprob/no-speech thresholds here: Transformers
+        # retains every beam's vocabulary scores and exceeds the 4 GiB
+        # runtime budget. Compression fallback does not require those scores.
+        options.update(temperature=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
+                       compression_ratio_threshold=1.35)
     if MODEL_LANGUAGES.get(model_id)==["en"]:
         options.pop("language",None)
         options.pop("task",None)

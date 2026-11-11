@@ -87,7 +87,7 @@ public sealed class SessionStream : IAsyncDisposable
         socket.Options.Proxy=null;
         var clock=Stopwatch.GetTimestamp();
         deadline=new SessionDeadline(()=>Stopwatch.GetElapsedTime(clock),TimeSpan.FromSeconds(10),
-            TimeSpan.FromSeconds(15),TimeSpan.FromSeconds(settings.Live?45:600),TimeSpan.FromMinutes(10));
+            TimeSpan.FromSeconds(15),TimeSpan.FromSeconds(settings.Live?120:600),TimeSpan.FromMinutes(10));
         var uri = new UriBuilder(settings.ServerUri()) { Scheme = "ws", Path = "/v1/audio/sessions" }.Uri;
         await socket.ConnectAsync(uri, token);
         await Send(new { type = "start", protocol_version = 1, model = settings.PrimaryModel,

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows.Automation;
 using System.Windows.Automation.Text;
@@ -12,15 +13,17 @@ public sealed class WindowsTextDelivery : ITextDelivery
     readonly nint window;
     readonly TargetGuard guard;
     readonly AutomationElement original;
+    readonly string provider;
     int invalid,operating,generation;
     public nint Window=>window;
     public bool IsConflict=>Volatile.Read(ref invalid)!=0;
     public static nint ForegroundWindow=>GetForegroundWindow();
     public string Reason { get; private set; } = "";
     public string InsertedText => guard.OwnedText;
+    public DeliveryDiagnostic? LastDiagnostic {get;private set;}
 
     WindowsTextDelivery(nint window,TargetGuard guard,AutomationElement original)
-    {this.window=window;this.guard=guard;this.original=original;}
+    {this.window=window;this.guard=guard;this.original=original;provider=ProviderMetadata(original);}
     public void Invalidate() => Interlocked.Exchange(ref invalid, 1);
     public void Suspend()=>Interlocked.Increment(ref generation);
     public bool OwnsProgrammaticFocus(nint root)=>root==window&&Volatile.Read(ref operating)>0;
@@ -73,10 +76,37 @@ public sealed class WindowsTextDelivery : ITextDelivery
     public bool Apply(string next,CancellationToken token,bool restoreFocus=false)
     {
         if(IsConflict)return false;
+        Reason="";
         if(next.Any(char.IsControl))
             return Pause("Remove line breaks or control characters from the final draft before inserting. Your original field and Review are unchanged.");
         var version=Volatile.Read(ref generation);
-        var sent=false;
+        var queued=0;
+        var watch=Stopwatch.StartNew();
+        var phase="validate";
+        var beforeText=guard.ExpectedText;
+        string? expected=null;
+        int? observedLength=null,observedCaret=null;
+        bool? textMatches=null,caretMatches=null,unchanged=null,lineEndingsEquivalent=null,terminalParagraphEquivalent=null,nbspEquivalent=null;
+        ClipboardTransaction? clipboard=null;
+        bool confirmed=false;
+        string? failureType=null;int? failureCode=null;
+        bool Reconcile()
+        {
+            if(expected==null)return false;
+            int caret;
+            try
+            {
+                Check(token,version);
+                if(!TryConfirmLate(next,expected,out caret))return false;
+                Check(token,version);
+            }
+            catch(Exception error) when(error is Interrupted or OperationCanceledException or InvalidOperationException or ElementNotAvailableException or COMException or Win32Exception){return false;}
+            guard.Applied(next,expected,caret);
+            confirmed=true;clipboard?.Acknowledge();
+            phase="late confirm";observedLength=expected.Length;observedCaret=guard.Start+next.Length;
+            textMatches=caretMatches=lineEndingsEquivalent=terminalParagraphEquivalent=nbspEquivalent=true;
+            unchanged=expected==beforeText;return true;
+        }
         Interlocked.Increment(ref operating);
         try
         {
@@ -115,7 +145,7 @@ public sealed class WindowsTextDelivery : ITextDelivery
             if (common > 0 && common < next.Length && char.IsLowSurrogate(next[common])) common--;
             var oldTail = guard.OwnedText[common..];
             var replacement = next[common..];
-            var expected = guard.ReplacedText(next);
+            expected = guard.ReplacedText(next);
             TextPatternRange selected = current.Selection;
             if (oldTail.Length != 0)
             {
@@ -135,48 +165,107 @@ public sealed class WindowsTextDelivery : ITextDelivery
                 }
                 if (!found) return Stop("The owned draft range is no longer available.");
             }
+            if(replacement.Length>0)
+            {
+                phase="clipboard backup";
+                clipboard=ClipboardTransaction.Begin(replacement,()=>Check(token,version));
+            }
             Check(token,version);
             selected.Select();
             Check(token,version);
-            sent=true;
+            phase="queue input";
             // Only the mutable suffix is replaced. Stable leading text is untouched.
             if (replacement.Length == 0 && oldTail.Length != 0)
             {
                 // Delete selection with a virtual Delete key; never issue Backspace guesses.
-                SendKey(0x2E, token);
+                SendKey(0x2E, token,ref queued);
             }
-            else
+            else if(clipboard!=null)
             {
-                for (var offset = 0; offset < replacement.Length; offset += 128)
-                {
-                    Check(token,version);
-                    SendUnicode(replacement.Substring(offset, Math.Min(128, replacement.Length - offset)));
-                }
+                phase="clipboard ownership";clipboard.EnsureCurrent();
+                phase="queue input";clipboard.MarkMayHaveQueued();
+                // One ordinary paste command. No Enter or application send command is synthesized.
+                QueueInput([Key(0x11,0,false),Key(0x56,0,false),Key(0x56,2,false),Key(0x11,2,false)],ref queued);
             }
-            for (var attempt = 0; attempt < 15; attempt++)
+            phase="confirm";
+            var confirmation=Stopwatch.StartNew();
+            while(confirmation.Elapsed<TimeSpan.FromSeconds(1))
             {
                 Check(token,version);
                 var afterElement = AutomationElement.FocusedElement;
                 var after = Inspect(afterElement);
+                Check(token,version);
                 if (Identity(afterElement) != guard.Identity) return Stop("The destination changed during insertion.");
-                if (after.Text == expected && after.Caret == guard.Start + next.Length)
+                observedLength=after.Text.Length;observedCaret=after.Caret;
+                textMatches=after.Text==expected;caretMatches=after.Caret==guard.Start+next.Length;unchanged=after.Text==beforeText;
+                lineEndingsEquivalent=after.Text.Replace("\r\n","\n")==expected.Replace("\r\n","\n");
+                terminalParagraphEquivalent=after.Text.TrimEnd('\r','\n')==expected.TrimEnd('\r','\n');
+                nbspEquivalent=after.Text.Replace('\u00a0',' ')==expected.Replace('\u00a0',' ');
+                if (textMatches==true && caretMatches==true)
                 {
+                    confirmed=true;clipboard?.Acknowledge();
                     guard.Applied(next, expected, after.Caret);
                     return true;
                 }
                 Thread.Sleep(10);
             }
-            return Stop("The destination did not confirm the inserted text. Review the complete result before pasting.");
+            if(Reconcile())return true;
+            return Stop("The destination did not confirm the inserted text. Check the destination before retrying; the complete transcript is preserved in Review.");
         }
         catch(Interrupted)
-        {return sent?Stop("Insertion was interrupted. Check the destination before choosing where to insert the preserved Review."):
+        {return queued>0?(expected!=null&&Reconcile()||Stop("Insertion was interrupted. Check the destination before choosing where to insert the preserved Review.")):
             Pause("Cursor delivery is paused. Return to the original unchanged field to resume.");}
         catch(OperationCanceledException)
-        {return sent?Stop("Insertion confirmation was interrupted. Your complete text is preserved in Review."):Pause("Cursor validation was cancelled. Your text is preserved.");}
+        {return queued>0?(expected!=null&&Reconcile()||Stop("Insertion confirmation was interrupted. Check the destination before retrying; the complete transcript is preserved in Review.")):Pause("Cursor validation was cancelled. Your text is preserved.");}
         catch (Exception ex) when (ex is InvalidOperationException or ElementNotAvailableException or COMException or Win32Exception)
-        { return sent?Stop("The inserted text could not be confirmed. Check your destination; the complete Review is preserved."):
-            Pause("The original field could not be checked. Return to it or choose another destination."); }
-        finally{Interlocked.Decrement(ref operating);}
+        {
+            failureType=ex.GetType().Name;failureCode=ex.HResult;
+            if(queued>0)return expected!=null&&Reconcile()||Stop("The inserted text could not be confirmed. Check your destination; the complete Review is preserved.");
+            return Pause(phase is "clipboard backup" or "clipboard ownership"?ex.Message:phase=="queue input"?"Windows did not accept text delivery. Your transcript is preserved; return to the original field and try again.":"The original field could not be checked. Return to it or choose another destination.");
+        }
+        finally
+        {
+            try
+            {
+                if(queued==0)clipboard?.MarkNoInputQueued();
+                if(confirmed)clipboard?.Acknowledge();
+                clipboard?.Dispose();
+                if(ClipboardRecovery.HasPending)Reason=ClipboardRecovery.Message;
+            }
+            catch(Exception error)
+            {
+                Reason="Text delivery finished, but Windows could not restore every previous clipboard format. Check the clipboard before copying again.";
+                Diagnostics.Error("clipboard restore",error);
+            }
+            LastDiagnostic=new(phase,restoreFocus,queued,watch.Elapsed.TotalMilliseconds,beforeText.Length,next.Length,expected?.Length,
+                observedLength,observedCaret,textMatches,caretMatches,unchanged,lineEndingsEquivalent,terminalParagraphEquivalent,nbspEquivalent,
+                provider,clipboard?.SavedFormatCount,clipboard?.WasRestored,clipboard?.WasSuperseded,IsConflict,failureType,failureCode,ClipboardRecovery.HasPending);
+            LastDiagnostic.WriteIfEnabled();
+            Interlocked.Decrement(ref operating);
+        }
+    }
+
+    bool TryConfirmLate(string next,string expected,out int caret)
+    {
+        caret=0;
+        // Read only the originally captured element. A late exact acknowledgement must not cause a second paste.
+        try
+        {
+            if(!IsWindow(window)||Identity(original)!=guard.Identity)return false;
+            var after=Inspect(original);
+            if(after.Text!=expected||after.Caret!=guard.Start+next.Length)return false;
+            caret=after.Caret;return true;
+        }
+        catch(Exception error) when(error is InvalidOperationException or ElementNotAvailableException or COMException or Win32Exception){return false;}
+    }
+    static string ProviderMetadata(AutomationElement element)
+    {
+        try
+        {
+            static string Safe(string value)=>new(value.Where(c=>char.IsAsciiLetterOrDigit(c)||c is '_' or '.' or '-' or '#').Take(80).ToArray());
+            return Safe(element.Current.FrameworkId)+"/"+Safe(element.Current.ClassName)+"/"+element.Current.ControlType.Id;
+        }
+        catch(Exception){return "unavailable";}
     }
 
     TextPatternRange OwnedEnd(TextPattern pattern)
@@ -219,17 +308,20 @@ public sealed class WindowsTextDelivery : ITextDelivery
     static Input Key(ushort value, uint flags, bool unicode) => new()
     { Type = 1, Key = new() { Key = unicode ? (ushort)0 : value, Scan = unicode ? value : (ushort)0,
         Flags = flags | (unicode ? 4u : 0u), Extra = GlobalInput.InjectionTag } };
-    static void SendUnicode(string text)
-    {
-        var inputs = text.SelectMany(c => new[] {Key(c,0,true),Key(c,2,true)}).ToArray();
-        if (SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>()) != inputs.Length)
-            throw new Win32Exception("Windows rejected text delivery.");
-    }
-    static void SendKey(ushort key, CancellationToken token)
+    static void SendKey(ushort key,CancellationToken token,ref int queued)
     {
         token.ThrowIfCancellationRequested();
-        Input[] inputs = [Key(key,0,false), Key(key,2,false)];
-        if (SendInput(2, inputs, Marshal.SizeOf<Input>()) != 2) throw new Win32Exception("Windows rejected range replacement.");
+        QueueInput([Key(key,0,false),Key(key,2,false)],ref queued);
+    }
+    static void QueueInput(Input[] inputs,ref int queued)
+    {
+        var accepted=SendInput((uint)inputs.Length,inputs,Marshal.SizeOf<Input>());
+        queued+=checked((int)accepted);
+        if(accepted==inputs.Length)return;
+        // A partial paste burst may leave our synthetic Ctrl down. Release only that modifier.
+        if(inputs.Length==4&&inputs[0].Key.Key==0x11&&accepted>0&&accepted<4)
+            SendInput(1,[Key(0x11,2,false)],Marshal.SizeOf<Input>());
+        throw new Win32Exception(Marshal.GetLastWin32Error(),"Windows rejected text delivery.");
     }
 
     [DllImport("user32.dll")] static extern nint GetForegroundWindow();

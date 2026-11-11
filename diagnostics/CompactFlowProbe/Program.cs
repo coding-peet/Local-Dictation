@@ -41,6 +41,58 @@ internal static class Program
                     Require(test.Controller.BannerReview==null,"Review must not open before completion.");
                 });
 
+                await Case("Final events deliver ordinary dictation without exposing Review",async test=>
+                {
+                    var doc=Text("Draft preview");var fake=new FakeDelivery();
+                    var run=test.Run(doc,fake,new Settings{InsertAtCursor=false},primaryFinal:false,completed:false);
+                    var exposedReview=false;
+                    test.Controller.Changed+=()=>exposedReview|=test.Controller.BannerReview!=null;
+                    await test.Handle(run,"""{"type":"transcript.final","text":"Finished at the original cursor"}""");
+                    Require(fake.ApplyCount==0,"Preview-only final text must wait for successful session completion.");
+                    await test.Handle(run,"""{"type":"session.completed"}""");
+                    await test.Complete(run);
+                    Require(!exposedReview,"Ordinary successful completion exposed interactive Review before insertion.");
+                    Require(doc.InsertedAt!=null&&fake.InsertedText=="Finished at the original cursor","The final event text was not delivered.");
+                    Require(fake.ApplyCount==1&&fake.LastRestoreFocus,"Completion must return once to the retained original destination.");
+                    Require(test.Controller.Pending.Count==0,"Delivered text must leave pending Review.");
+                    test.NoLargeWindow();
+                });
+
+                await Case("Preview verification agreement does not withdraw an empty draft or expose Review",async test=>
+                {
+                    var doc=Text("Draft preview");doc.VerificationModel="verify/model";var fake=new FakeDelivery();
+                    var run=test.Run(doc,fake,new Settings{InsertAtCursor=false,VerifyAfterRecording=true},primaryFinal:false,completed:false);
+                    var exposedReview=false;
+                    test.Controller.Changed+=()=>exposedReview|=test.Controller.BannerReview!=null;
+                    await test.Handle(run,"""{"type":"transcript.final","text":"Both results agree"}""");
+                    Require(fake.ApplyCount==0,"Preview-only dictation has no owned live draft to withdraw.");
+                    await test.Handle(run,"""{"type":"verification.started"}""");
+                    await test.Handle(run,"""{"type":"verification.completed","verification":"Both results agree","pieces":[{"id":"agreement","primary":"Both results agree","verification":"Both results agree","different":false}]}""");
+                    await test.Handle(run,"""{"type":"session.completed"}""");
+                    await test.Complete(run);
+                    Require(!exposedReview,"Verification agreement exposed a needless interactive Review.");
+                    Require(doc.InsertedAt!=null&&fake.ApplyCount==1&&fake.InsertedText=="Both results agree","Agreement did not return once to the original cursor.");
+                    test.NoLargeWindow();
+                });
+
+                await Case("An older Review cannot publish or insert while a new destination is being captured",async test=>
+                {
+                    var older=Differences();test.Controller.OpenReview(older);
+                    var run=test.Run(Text("New session"),new FakeDelivery(),new Settings{InsertAtCursor=false},primaryFinal:false,completed:false);
+                    Set(run,"DestinationChecked",false);
+                    var notifications=0;test.Controller.Changed+=()=>notifications++;
+                    test.Controller.SelectBannerPiece("second");
+                    test.Controller.ChooseBannerPiece("verification");
+                    test.Controller.EditBannerPiece("Edited old wording");
+                    test.Controller.KeepBannerWording();
+                    await test.Controller.ApplyBannerReview();
+                    test.Controller.OpenBannerDetails();
+                    Require(notifications==0,"An old Review changed the UI during the initial destination check.");
+                    Require(older.Choices.Count==0&&older.InsertedAt==null,"An older Review was changed during a new recording.");
+                    Require(test.Controller.BannerReview==older,"The existing Review surface changed before initial capture finished.");
+                    test.NoLargeWindow();
+                });
+
                 await Case("Completed preview inserts once and clears compact Review",async test=>
                 {
                     var doc=Text("Completed preview");var fake=new FakeDelivery();
@@ -56,10 +108,41 @@ internal static class Program
                     test.NoLargeWindow();
                 });
 
+                await Case("Finish keeps the captured destination through final delivery",async test=>
+                {
+                    var doc=Text("Draft preview");var fake=new FakeDelivery();
+                    var run=test.Run(doc,fake,new Settings{InsertAtCursor=false},primaryFinal:false,completed:false);
+                    Set(run,"Recording",true);Set(run,"Closing",false);
+                    test.Controller.Stop();
+                    Require(ReferenceEquals(Field<ITextDelivery>(run,"Delivery"),fake),"Finish replaced the original captured destination.");
+                    Require(!test.Controller.IsRecording,"Finish did not stop recording.");
+                    await test.Handle(run,"""{"type":"transcript.final","text":"Final text after Finish"}""");
+                    await test.Handle(run,"""{"type":"session.completed"}""");
+                    await test.Complete(run);
+                    Require(doc.InsertedAt!=null&&fake.InsertedText=="Final text after Finish","Finish lost the original destination.");
+                    Require(fake.ApplyCount==1&&fake.LastRestoreFocus,"Final delivery must use the retained destination with focus restoration.");
+                });
+
+                await Case("Completed text without a captured field waits for a destination decision",async test=>
+                {
+                    var doc=Text("Draft preview");var fake=new FakeDelivery();
+                    var run=test.Run(doc,fake,new Settings{InsertAtCursor=false},primaryFinal:false,completed:false);
+                    Set(run,"Delivery",null);Field<Dictionary<string,ITextDelivery>>(test.Controller,"destinations").Remove(doc.Id);
+                    await test.Handle(run,"""{"type":"transcript.final","text":"Recovered complete text"}""");
+                    await test.Handle(run,"""{"type":"session.completed"}""");
+                    await test.Complete(run);
+                    Require(doc.InsertedAt==null&&fake.ApplyCount==0,"Missing-target completion must not adopt a field or mark insertion.");
+                    Require(test.Controller.BannerReview==doc&&doc.Reason.Contains("Choose destination",StringComparison.Ordinal),"Missing target needs an explicit destination decision with text preserved.");
+                });
+
                 await Case("Verified differences stay compact and the final choice inserts",async test=>
                 {
-                    var doc=Differences();doc.DraftWithdrawn=true;var fake=new FakeDelivery();
-                    var run=test.Run(doc,fake,new Settings{InsertAtCursor=false,VerifyAfterRecording=true});
+                    var doc=Text("Draft preview");doc.VerificationModel="verify/model";var fake=new FakeDelivery();
+                    var run=test.Run(doc,fake,new Settings{InsertAtCursor=false,VerifyAfterRecording=true},primaryFinal:false,completed:false);
+                    await test.Handle(run,"""{"type":"transcript.final","text":"The original text."}""");
+                    await test.Handle(run,"""{"type":"verification.started"}""");
+                    await test.Handle(run,"""{"type":"verification.completed","verification":"The revised wording.","pieces":[{"id":"prefix","primary":"The ","verification":"The ","different":false},{"id":"first","primary":"original","verification":"revised","different":true},{"id":"gap","primary":" ","verification":" ","different":false},{"id":"second","primary":"text","verification":"wording","different":true},{"id":"end","primary":".","verification":".","different":false}]}""");
+                    await test.Handle(run,"""{"type":"session.completed"}""");
                     await test.Complete(run);
                     Require(test.Controller.BannerReview==doc,"Differences must remain in the banner.");
                     Require(fake.ApplyCount==0,"Unresolved wording must not be inserted.");
@@ -90,7 +173,8 @@ internal static class Program
                 await Case("Cancelled sessions preserve text without automatic insertion",async test=>
                 {
                     var doc=Text("Cancelled draft");var fake=new FakeDelivery();
-                    var run=test.Run(doc,fake,new Settings{InsertAtCursor=false},completed:false);
+                    var run=test.Run(doc,fake,new Settings{InsertAtCursor=false},primaryFinal:false,completed:false);
+                    await test.Handle(run,"""{"type":"transcript.updated","text":"Cancelled draft"}""");
                     await test.Handle(run,"""{"type":"session.cancelled"}""");
                     await test.Complete(run);
                     Require(fake.ApplyCount==0,"Cancellation must block automatic placement.");
@@ -101,7 +185,9 @@ internal static class Program
                 await Case("Failed requested verification blocks automatic insertion",async test=>
                 {
                     var doc=Text("Unverified draft");doc.VerificationModel="verify/model";var fake=new FakeDelivery();
-                    var run=test.Run(doc,fake,new Settings{InsertAtCursor=false,VerifyAfterRecording=true},completed:false);
+                    var run=test.Run(doc,fake,new Settings{InsertAtCursor=false,VerifyAfterRecording=true},primaryFinal:false,completed:false);
+                    await test.Handle(run,"""{"type":"transcript.final","text":"Unverified draft"}""");
+                    await test.Handle(run,"""{"type":"verification.started"}""");
                     await test.Handle(run,"""{"type":"verification.failed"}""");
                     await test.Handle(run,"""{"type":"session.completed"}""");
                     await test.Complete(run);
@@ -113,7 +199,10 @@ internal static class Program
                 await Case("A failed insertion stays compact and an explicit retry succeeds once",async test=>
                 {
                     var doc=Text("Retry this text");var fake=new FakeDelivery{FailuresRemaining=1};
-                    await test.Complete(test.Run(doc,fake,new Settings{InsertAtCursor=false}));
+                    var run=test.Run(doc,fake,new Settings{InsertAtCursor=false},primaryFinal:false,completed:false);
+                    await test.Handle(run,"""{"type":"transcript.final","text":"Retry this text"}""");
+                    await test.Handle(run,"""{"type":"session.completed"}""");
+                    await test.Complete(run);
                     Require(fake.ApplyCount==1&&doc.InsertedAt==null,"Failed placement must not create a receipt.");
                     Require(test.Controller.BannerReview==doc,"Failed placement must leave its banner available.");
                     await test.Controller.ApplyBannerReview();
@@ -122,6 +211,33 @@ internal static class Program
                     var accepted=await test.Accept(doc);
                     Require(accepted.Success&&fake.ApplyCount==2,"An accepted receipt must prevent reinsertion.");
                     test.NoLargeWindow();
+                });
+
+                await Case("Final delivery allows bounded destination confirmation without the live deadline",async test=>
+                {
+                    var doc=Text("Long final result");
+                    var fake=new FakeDelivery{BeforeConfirm=()=>Thread.Sleep(TimeSpan.FromMilliseconds(2300))};
+                    var run=test.Run(doc,fake,new Settings{InsertAtCursor=false},primaryFinal:false,completed:false);
+                    await test.Handle(run,"""{"type":"transcript.final","text":"Long final result"}""");
+                    await test.Handle(run,"""{"type":"session.completed"}""");
+                    await test.Complete(run);
+                    Require(doc.InsertedAt!=null&&test.Controller.BannerReview==null,"Final confirmation was cancelled by the shorter live-delivery deadline.");
+                    Require(fake.ApplyCount==1,"A slow final confirmation must not cause a second insertion.");
+                });
+
+                await Case("A confirmed insertion warning remains visible without permitting another insertion",async test=>
+                {
+                    const string warning="Text was inserted, but the original clipboard could not be restored.";
+                    var doc=Text("Confirmed result");var fake=new FakeDelivery{SuccessWarning=warning};
+                    var run=test.Run(doc,fake,new Settings{InsertAtCursor=false},primaryFinal:false,completed:false);
+                    await test.Handle(run,"""{"type":"transcript.final","text":"Confirmed result"}""");
+                    await test.Handle(run,"""{"type":"session.completed"}""");
+                    await test.Complete(run);
+                    Require(doc.InsertedAt!=null&&test.Controller.Pending.Count==0,"A post-insertion warning must retain the insertion receipt.");
+                    Require(test.Controller.BannerReview==null,"Confirmed output must not be offered as a failed insertion.");
+                    Require(test.Controller.DeliveryMessage==warning&&test.Controller.DetailLabel==warning,"The successful insertion warning was hidden from the user.");
+                    var accepted=await test.Accept(doc);
+                    Require(accepted.Success&&fake.ApplyCount==1,"A warning must not allow the confirmed text to be inserted twice.");
                 });
 
                 await Case("Reopening resolved Review waits; Details acceptance clears matching compact state",async test=>
@@ -243,6 +359,44 @@ internal static class Program
                     Require(accepted.Success&&fake.ApplyCount==1,"A stale object bypassed the insertion receipt.");
                 });
 
+                await Case("An active clipboard reservation blocks exit before recovery becomes pending",async test=>
+                {
+                    var doc=Text("Protected while native confirmation is stalled");test.Controller.SaveReview(doc);
+                    using var transaction=(ClipboardTransaction)Activator.CreateInstance(typeof(ClipboardTransaction),true)!;
+                    typeof(ClipboardRecovery).GetMethod("Reserve",BindingFlags.Static|BindingFlags.NonPublic)!.Invoke(null,[transaction]);
+                    Require(!ClipboardRecovery.HasPending,"An active operation must not become an explicit recovery action prematurely.");
+                    var exit=(Task)typeof(AppController).GetMethod("PrepareForExit",Members)!.Invoke(test.Controller,null)!;
+                    await exit;
+                    Require(!Field<bool>(test.Controller,"exiting"),"Exit proceeded while a native clipboard delivery still owned its backup.");
+                    Require(!Field<System.Windows.Forms.ToolStripMenuItem>(test.Controller,"clipboardRecoveryAction").Enabled,"Recovery was enabled while the native operation was still active.");
+                    Require(new ReviewStore(Path.Combine(test.Home,"data","review")).Load().Single().Primary=="Protected while native confirmation is stalled","Blocked Exit lost protected pending text.");
+                    Require(test.Controller.ConnectionMessage.Contains("still",StringComparison.OrdinalIgnoreCase),"Blocked Exit did not explain the still-active clipboard operation.");
+                });
+
+                await Case("Pending clipboard recovery blocks exit and preserves protected Review",async test=>
+                {
+                    var doc=Text("Protected pending dictation");test.Controller.SaveReview(doc);
+                    // An empty, unchanged transaction owns no user clipboard data.
+                    // Holding it exercises the real recovery lease and controller guard
+                    // without reading, replacing or restoring the system clipboard.
+                    var transaction=(ClipboardTransaction)Activator.CreateInstance(typeof(ClipboardTransaction),true)!;
+                    ClipboardRecovery.Hold(transaction);
+                    try
+                    {
+                        var exit=(Task)typeof(AppController).GetMethod("PrepareForExit",Members)!.Invoke(test.Controller,null)!;
+                        await exit;
+                        Require(!Field<bool>(test.Controller,"exiting"),"Normal Exit proceeded while the original clipboard backup was still held.");
+                        Require(ClipboardRecovery.HasPending,"Exit discarded the pending clipboard recovery lease.");
+                        Require(test.Controller.DeliveryMessage==ClipboardRecovery.Message&&test.Controller.ShowBanner,"The held clipboard recovery was not visible to the user.");
+                        Require(new ReviewStore(Path.Combine(test.Home,"data","review")).Load().Single().Primary=="Protected pending dictation","Blocked Exit lost protected pending text.");
+                    }
+                    finally
+                    {
+                        var recovery=ClipboardRecovery.RestoreAfterInspection();
+                        Require(recovery.Succeeded&&!ClipboardRecovery.HasPending,"The synthetic recovery lease did not release cleanly.");
+                    }
+                });
+
                 await Case("Orderly exit awaits older recording cleanup and protected audio saving",async test=>
                 {
                     var release=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -337,6 +491,7 @@ internal static class Program
             Set(run,"Review",document);Set(run,"Text",document.Primary);Set(run,"Delivery",delivery);
             Set(run,"PrimaryFinal",primaryFinal);Set(run,"Completed",completed);Set(run,"NormalCompletion",completed);
             Set(run,"Recording",false);Set(run,"Closing",true);Set(run,"NeedsReview",true);
+            Set(run,"DestinationChecked",true);
             Bind(document,delivery);Set(Controller,"active",run);return run;
         }
         public async Task Handle(object run,string json)
@@ -368,18 +523,20 @@ internal static class Program
         public string Reason {get;private set;}="";
         public string InsertedText {get;private set;}="";
         public int ApplyCount {get;private set;}
+        public bool LastRestoreFocus {get;private set;}
         public int FailuresRemaining {get;set;}
+        public string SuccessWarning {get;set;}="";
         public Action? BeforeConfirm {get;set;}
         public void Invalidate()=>IsConflict=true;
         public void Suspend(){}
         public bool OwnsProgrammaticFocus(nint root)=>false;
         public bool Apply(string next,CancellationToken token,bool restoreFocus=false)
         {
-            token.ThrowIfCancellationRequested();ApplyCount++;
+            token.ThrowIfCancellationRequested();ApplyCount++;LastRestoreFocus=restoreFocus;
             if(FailuresRemaining>0){FailuresRemaining--;Reason="Synthetic destination rejection.";return false;}
             if(IsConflict){Reason="Synthetic invalidated destination.";return false;}
             BeforeConfirm?.Invoke();
-            InsertedText=next;return true;
+            Reason=SuccessWarning;InsertedText=next;return true;
         }
     }
 }

@@ -51,10 +51,17 @@ punctuation, whitespace, and Unicode must be preserved.
 - Only replace the app's owned draft in the validated original field. Preserve
   surrounding text. Switching focus pauses delivery; returning to the same
   unchanged field resumes it, including after a click within that field.
+- Deliver nonempty live and final replacements as a guarded native paste, with
+  exact destination acknowledgement. Preserve supported previous clipboard
+  formats and exclude temporary dictation from Windows clipboard history/cloud.
+  Refuse unsupported clipboard formats before replacing them.
 - Manual edits, a closed field, or failed ownership validation require an
   explicit destination decision. Never adopt arbitrary focus.
 - Never submit text or synthesize a send shortcut. Wait for acceptance keys to
   be released before restoring target focus.
+- With verification off, normal completion inserts directly into the original
+  valid field without opening interactive Review first. Verification agreement
+  follows the same path; differences and actionable failures remain in Review.
 
 ## Verification and compact Review
 
@@ -100,7 +107,15 @@ punctuation, whitespace, and Unicode must be preserved.
   individual pending files without deleting them or blocking valid recovery.
 - Normal application Exit must await recording cleanup and protected saving.
   Do not silently discard text still marked unsaved.
+- If paste was queued but cannot be confirmed, retain its payload and all saved
+  clipboard formats in memory. Block new delivery and normal Exit until deliberate
+  recovery or a newer clipboard copy resolves it. Offer Restore previous
+  clipboard in the tray after destination inspection. A crash or forced process
+  termination cannot preserve this in-memory clipboard backup.
 - Operational diagnostics must not record actual transcript text or audio.
+- Whisper repetition recovery must re-decode audio using its native generation
+  fallback, rather than deleting repeated words from the transcript. Preserve
+  legitimate spoken repetition and original model weights/precision.
 
 ## Help, build, and agent continuity
 
@@ -123,7 +138,7 @@ punctuation, whitespace, and Unicode must be preserved.
 Automated tests must distinguish policy/controller simulation, real protected
 storage, WPF input handling, and native UIA insertion. Successful compilation is
 not microphone, timing, model-quality, or application-compatibility acceptance.
-Codex-field insertion requires Peter's manual acceptance test.
+Codex-field and Outlook insertion require Peter's manual acceptance tests.
 
 Preserve the existing TypeWhisper setup and production API on port 8123 until an
 explicit controlled handover. Use the separate candidate API on 48125. Never

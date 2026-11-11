@@ -185,7 +185,7 @@
           </div>
           <div class="card">
             <h3>Keep live text in the banner</h3>
-            <p>Turn off <strong>Insert live text at the cursor</strong>, save, then start with the shortcut from your destination field.</p>
+            <p>Turn off <strong>Insert live text at the cursor</strong>, then start with the shortcut from your destination field. The setting saves automatically.</p>
             <p>The app remembers that cursor while live text stays in its own banner. After normal completion and any required word choices, it returns the finished text automatically.</p>
             <p><strong>Record in banner</strong> starts from the app window without an external cursor. Use <strong>Choose destination</strong> when the text is ready.</p>
           </div>
@@ -195,6 +195,7 @@
           <p>Sending, submitting, and saving the destination remain your actions.</p>
         </div>
         <p>Recordings last up to <strong>10 minutes</strong>. During a session, <kbd>Esc</kbd> cancels recording or verification. Cancellation or an interrupted recording does not automatically insert received text; it stays available for review.</p>
+        <p>With verification off, normal completion inserts directly into your remembered field. Review appears when words need a choice or insertion needs attention. Agreement between the two models also returns the text automatically.</p>
       </section>
 
       <section id="live-text" aria-labelledby="live-text-title">
@@ -321,9 +322,9 @@
         <p>Open the <strong>Settings</strong> tab for appearance, shortcut, and local service preferences.</p>
         <dl>
           <dt>Appearance</dt>
-          <dd><strong>System</strong> follows Windows at app startup. <strong>Light</strong> / <strong>Dark</strong> override it. Preview is immediate; save to keep it. Windows high contrast takes priority.</dd>
+          <dd><strong>System</strong> follows Windows at app startup. <strong>Light</strong> / <strong>Dark</strong> override it. Preview is immediate and saves automatically. Windows high contrast takes priority.</dd>
           <dt>Recording shortcut</dt>
-          <dd>Enable the shortcut and save. Default: <kbd>Ctrl</kbd> + <kbd>Shift</kbd>. Alternatives: <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Space</kbd>, <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>D</kbd>, <kbd>Alt</kbd> + <kbd>F9</kbd>. Use Ctrl/Shift/Alt with Space, letters, digits, or F1–F24.</dd>
+          <dd>Enable the shortcut and check the automatic saving status. Default: <kbd>Ctrl</kbd> + <kbd>Shift</kbd>. Alternatives: <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Space</kbd>, <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>D</kbd>, <kbd>Alt</kbd> + <kbd>F9</kbd>. Use Ctrl/Shift/Alt with Space, letters, digits, or F1–F24.</dd>
           <dt>Saving</dt>
           <dd>Valid model, microphone, language, appearance, and toggle changes save automatically. Text settings save after a short pause or focus change. Invalid text shows an error and leaves the previous valid configuration active. During a session, changes apply to the next recording.</dd>
           <dt>Help</dt>
@@ -350,8 +351,8 @@
         <details>
           <summary>The shortcut does nothing</summary>
           <ol>
-            <li>Check <strong>Enable keyboard shortcut</strong>, save, and read the shortcut status.</li>
-            <li>If TypeWhisper is running, the shared default <kbd>Ctrl</kbd> + <kbd>Shift</kbd> is disabled here. Quit TypeWhisper and use <strong>Recheck shortcut</strong>, or save a different shortcut.</li>
+            <li>Check <strong>Enable keyboard shortcut</strong> and read the saving and shortcut status.</li>
+            <li>If TypeWhisper is running, the shared default <kbd>Ctrl</kbd> + <kbd>Shift</kbd> is disabled here. Quit TypeWhisper and use <strong>Recheck shortcut</strong>, or choose a different shortcut.</li>
             <li>A test launch with <code>--no-hotkey</code> disables shortcuts. Relaunch normally. Also check whether another app uses the same key combination.</li>
           </ol>
         </details>
@@ -359,7 +360,7 @@
           <summary>The microphone is silent, unavailable, or recording is interrupted</summary>
           <ol>
             <li>Reconnect the microphone and select <strong>Refresh microphones</strong> on the <strong>Dictation</strong> tab.</li>
-            <li>Select the intended input device and save. <strong>System default microphone</strong> follows the Windows default capture device.</li>
+            <li>Select the intended input device and check the automatic saving status. <strong>System default microphone</strong> follows the Windows default capture device.</li>
             <li>Check Windows microphone access and the input level. Watch whether the banner's waveform reacts while you speak.</li>
             <li>Retry after correcting the device or service issue. Check Pending Review for text already received.</li>
           </ol>
@@ -378,6 +379,16 @@
           <p>Resolve every underlined phrase, or select <strong>Keep the remaining wording</strong>. The last choice inserts automatically when the original field is valid. If that destination is gone, use <strong>Choose destination</strong>. Reviews reopened after restarting the app need a new destination selection.</p>
           <p>Remove line breaks/control characters from a manual final draft. If protected saving fails, keep Review open and correct the storage problem before retrying.</p>
           <p>If the app says text was inserted but its saved insertion status could not be updated, check the destination and preserve a copy. Do not insert the same pending item again after restarting. Items marked <strong>Already inserted</strong> have insertion disabled.</p>
+        </details>
+        <details>
+          <summary>Paste is unconfirmed, or the previous clipboard needs recovery</summary>
+          <p>Open the destination and inspect whether text arrived. Do not retry blindly: a slow editor may still consume a queued paste. The app keeps the dictation paste available and retains your previous clipboard in memory.</p>
+          <p>After inspecting the destination and stopping any deferred paste, choose <strong>Restore previous clipboard…</strong> from the notification-area menu. New delivery and normal Exit wait for recovery. A newer copy made in another app is preserved. Avoid force-closing the app while it holds the backup; a crash or forced termination loses that in-memory state.</p>
+        </details>
+        <details>
+          <summary>A model repeats the same word many times</summary>
+          <p>Whisper can get stuck repeating a word during recognition. The current original Whisper profiles retry suspiciously repetitive segments against the audio using their native generation fallback. This does not delete repeated words from your text and cannot guarantee a correct transcript.</p>
+          <p>Large-v3 can take longer to finish when it retries. Progress remains visible; <kbd>Esc</kbd> cancels. If a result is still wrong, correct it directly in Review. Keep the original recording in History for comparison.</p>
         </details>
         <details>
           <summary>Why is live mode unavailable for a model, or slow with Large-v3?</summary>
@@ -409,6 +420,7 @@
           </table>
         </div>
         <p>Data locations can differ in a custom installation. History metadata, history audio, and pending Review are protected with Windows DPAPI for the current user. Keep that account and its recovery arrangements in mind when backing up or moving data. Settings and explicit audio exports are ordinary files.</p>
+        <p>Cursor insertion uses a temporary paste while preserving supported previous clipboard formats. Dictation payloads are marked to stay out of Windows clipboard history and cloud synchronization. Unsupported clipboard formats stop delivery before changing the clipboard.</p>
         <p class="top-link"><a href="#top">Back to the top</a></p>
       </section>
 

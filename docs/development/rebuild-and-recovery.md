@@ -143,6 +143,19 @@ here; keep agent workflow/safety constraints in AGENTS.md.
 4. Replace the app folder files, preserving external settings/history/models.
 5. Launch normally for shortcut testing. Use F1 in Settings to verify Help.
 
-Codex-field insertion is Peter's manual acceptance test. The latest review's
-final native probe was interrupted before completion; passing unit/controller
-tests is not a substitute for that acceptance.
+Outlook and Codex-field insertion are Peter's manual acceptance tests. The
+delivery incident update passed all 15 controlled native delivery checks;
+passing synthetic fields is not a substitute for a particular application's
+acceptance. See delivery-incident-validation-20261111.md for the current evidence.
+
+When testing a failed native destination, optionally launch the client with
+LOCAL_DICTATION_DELIVERY_DIAGNOSTICS=1 in its process environment. This enables
+bounded local delivery-metadata.jsonl under the client logs directory. It records
+provider identifiers, phases, counts, timing and confirmation flags, with no
+transcript, audio, clipboard values, UI names or document paths. Leave it unset
+for normal operation. Do not substitute a custom external-window inspection tool
+when application-control permission is missing.
+
+If the previous client reports clipboard recovery pending, resolve it through
+Restore previous clipboard before updating or stopping that process. Its previous
+clipboard backup lives only in memory; force termination cannot preserve it.

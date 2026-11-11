@@ -90,14 +90,18 @@ weights, environments, recordings, or keys needed by another Windows account.
 
 ## Validation status
 
-The current UI update is installed under C:\Git\Local-Dictation\app. It passed
-84 Core tests, 87 backend tests, and 53 controller/WPF scenarios. The actual
-Settings window was inspected; Large-v3 with live enabled persisted without a
-Save action. See [UI update validation](docs/development/ui-usability-validation-20261111.md).
+The current delivery/repetition update is installed under
+C:\Git\Local-Dictation\app. It passed 84 Core tests, 91 backend tests,
+62 controller/WPF scenarios, and 15 native delivery checks. These include actual
+controller completion into synthetic native fields, long Unicode paste, rich
+text, delayed paste, and clipboard recovery. The incident recording was replayed
+against the original Large-v3 model to reproduce and remove the observed loop.
+See [delivery incident validation](docs/development/delivery-incident-validation-20261111.md).
 
-These checks use synthetic test data and do not establish microphone timing or
-compatibility with every destination. The earlier native delivery probe was
-stopped with Escape; Codex insertion still requires Peter's manual acceptance.
+Automated delivery checks use synthetic test data and do not establish microphone
+timing or compatibility with every destination. Outlook and Codex insertion still
+require Peter's manual acceptance. The earlier UI inspection is recorded in
+[UI update validation](docs/development/ui-usability-validation-20261111.md).
 Historical Defender/signing/installation reports predate the C:\Git execution.
 
 ## Repository layout
