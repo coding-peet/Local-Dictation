@@ -56,9 +56,13 @@ lost audio, but first partials took 5.347 and 7.790 seconds. Final live output
 had 23/86 word errors (26.74%), compared with the earlier batch result of
 16/86 (18.60%) on the same reference. The batch result was not rerun.
 
-Keep the normal Large-v3 profile after-recording. It is technically capable
-of partial output but has not qualified for normal live quality/latency.
-The experiment was isolated and did not restart either existing listener.
+The original catalog kept Large-v3 in after-recording mode despite that technical
+capability. Peter subsequently requested access to the supported live mode.
+The built-in Large-v3 catalog now advertises live_supported=true while keeping
+live_ready=false: live can be selected, and Settings explains potentially slow
+updates. This changes capability policy, not original model weights or inference.
+After-recording mode remains available when live speed/quality is unsuitable.
+The original experiment was isolated and did not restart either existing listener.
 
 ## Earlier live-visibility verification on 2026-11-11
 

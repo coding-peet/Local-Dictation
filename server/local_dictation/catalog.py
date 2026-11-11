@@ -12,7 +12,9 @@ BUILTINS = [
      "live_supported":True,"live_ready":False},
     {"id":"openai/whisper-large-v3","name":"Whisper Large-v3 · Multilingual","folder":"whisper-large",
      "revision":"06f233fe06e710322aca913c1bc4249a0d71fce1","languages":["sk","en","auto"],
-     "live_supported":False,"live_ready":False}
+     # The original-weight session path supports live updates; measured latency
+     # and quality remain separate from capability (see live-visibility.md).
+     "live_supported":True,"live_ready":False}
 ]
 
 class Catalog:

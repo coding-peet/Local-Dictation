@@ -8,6 +8,21 @@ from local_dictation.config import RuntimeConfig
 from local_dictation.downloads import parse_repository, inspect_repository, download_snapshot
 
 class CatalogTests(unittest.TestCase):
+    def test_large_live_capability_does_not_claim_low_latency_readiness(self):
+        with tempfile.TemporaryDirectory() as d:
+            from test_model_files import make_model
+            root=Path(d)
+            folder=root/"whisper-large"
+            make_model(folder)
+            (folder/"local-manifest.json").write_text(json.dumps({
+                "repo":"openai/whisper-large-v3",
+                "revision":"06f233fe06e710322aca913c1bc4249a0d71fce1"}),encoding="utf-8")
+            catalog=Catalog(RuntimeConfig(root,root/"data"))
+            model=catalog.require("openai/whisper-large-v3")
+            self.assertTrue(model["installed"])
+            self.assertTrue(model["live_supported"])
+            self.assertFalse(model["live_ready"])
+
     def test_public_repository_parser(self):
         self.assertEqual(parse_repository("https://huggingface.co/openai/whisper-tiny"), ("openai/whisper-tiny","main"))
         self.assertEqual(parse_repository("openai/whisper-tiny"), ("openai/whisper-tiny","main"))

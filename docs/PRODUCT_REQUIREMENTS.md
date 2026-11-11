@@ -26,6 +26,13 @@ punctuation, whitespace, and Unicode must be preserved.
   A successful download or test does not prove quality or live suitability.
 - The default shortcut is Ctrl+Shift. Make it configurable in Settings, with
   repeat suppression and a clear disabled/collision state.
+- Persist valid settings changes automatically. Model/microphone choices and
+  toggles must not require a separate Save action before shortcut recording.
+  Debounce text settings, preserve the last valid configuration on errors, and
+  show saving/saved/error status. Changes during a session apply to the next one.
+- Enable live capability for the built-in Large-v3 profile, independently of
+  measured latency/readiness. Explain that its partial updates may be slow;
+  do not disable a technically supported mode merely because it is experimental.
 - Start/stop with the shortcut, or record in the banner from Settings. Escape
   cancels recording or verification. Stop normally at the 10-minute limit.
 
@@ -62,6 +69,14 @@ punctuation, whitespace, and Unicode must be preserved.
 - Allow custom phrase wording and empty alternatives. Preserve unapplied custom
   drafts when changing phrases, closing, or restarting. A held Enter gesture
   must accept only one choice, on release.
+- Allow direct editing of the entire visible transcript in the same compact
+  banner, including common text and punctuation. Keep originals and choices.
+  A manually edited final draft is authoritative and saved as it changes;
+  approve it explicitly before insertion so ordinary typing never inserts it.
+  Pause phrase alternatives while whole-text edits are authoritative, rather
+  than guessing new comparison offsets or overwriting the user's changes.
+  Keep the current single-paragraph delivery constraint explicit; Enter is not
+  approval, and pasted control characters remain recoverable for correction.
 - The full editor is optional through Details. Preserve immutable original
   transcripts, provenance, choice history, and the authoritative manual draft.
 - Cancelled, interrupted, or failed verification keeps text pending for explicit
@@ -114,7 +129,6 @@ Preserve the existing TypeWhisper setup and production API on port 8123 until an
 explicit controlled handover. Use the separate candidate API on 48125. Never
 change security controls as an implementation shortcut.
 
-The latest review build passed automated checks, but the final native delivery
-probe was stopped with Escape before completion. It has not been deployed over
-the installed client. A process crash between insertion and receipt persistence,
+See the latest dated validation record and README for deployed build status and
+remaining manual checks. A process crash between insertion and receipt persistence,
 especially when every write fails, is not claimed to have transactional recovery.

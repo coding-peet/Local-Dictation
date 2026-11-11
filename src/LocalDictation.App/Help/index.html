@@ -172,12 +172,12 @@
 
       <section id="quick-start" aria-labelledby="quick-start-title">
         <h2 id="quick-start-title">Start dictating</h2>
-        <p>Open Local Dictation from the Windows notification area. Wait for <strong>Ready · Local transcription</strong>, choose your microphone and model, then <strong>Save settings</strong>.</p>
+        <p>Open Local Dictation from the Windows notification area. Wait for <strong>Ready · Local transcription</strong>, then choose your microphone and model. Valid settings changes are saved automatically; check the saving status before starting.</p>
         <div class="cards">
           <div class="card">
             <h3>Write directly at your cursor</h3>
             <ol>
-              <li>Enable <strong>Insert live text at the cursor</strong> on the <strong>Dictation</strong> tab. Save.</li>
+              <li>Enable <strong>Insert live text at the cursor</strong> on the <strong>Dictation</strong> tab. The change is saved automatically.</li>
               <li>Click your destination field, with no text selected.</li>
               <li>Press and release your shortcut, <kbd>Ctrl</kbd> + <kbd>Shift</kbd> by default. Speak.</li>
               <li>Press the shortcut again, or select <strong>Finish</strong> in the banner, to stop.</li>
@@ -199,7 +199,7 @@
 
       <section id="live-text" aria-labelledby="live-text-title">
         <h2 id="live-text-title">Live text and the banner</h2>
-        <p><strong>Live transcription (experimental)</strong> shows partial wording in the banner. With <strong>Insert live text at the cursor</strong> enabled it also updates a valid destination as you speak. With that option off, a shortcut-started recording remembers the original field and inserts the final text after normal completion and any required choices. Updates arrive after speech segments and processing, and can be revised. Without live mode, wait for the result after <strong>Finish</strong>.</p>
+        <p><strong>Live transcription</strong> shows partial wording in the banner. With <strong>Insert live text at the cursor</strong> enabled it also updates a valid destination as you speak. With that option off, a shortcut-started recording remembers the original field and inserts the final text after normal completion and any required choices. Updates arrive after speech segments and processing, and can be revised. Without live mode, wait for the result after <strong>Finish</strong>.</p>
 
         <h3>Move or collapse the banner</h3>
         <ul>
@@ -248,6 +248,10 @@
         </div>
         <p>A phrase correction is saved as you type, but changes the transcript only after <strong>Use this wording</strong>. Cancelling the editor, choosing another phrase, or reopening Review keeps that draft for the next time you select <strong>Edit wording</strong> on the same phrase. Holding <kbd>Enter</kbd> does not accept following phrases.</p>
         <p>In <strong>Details</strong>, <strong>Dictation original</strong> and <strong>Verification original</strong> keep model outputs unchanged. An edited final draft takes precedence over phrase choices; <strong>Rebuild from choices</strong> preserves a previous draft for restoration.</p>
+        <h3>Type directly into the transcript</h3>
+        <p>Click ordinary transcript text, press <kbd>F2</kbd>, or select <strong>Edit text</strong> to edit the whole draft in the same banner. Delete an extra word, add punctuation, or rewrite a sentence. Actual edits are saved automatically, including when Review closes.</p>
+        <p>While editing the whole draft, phrase alternatives pause so they cannot overwrite your corrections. Select <strong>Use edited text</strong> when ready to return it to the validated destination. Typing or pressing <kbd>Enter</kbd> never approves it. Originals and comparison choices remain in <strong>Details</strong>.</p>
+        <p>Automatic delivery currently accepts a single paragraph. Pasted line breaks or control characters stay preserved for correction; remove them before approval. Already inserted transcripts remain read-only.</p>
         <div class="callout info">
           <strong>Ordinary Review stays in the banner.</strong>
           <p>No large editor opens automatically. Pending items remain available for later. In the optional Details editor, <strong>Close</strong> and <strong>Copy reviewed text</strong> keep the item; <strong>Dismiss</strong> removes pending Review. Retained History is separate.</p>
@@ -275,8 +279,8 @@
             <caption>Current local model profiles</caption>
             <thead><tr><th scope="col">Model</th><th scope="col">How to use it</th></tr></thead>
             <tbody>
-              <tr><td><strong>KInIT Turbo · Slovak</strong><br><span class="tag">Live experimental</span></td><td>Slovak live preview, or after-recording transcription with live off.</td></tr>
-              <tr><td><strong>Whisper Large-v3 · Multilingual</strong><br><span class="tag">After recording</span></td><td>After Finish or eligible verification. Live testing showed higher latency and more errors on the tested samples; normal live use remains unqualified.</td></tr>
+              <tr><td><strong>KInIT Turbo · Slovak</strong><br><span class="tag">Live available</span></td><td>Slovak live preview, or after-recording transcription with live off.</td></tr>
+              <tr><td><strong>Whisper Large-v3 · Multilingual</strong><br><span class="tag">Live available · slower updates</span></td><td>Live preview, after Finish, or eligible verification. Earlier local live tests returned first partials after about 5–8 seconds; speed and accuracy depend on the recording and hardware.</td></tr>
               <tr><td><strong>Whisper Tiny</strong><br><span class="tag">After recording</span></td><td>A small additional model when installed. Check accuracy on your recordings.</td></tr>
             </tbody>
           </table>
@@ -290,7 +294,7 @@
           <li>Select the installed Dictation model and <strong>Test selected model with audio…</strong>.</li>
         </ol>
         <p>Imports support compatible built-in Whisper Transformers models with original safetensors; private, gated, and remote-code models are rejected. New imports start after-recording. Closing Settings does not stop downloading; use <strong>Cancel download</strong>.</p>
-        <p>The status below <strong>Live transcription (experimental)</strong> says whether the selected model is missing, needs a runtime test, supports live preview, or works after recording only. A disabled live option means that profile is not qualified for live transcription.</p>
+        <p>The status below <strong>Live transcription</strong> says whether the selected model is missing, needs a runtime test, supports live preview, or works after recording only. Support and measured low-latency readiness are separate. Built-in Large-v3 supports live; newly imported profiles still start without live capability.</p>
         <p><strong>Installed</strong>, <strong>runtime-tested</strong>, <strong>quality-checked</strong>, and <strong>live-ready</strong> are separate states. A successful runtime test proves the model can transcribe; check its accuracy and live performance separately. Verification needs a different, installed, runtime-tested model supporting your language.</p>
       </section>
 
@@ -321,9 +325,9 @@
           <dt>Recording shortcut</dt>
           <dd>Enable the shortcut and save. Default: <kbd>Ctrl</kbd> + <kbd>Shift</kbd>. Alternatives: <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Space</kbd>, <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>D</kbd>, <kbd>Alt</kbd> + <kbd>F9</kbd>. Use Ctrl/Shift/Alt with Space, letters, digits, or F1–F24.</dd>
           <dt>Saving</dt>
-          <dd><strong>Save settings</strong> keeps your changes. During a session, changes apply to the next recording.</dd>
+          <dd>Valid model, microphone, language, appearance, and toggle changes save automatically. Text settings save after a short pause or focus change. Invalid text shows an error and leaves the previous valid configuration active. During a session, changes apply to the next recording.</dd>
           <dt>Help</dt>
-          <dd><kbd>F1</kbd> or <strong>Help (F1)</strong> in the Settings window opens this local guide in your default browser. Opening Help does not save Settings. <kbd>Ctrl</kbd> + <kbd>F</kbd> searches; the browser's Print command makes a paper/PDF copy.</dd>
+          <dd><kbd>F1</kbd> or <strong>Help (F1)</strong> in the Settings window opens this local guide in your default browser. <kbd>Ctrl</kbd> + <kbd>F</kbd> searches; the browser's Print command makes a paper/PDF copy.</dd>
         </dl>
         <h3>Close Settings or exit the app</h3>
         <p><strong>Close</strong> closes Settings; the app stays available in the Windows notification area. Choose <strong>Exit</strong> from its notification-area menu to quit.</p>
@@ -376,8 +380,8 @@
           <p>If the app says text was inserted but its saved insertion status could not be updated, check the destination and preserve a copy. Do not insert the same pending item again after restarting. Items marked <strong>Already inserted</strong> have insertion disabled.</p>
         </details>
         <details>
-          <summary>Why is live mode unavailable for Large-v3 or another model?</summary>
-          <p>A model can run after recording without qualifying for live use. Large-v3 produced partial results in local tests, but the tested live profile was slower and less accurate on those samples than its after-recording output. New imports also start without live qualification. Use after-recording mode or select a supported live profile.</p>
+          <summary>Why is live mode unavailable for a model, or slow with Large-v3?</summary>
+          <p>The built-in Large-v3 profile now supports live transcription, with potentially slow updates. Its earlier restriction was a catalog policy, not a limitation of Whisper itself. New imports still start without live capability. If Large-v3 remains disabled, reconnect to an updated local session API so the app receives its current capabilities.</p>
         </details>
         <details>
           <summary>Local Dictation is already running</summary>

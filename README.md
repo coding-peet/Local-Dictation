@@ -90,15 +90,15 @@ weights, environments, recordings, or keys needed by another Windows account.
 
 ## Validation status
 
-The native client has run from C:\Git. The latest review build passed 84 Core
-tests, 86 backend tests, four packaging checks, 15 controller scenarios, and
-eight WPF/input scenarios. These checks use synthetic test data and do not prove
-microphone timing or compatibility with every destination app.
+The current UI update is installed under C:\Git\Local-Dictation\app. It passed
+84 Core tests, 87 backend tests, and 53 controller/WPF scenarios. The actual
+Settings window was inspected; Large-v3 with live enabled persisted without a
+Save action. See [UI update validation](docs/development/ui-usability-validation-20261111.md).
 
-The latest native delivery probe was stopped with Escape before completion;
-the reviewed candidate has not replaced the installed client. Codex insertion
-still requires Peter's manual acceptance. Earlier Defender/signing/installation
-reports describe historical attempts, not the current C:\Git execution status.
+These checks use synthetic test data and do not establish microphone timing or
+compatibility with every destination. The earlier native delivery probe was
+stopped with Escape; Codex insertion still requires Peter's manual acceptance.
+Historical Defender/signing/installation reports predate the C:\Git execution.
 
 ## Repository layout
 

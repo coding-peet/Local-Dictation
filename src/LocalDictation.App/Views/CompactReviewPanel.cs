@@ -16,7 +16,11 @@ public sealed class CompactReviewPanel : Border
     readonly StackPanel alternatives=new(),editing=new();
     readonly Button first,second,edit,keep,destination,details;
     readonly TextBox custom=new();
-    readonly Button saveCustom,cancelCustom;
+    readonly Button saveCustom,cancelCustom,editText,useEdited,exitText;
+    readonly TextBox directEditor=new();
+    readonly WrapPanel directActions=new();
+    ReviewDocument? editingDocument;
+    bool editingText,updatingDirectText;
     ReviewDocument? shownDocument;
     List<ReviewPiece>? shownPieces;
     Dictionary<string,ReviewChoice>? shownChoices;
@@ -24,7 +28,15 @@ public sealed class CompactReviewPanel : Border
     int shownHistory=-1,shownChoiceCount=-1;
     bool editingPhrase,shownInserted,customEnterPending;
     string? editingId;
-    static readonly Brush Ink=Brush("#F7F9FC"),Muted=Brush("#BDC8D9"),Pink=Brush("#FFADB3"),Amber=Brush("#FFD197"),Selected=Brush("#49343F");
+    static readonly Brush NormalInk=Brush("#F7F9FC"),NormalMuted=Brush("#BDC8D9"),NormalPink=Brush("#FFADB3"),NormalAmber=Brush("#FFD197"),NormalSelected=Brush("#49343F");
+    static Brush Ink=>SystemParameters.HighContrast?SystemColors.WindowTextBrush:NormalInk;
+    static Brush Muted=>SystemParameters.HighContrast?SystemColors.WindowTextBrush:NormalMuted;
+    static Brush Pink=>SystemParameters.HighContrast?SystemColors.WindowTextBrush:NormalPink;
+    static Brush Amber=>SystemParameters.HighContrast?SystemColors.WindowTextBrush:NormalAmber;
+    static Brush Selected=>SystemParameters.HighContrast?SystemColors.HighlightBrush:NormalSelected;
+    static Brush Surface=>SystemParameters.HighContrast?SystemColors.WindowBrush:Brush("#18202B");
+    static Brush FieldSurface=>SystemParameters.HighContrast?SystemColors.WindowBrush:Brush("#263141");
+    static Brush FieldBorder=>SystemParameters.HighContrast?SystemColors.WindowTextBrush:Brush("#76859A");
     static SolidColorBrush Brush(string value)=>new((Color)ColorConverter.ConvertFromString(value));
 
     static Button SmallButton(string text,Action action)
@@ -39,7 +51,7 @@ public sealed class CompactReviewPanel : Border
     {
         var button=Ui.Button("",()=>controller.ChooseBannerPiece(kind));
         button.MinHeight=38;button.Padding=new(10,7,10,7);button.Margin=new(0,0,0,6);
-        button.Background=Brush("#263141");button.BorderBrush=Brush("#536277");button.Foreground=Ink;
+        button.Background=FieldSurface;button.BorderBrush=FieldBorder;button.Foreground=Ink;
         button.HorizontalContentAlignment=HorizontalAlignment.Left;
         button.PreviewMouseLeftButtonDown+=(_,e)=>
         {
@@ -71,21 +83,75 @@ public sealed class CompactReviewPanel : Border
     {
         this.controller=controller;
         Margin=new(0,12,0,0);Padding=new(13,11,13,11);CornerRadius=new(10);
-        Background=Brush("#18202B");MaxHeight=370;
+        Background=Surface;MaxHeight=370;Focusable=true;
         var column=new StackPanel();
         var title=new DockPanel();heading.FontSize=11;heading.FontWeight=FontWeights.SemiBold;heading.Foreground=Muted;
         progress.FontSize=11;progress.Foreground=Muted;progress.HorizontalAlignment=HorizontalAlignment.Right;
         DockPanel.SetDock(progress,Dock.Right);title.Children.Add(progress);title.Children.Add(heading);column.Children.Add(title);
         transcript.FontSize=16;transcript.LineHeight=25;transcript.TextWrapping=TextWrapping.Wrap;transcript.Foreground=Ink;
-        System.Windows.Automation.AutomationProperties.SetName(transcript,"Review transcript; underlined phrases have alternatives");
+        System.Windows.Automation.AutomationProperties.SetName(transcript,"Review transcript. Underlined phrases have alternatives. Click plain text or press F2 to edit.");
+        transcript.Focusable=true;transcript.Cursor=Cursors.IBeam;
+        transcript.PreviewMouseLeftButtonDown+=(_,e)=>
+        {
+            if(FindHyperlink(e.OriginalSource)!=null&&e.ClickCount<2)return;
+            var caret=TranscriptOffset(e.GetPosition(transcript));
+            if(BeginTextEdit(caret))e.Handled=true;
+        };
+        transcript.PreviewTextInput+=(_,e)=>
+        {
+            if(e.Text.Length==0||e.Text.Any(char.IsControl)||!BeginTextEdit())return;
+            directEditor.SelectedText=e.Text;e.Handled=true;
+        };
+        PreviewKeyDown+=(_,e)=>
+        {
+            if(e.Key==Key.F2&&BeginTextEdit()){e.Handled=true;return;}
+            if(e.OriginalSource!=directEditor)return;
+            // Whole-text editing never accepts on Enter, including key repeats.
+            if(e.Key==Key.Enter)e.Handled=true;
+            else if(e.Key==Key.Escape)
+            {
+                e.Handled=true;
+                if(controller.BannerReview?.ManualFinalDraft==null)ExitTextEdit();
+            }
+        };
         transcriptScroll=new ScrollViewer{Content=transcript,MinHeight=40,MaxHeight=100,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,Margin=new(0,9,0,8)};
-        column.Children.Add(transcriptScroll);
+        var textSurface=new Grid();textSurface.Children.Add(transcriptScroll);
+        directEditor.AcceptsReturn=false;directEditor.AcceptsTab=false;directEditor.TextWrapping=TextWrapping.Wrap;
+        directEditor.FontSize=16;directEditor.MinHeight=48;directEditor.MaxHeight=110;
+        directEditor.Padding=new(5,4,5,4);directEditor.Margin=new(0,7,0,8);directEditor.VerticalContentAlignment=VerticalAlignment.Top;
+        directEditor.VerticalScrollBarVisibility=ScrollBarVisibility.Auto;
+        directEditor.Foreground=Ink;directEditor.Background=FieldSurface;directEditor.BorderBrush=FieldBorder;
+        directEditor.SelectionBrush=SystemColors.HighlightBrush;directEditor.SelectionTextBrush=SystemColors.HighlightTextBrush;
+        directEditor.Visibility=Visibility.Collapsed;
+        System.Windows.Automation.AutomationProperties.SetName(directEditor,"Edit final transcript");
+        System.Windows.Automation.AutomationProperties.SetHelpText(directEditor,"Edits are saved. Use edited text approves the complete draft. Enter never inserts it.");
+        directEditor.TextChanged+=(_,_)=>SaveDirectDraft();
+        DataObject.AddPastingHandler(directEditor,(_,e)=>
+        {
+            // Single-paragraph TextBox paste can truncate at a line break.
+            // Keep the exact pasted text and explain unsupported controls instead.
+            var format=e.DataObject.GetDataPresent(DataFormats.UnicodeText)?DataFormats.UnicodeText:DataFormats.Text;
+            if(e.DataObject.GetData(format) is not string value)return;
+            var caret=directEditor.SelectionStart;
+            directEditor.BeginChange();
+            try{directEditor.SelectedText=value;directEditor.CaretIndex=caret+value.Length;}
+            finally{directEditor.EndChange();}
+            e.CancelCommand();
+        });
+        textSurface.Children.Add(directEditor);column.Children.Add(textSurface);
+        useEdited=Ui.Button("Use edited text",()=>_ = controller.ApproveBannerEditedText());
+        useEdited.MinHeight=32;useEdited.Padding=new(10,5,10,5);useEdited.Margin=new(0,0,8,3);
+        useEdited.Background=SystemParameters.HighContrast?SystemColors.HighlightBrush:Ink;
+        useEdited.Foreground=SystemParameters.HighContrast?SystemColors.HighlightTextBrush:Surface;
+        useEdited.BorderThickness=new(0);useEdited.FontSize=12;useEdited.FontWeight=FontWeights.SemiBold;
+        exitText=SmallButton("Back to choices",ExitTextEdit);
+        directActions.Children.Add(useEdited);directActions.Children.Add(exitText);column.Children.Add(directActions);
 
         first=WordingButton("First wording","primary");second=WordingButton("Second wording","verification");
         alternatives.Children.Add(first);alternatives.Children.Add(second);column.Children.Add(alternatives);
 
         custom.AcceptsReturn=false;custom.TextWrapping=TextWrapping.Wrap;custom.MinHeight=38;custom.MaxHeight=65;
-        custom.FontSize=14;custom.Foreground=Ink;custom.Background=Brush("#263141");custom.BorderBrush=Brush("#76859A");custom.Padding=new(9,6,9,6);
+        custom.FontSize=14;custom.Foreground=Ink;custom.Background=FieldSurface;custom.BorderBrush=FieldBorder;custom.Padding=new(9,6,9,6);
         System.Windows.Automation.AutomationProperties.SetName(custom,"Edit the selected wording");
         editing.Children.Add(custom);
         saveCustom=SmallButton("Use this wording",SaveCustom);cancelCustom=SmallButton("Cancel",()=>{editingPhrase=false;Refresh();});
@@ -110,13 +176,14 @@ public sealed class CompactReviewPanel : Border
         };
 
         edit=SmallButton("Edit wording",BeginEdit);
+        editText=SmallButton("Edit text",()=>BeginTextEdit());editText.ToolTip="Edit anywhere in the visible transcript (F2)";
         keep=SmallButton("Keep the remaining wording",controller.KeepBannerWording);
         destination=SmallButton("Choose destination",controller.ChooseBannerDestination);
         details=SmallButton("Details",controller.OpenBannerDetails);
         keep.ToolTip="Keep the displayed wording for every remaining phrase";
         details.ToolTip="Open the full editor and recording details";
         var actions=new WrapPanel{Margin=new(0,2,0,0)};
-        foreach(var button in new[]{edit,keep,destination,details})actions.Children.Add(button);
+        foreach(var button in new[]{editText,edit,keep,destination,details})actions.Children.Add(button);
         column.Children.Add(actions);
         status.FontSize=11.5;status.LineHeight=17;status.Foreground=Muted;status.TextWrapping=TextWrapping.Wrap;status.Margin=new(0,7,0,0);
         column.Children.Add(status);
@@ -136,11 +203,71 @@ public sealed class CompactReviewPanel : Border
         System.Windows.Automation.AutomationProperties.SetName(button,order+": "+text);
     }
 
+
+    static Hyperlink? FindHyperlink(object source)
+    {
+        for(var current=source as DependencyObject;current!=null;)
+        {
+            if(current is Hyperlink link)return link;
+            current=current is FrameworkContentElement content?content.Parent:LogicalTreeHelper.GetParent(current);
+        }
+        return null;
+    }
+
+    int TranscriptOffset(Point point)
+    {
+        var document=controller.BannerReview;
+        var position=transcript.GetPositionFromPoint(point,true);
+        if(document==null||position==null)return document?.OutputText.Length??0;
+        var offset=new TextRange(transcript.ContentStart,position).Text.Length;
+        if(document.ManualFinalDraft!=null)return Math.Min(offset,document.OutputText.Length);
+        var rendered=0;var output=0;
+        foreach(var piece in document.Pieces)
+        {
+            var value=Wording(document,piece);
+            var length=piece.Different&&value.Length==0?1:value.Length;
+            if(offset<=rendered+length)return output+Math.Min(value.Length,Math.Max(0,offset-rendered));
+            rendered+=length;output+=value.Length;
+        }
+        return output;
+    }
+
+    bool BeginTextEdit(int? caret=null)
+    {
+        if(controller.BannerReview is not {} document||document.InsertedAt!=null||controller.IsApplyingReview||controller.IsBusy)return false;
+        if(!editingText||editingDocument!=document)
+        {
+            editingDocument=document;updatingDirectText=true;
+            try{directEditor.IsUndoEnabled=false;directEditor.Text=document.OutputText;directEditor.IsUndoEnabled=true;}
+            finally{updatingDirectText=false;}
+        }
+        editingPhrase=false;editingText=true;Refresh();directEditor.Focus();
+        if(caret!=null)directEditor.Select(Math.Clamp(caret.Value,0,directEditor.Text.Length),0);
+        else if(directEditor.SelectionLength==0)directEditor.CaretIndex=directEditor.Text.Length;
+        return true;
+    }
+
+    void ExitTextEdit()
+    {
+        // Once changed, the complete draft is authoritative. Details retains
+        // original comparisons and the explicit rebuild/restore workflow.
+        if(controller.BannerReview?.ManualFinalDraft!=null)return;
+        editingText=false;Refresh();transcript.Focus();
+    }
+
+    void SaveDirectDraft()
+    {
+        if(updatingDirectText||!editingText||controller.IsApplyingReview||
+            controller.BannerReview is not {} document||document!=editingDocument||document.InsertedAt!=null)return;
+        if(document.ManualFinalDraft==null&&directEditor.Text==document.OutputText)return;
+        document.ManualFinalDraft=directEditor.Text;controller.SaveReview(document);Refresh();
+    }
+
     void BeginEdit()
     {
         var document=controller.BannerReview;
         var piece=document?.Pieces.FirstOrDefault(p=>p.Id==controller.SelectedReviewPieceId&&p.Different);
-        if(document==null||piece==null||document.ManualFinalDraft!=null||document.InsertedAt!=null)return;
+        if(document==null||piece==null||editingText||document.ManualFinalDraft!=null||document.InsertedAt!=null)return;
         editingPhrase=false;
         editingId=piece.Id;custom.Text=document.CustomDrafts.GetValueOrDefault(piece.Id,Wording(document,piece));
         editingPhrase=true;Refresh();custom.Focus();custom.SelectAll();
@@ -155,13 +282,21 @@ public sealed class CompactReviewPanel : Border
     public void Refresh()
     {
         var document=controller.BannerReview;
-        if(document==null){Visibility=Visibility.Collapsed;shownDocument=null;return;}
+        if(document==null){Visibility=Visibility.Collapsed;shownDocument=null;editingDocument=null;editingText=false;return;}
         Visibility=Visibility.Visible;
         var selected=controller.SelectedReviewPieceId;
         var selectedPiece=document.Pieces.FirstOrDefault(p=>p.Different&&p.Id==selected);
         var inserted=document.InsertedAt!=null;
         if(editingId!=selected||shownDocument!=document||inserted)editingPhrase=false;
         var manual=document.ManualFinalDraft;
+        if(shownDocument!=document)
+        {
+            editingText=manual!=null&&!inserted;
+            editingDocument=document;updatingDirectText=true;
+            try{directEditor.IsUndoEnabled=false;directEditor.Text=document.OutputText;directEditor.IsUndoEnabled=true;}
+            finally{updatingDirectText=false;}
+        }
+        if(inserted)editingText=false;
         var changed=shownDocument!=document||shownPieces!=document.Pieces||shownChoices!=document.Choices||shownSelected!=selected||
             shownManual!=manual||shownHistory!=document.History.Count||shownChoiceCount!=document.Choices.Count||shownInserted!=inserted;
         if(changed)
@@ -178,14 +313,14 @@ public sealed class CompactReviewPanel : Border
                     var resolved=document.Choices.ContainsKey(piece.Id);
                     var link=new Hyperlink(new Run(value.Length==0?"∅":value))
                     {
-                        Foreground=resolved?Muted:Pink,TextDecorations=TextDecorations.Underline,
+                        Foreground=SystemParameters.HighContrast&&piece.Id==selected?SystemColors.HighlightTextBrush:resolved?Muted:Pink,TextDecorations=TextDecorations.Underline,
                         Background=piece.Id==selected?Selected:Brushes.Transparent,ToolTip="Choose the correct wording",
                         IsEnabled=!controller.IsApplyingReview
                     };
-                    link.Click+=(_,_)=>controller.SelectBannerPiece(piece.Id);transcript.Inlines.Add(link);
+                    link.Click+=(_,_)=>{if(!editingText)controller.SelectBannerPiece(piece.Id);};transcript.Inlines.Add(link);
                     if(piece.Id==selected)active=link;
                 }
-                if(active!=null)Dispatcher.BeginInvoke(()=>{if(IsVisible)active.BringIntoView();});
+                if(active!=null&&!editingText)Dispatcher.BeginInvoke(()=>{if(IsVisible&&!editingText)active.BringIntoView();});
             }
             shownDocument=document;shownPieces=document.Pieces;shownChoices=document.Choices;shownSelected=selected;shownManual=manual;
             shownHistory=document.History.Count;shownChoiceCount=document.Choices.Count;
@@ -193,19 +328,33 @@ public sealed class CompactReviewPanel : Border
             if(selectedPiece!=null){SetWording(first,selectedPiece.Primary);SetWording(second,selectedPiece.Verification);}
         }
         var applying=controller.IsApplyingReview;
-        heading.Text=inserted?"INSERTED TEXT":manual!=null?"EDITED FINAL TEXT":selectedPiece!=null?"CHOOSE THE CORRECT WORDING":"YOUR TEXT";
-        progress.Text=inserted?"Already inserted":applying?"Inserting…":document.UnresolvedCount==0?"Ready":$"{document.UnresolvedCount} left";
-        alternatives.Visibility=selectedPiece!=null&&manual==null&&!editingPhrase&&!inserted?Visibility.Visible:Visibility.Collapsed;
-        editing.Visibility=editingPhrase&&manual==null?Visibility.Visible:Visibility.Collapsed;
-        edit.Visibility=selectedPiece!=null&&manual==null&&!editingPhrase&&!inserted?Visibility.Visible:Visibility.Collapsed;
-        keep.Visibility=document.UnresolvedCount>0&&manual==null&&!inserted?Visibility.Visible:Visibility.Collapsed;
+        var unsaved=controller.IsReviewUnsaved(document.Id);
+        heading.Text=inserted?"INSERTED TEXT":editingText?"EDIT YOUR TEXT":manual!=null?"EDITED FINAL TEXT":selectedPiece!=null?"CHOOSE THE CORRECT WORDING":"YOUR TEXT";
+        progress.Text=inserted?"Already inserted":applying?"Inserting…":unsaved?"Not saved":editingText&&manual!=null?"Draft saved":document.UnresolvedCount==0?"Ready":$"{document.UnresolvedCount} left";
+        alternatives.Visibility=selectedPiece!=null&&manual==null&&!editingPhrase&&!editingText&&!inserted?Visibility.Visible:Visibility.Collapsed;
+        editing.Visibility=editingPhrase&&manual==null&&!editingText?Visibility.Visible:Visibility.Collapsed;
+        edit.Visibility=selectedPiece!=null&&manual==null&&!editingPhrase&&!editingText&&!inserted?Visibility.Visible:Visibility.Collapsed;
+        keep.Visibility=document.UnresolvedCount>0&&manual==null&&!editingText&&!inserted?Visibility.Visible:Visibility.Collapsed;
         destination.Visibility=document.CanInsert?Visibility.Visible:Visibility.Collapsed;
-        foreach(var button in new[]{first,second,edit,keep,destination,saveCustom,cancelCustom})button.IsEnabled=!applying&&!inserted;
+        transcriptScroll.Visibility=editingText?Visibility.Collapsed:Visibility.Visible;
+        directEditor.Visibility=editingText?Visibility.Visible:Visibility.Collapsed;
+        directActions.Visibility=editingText?Visibility.Visible:Visibility.Collapsed;
+        editText.Visibility=!editingText&&!inserted?Visibility.Visible:Visibility.Collapsed;
+        exitText.Visibility=manual==null?Visibility.Visible:Visibility.Collapsed;
+        foreach(var button in new[]{first,second,editText,edit,keep,destination,saveCustom,cancelCustom,exitText})button.IsEnabled=!applying&&!inserted;
         details.IsEnabled=!applying;
         custom.IsEnabled=!applying&&!inserted;
+        directEditor.IsReadOnly=applying||inserted;
+        useEdited.IsEnabled=!applying&&!inserted&&manual!=null&&!manual.Any(char.IsControl);
         // Updating only enabled state must not rebuild the inline transcript or steal keyboard focus.
         foreach(var link in transcript.Inlines.OfType<Hyperlink>())link.IsEnabled=!applying&&!inserted;
-        status.Text=inserted?"This text was already inserted. Details keeps its recording information and original choices available.":manual!=null?"Your edited final draft is kept. Open Details to change it.":document.Reason;
-        status.Foreground=applying?Muted:document.UnresolvedCount>0?Muted:Amber;
+        status.Text=inserted?unsaved?"This text was inserted, but its receipt could not be saved. Keep Review open and do not insert it again.":"This text was already inserted. Details keeps its recording information and original choices available.":
+            unsaved?"Protected saving failed. Your edits are in memory only. Keep Review open and retry saving before inserting.":
+            editingText&&manual?.Any(char.IsControl)==true?"Remove line breaks or control characters before inserting. Your exact edited text is saved here.":
+            editingText&&manual!=null&&document.CanInsert?document.Reason+" Your edited text is kept. Use edited text to retry, or choose a destination.":
+            editingText&&manual!=null?"Your edits are saved. Use edited text approves the whole draft. Original wording and choices remain in Details.":
+            editingText?"Edit anywhere in your text. Enter never inserts it. Back to choices keeps the comparison unchanged.":
+            manual!=null?"Your edited final draft is kept. Click the text or press F2 to edit it.":document.Reason;
+        status.Foreground=unsaved?Amber:applying?Muted:document.UnresolvedCount>0?Muted:Amber;
     }
 }

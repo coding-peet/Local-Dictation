@@ -45,6 +45,7 @@ public sealed class AppController : IDisposable
     CompactReviewProgress? bannerProgress;
     string? applyingBannerId;
     public ReviewDocument? BannerReview=>bannerProgress?.Document;
+    public bool IsReviewUnsaved(string id)=>pending.UnsavedIds.Contains(id);
     public string? SelectedReviewPieceId=>bannerProgress?.SelectedId;
     public bool IsApplyingReview=>applyingBannerId!=null||BannerReview is {} doc&&inserting.Contains(doc.Id);
     readonly DispatcherTimer resumeTimer=new(){Interval=TimeSpan.FromMilliseconds(350)};
@@ -66,7 +67,7 @@ public sealed class AppController : IDisposable
     public List<ModelInfo> Models {get;private set;}=[];
     public IReadOnlyList<ReviewDocument> Pending => pending.Documents.Where(p=>p.Id!=active?.Review.Id||active?.Completed==true).ToList();
     public bool Connected {get;private set;}
-    public string ConnectionMessage {get;private set;}="Checking the local APIâ€¦";
+    public string ConnectionMessage {get;private set;}="Checking the local API…";
     public string ShortcutMessage {get;private set;}="";
     public string StateLabel {get;private set;}="Ready";
     public string DetailLabel {get;private set;}="";
@@ -123,9 +124,9 @@ public sealed class AppController : IDisposable
             if(active!=null)
             {
                 var elapsed=TimeSpan.FromSeconds(active.Capture.CapturedBytes/32000.0);
-                DetailLabel=$"{(int)elapsed.TotalMinutes:00}:{elapsed.Seconds:00} Â· {Models.FirstOrDefault(m=>m.Id==active.Settings.PrimaryModel)?.Name??active.Settings.PrimaryModel}"+
-                    (active.CanDeliver?" Â· At cursor":" Â· Review")+
-                    " Â· "+active.Capture.DeviceName+(active.Recording?" Â· Mic active":" Â· Mic stopped");
+                DetailLabel=$"{(int)elapsed.TotalMinutes:00}:{elapsed.Seconds:00} · {Models.FirstOrDefault(m=>m.Id==active.Settings.PrimaryModel)?.Name??active.Settings.PrimaryModel}"+
+                    (active.CanDeliver?" · At cursor":" · Review")+
+                    " · "+active.Capture.DeviceName+(active.Recording?" · Mic active":" · Mic stopped");
             }
             banner.Refresh();
         };
@@ -279,6 +280,22 @@ public sealed class AppController : IDisposable
         _ = ApplyBannerReview();
     }
 
+    public async Task ApproveBannerEditedText()
+    {
+        if(IsBusy||IsApplyingReview||bannerProgress==null||
+            BannerReview is not {} document||document.InsertedAt!=null||document.ManualFinalDraft is not {} text)return;
+        if(text.Any(char.IsControl))
+        {
+            document.Reason="Remove line breaks or control characters before inserting. Your edited text is saved here.";
+            SaveReview(document);Changed?.Invoke();return;
+        }
+        // Whole-text edits are authoritative. Only this explicit approval
+        // resolves the remaining comparison choices and permits delivery.
+        bannerProgress.KeepRemaining();
+        SaveReview(document);Changed?.Invoke();
+        await ApplyBannerReview();
+    }
+
     public async Task ApplyBannerReview()
     {
         if(IsApplyingReview||BannerReview is not {} document||!document.CanInsert)return;
@@ -368,7 +385,7 @@ public sealed class AppController : IDisposable
                 throw new InvalidOperationException("This server supports batch transcription only. Start the Local Dictation session API.");
             Models=await api.Models();
             Connected=health.GetProperty("ready").GetBoolean();
-            ConnectionMessage=Connected?(health.GetProperty("busy").GetBoolean()?"Another transcription is running":"Ready Â· Local transcription"):
+            ConnectionMessage=Connected?(health.GetProperty("busy").GetBoolean()?"Another transcription is running":"Ready · Local transcription"):
                 "API preparing or unavailable. Wait for runtime readiness, then Reconnect.";
         }
         catch(Exception ex) when(ex is HttpRequestException or TaskCanceledException or InvalidOperationException or JsonException or ArgumentException)
@@ -396,7 +413,7 @@ public sealed class AppController : IDisposable
             {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
             foreach(var arg in new[]{"-NoProfile","-NonInteractive","-File",script,"-Port",port.ToString(System.Globalization.CultureInfo.InvariantCulture)})start.ArgumentList.Add(arg);
             using var process=Process.Start(start)??throw new IOException();
-            ConnectionMessage="Starting the local transcription serviceâ€¦";Changed?.Invoke();
+            ConnectionMessage="Starting the local transcription service…";Changed?.Invoke();
             var output=process.StandardOutput.ReadToEndAsync();var error=process.StandardError.ReadToEndAsync();
             await process.WaitForExitAsync();await output;await error;
             if(process.ExitCode!=0)ConnectionMessage="Service did not start, or is already starting. Reconnect after a moment.";
@@ -437,7 +454,7 @@ public sealed class AppController : IDisposable
         reviewWindow?.Close();
         lastTranscript=lastDeliveryMessage="";
         active=run;input.SessionActive=true;
-        StateLabel="Preparing";DetailLabel="Opening the selected microphoneâ€¦";hideAt=DateTimeOffset.MinValue;
+        StateLabel="Preparing";DetailLabel="Opening the selected microphone…";hideAt=DateTimeOffset.MinValue;
         Changed?.Invoke();banner.Refresh();
         var recording=Record(run);
         recordingTasks.Add(recording);
@@ -463,7 +480,7 @@ public sealed class AppController : IDisposable
             run.Capture.Faulted+=message=>System.Windows.Application.Current.Dispatcher.BeginInvoke(()=>
             {if(active!=run)return;ConnectionMessage=message;run.Failure=message;run.NeedsReview=true;run.Cancel.Cancel();Changed?.Invoke();});
             run.Capture.LimitReached+=()=>System.Windows.Application.Current.Dispatcher.InvokeAsync(()=>
-            {if(active!=run)return;run.Recording=false;StateLabel="Finishing Â· recording limit";Changed?.Invoke();});
+            {if(active!=run)return;run.Recording=false;StateLabel="Finishing · recording limit";Changed?.Invoke();});
             run.Capture.Start(run.Settings.MicrophoneId);
             run.Started=DateTimeOffset.Now;
             run.Stage="destination";
@@ -594,7 +611,7 @@ public sealed class AppController : IDisposable
         else if(type=="recording.limit_reached")
         {
             run.Recording=false;run.Capture.Stop();
-            if(active==run)StateLabel="Finishing Â· recording limit";
+            if(active==run)StateLabel="Finishing · recording limit";
         }
         else if(type is "transcript.updated" or "transcript.final")
         {

@@ -10,7 +10,7 @@ public static class ThemeManager
 {
     public static string Choice {get;private set;}="System";
     public static bool Dark {get;private set;}
-    static readonly string[] Keys=["Canvas","Surface","Ink","Muted","Accent","Border","InputBorder","Selected","Warning","OnAccent","Difference"];
+    static readonly string[] Keys=["Canvas","Surface","Ink","Muted","Accent","Border","InputBorder","Selected","Warning","OnAccent","Difference","SelectedInk"];
     public static void Apply(string choice)
     {
         Choice=choice;
@@ -18,8 +18,8 @@ public static class ThemeManager
         try {using var key=Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");systemDark=key?.GetValue("AppsUseLightTheme") is int value&&value==0;}
         catch(System.Security.SecurityException){}
         Dark=choice=="Dark"||choice=="System"&&systemDark;
-        var colors=Dark?new[]{"#15191F","#20262F","#F0F3F8","#B4C0D0","#65B8FF","#394451","#8494A8","#283F58","#FFC477","#111827","#51442A"}:
-            new[]{"#F4F6F8","#FFFFFF","#1F2937","#52606D","#006BB6","#D7DEE7","#6B7785","#E5F2FF","#8A4B00","#FFFFFF","#FFF3CF"};
+        var colors=Dark?new[]{"#15191F","#20262F","#F0F3F8","#B4C0D0","#65B8FF","#394451","#8494A8","#283F58","#FFC477","#111827","#51442A","#F0F3F8"}:
+            new[]{"#F4F6F8","#FFFFFF","#1F2937","#52606D","#006BB6","#D7DEE7","#6B7785","#E5F2FF","#8A4B00","#FFFFFF","#FFF3CF","#1F2937"};
         for(var i=0;i<Keys.Length;i++)
         {
             var color=(Color)ColorConverter.ConvertFromString(colors[i]);
@@ -27,7 +27,7 @@ public static class ThemeManager
             {
                 "Canvas" or "Surface"=>SystemColors.WindowColor,
                 "Accent" or "Selected" or "Difference"=>SystemColors.HighlightColor,
-                "OnAccent"=>SystemColors.HighlightTextColor,
+                "OnAccent" or "SelectedInk"=>SystemColors.HighlightTextColor,
                 _=>SystemColors.WindowTextColor
             };
             if(System.Windows.Application.Current.Resources[Keys[i]] is SolidColorBrush brush&&!brush.IsFrozen)brush.Color=color;
