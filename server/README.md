@@ -1,9 +1,13 @@
 # Existing batch ASR backend
 
-The native client uses the additional api_main.py session server and
-local_dictation package on candidate port 48125. See
-[session API documentation](../docs/development/api.md). The legacy batch
-service described below remains available separately.
+The native Windows client uses the additional api_main.py session server
+and local_dictation package on candidate port 48125. It supports live sessions,
+verification, and model imports separately from the existing batch service.
+
+See the [current client guide](../README.md),
+[rebuild and recovery guide](../docs/development/rebuild-and-recovery.md),
+and [session API documentation](../docs/development/api.md).
+The legacy batch service described below remains available separately.
 
 ## What is included
 
@@ -18,7 +22,8 @@ from the deployed C:\AI\PalaNote-ASR installation on 2026-11-10.
 - test_*.py: existing unit coverage.
 - requirements-lock.txt: the pinned environment used by this deployment.
 
-The earlier standalone utility is not the planned Windows dictation client.
+The earlier standalone utility is separate from the native Windows dictation
+client.
 
 
 ## Existing API
@@ -32,8 +37,8 @@ POST /v1/audio/transcriptions
 ~~~
 
 The transcription route receives a complete recording and returns a complete
-result. Live sessions, verification orchestration, and a dynamic import
-registry are planned extensions.
+result. Live sessions, verification orchestration, and the model import
+registry belong to the separate session service on port 48125.
 
 The current initial model profiles are:
 
@@ -42,9 +47,9 @@ kinit/whisper-large-v3-turbo-sk
 openai/whisper-large-v3
 ~~~
 
-The existing implementation has profile-specific engine settings. Future
-verification dispatch must use registry capabilities and selected model IDs,
-not assume that one of these IDs is always the verifier.
+The existing batch implementation has profile-specific engine settings.
+The native client's verification choices use registry capabilities and selected
+model IDs; neither of these IDs is a fixed verifier.
 
 
 ## Test without changing the production service
@@ -52,12 +57,17 @@ not assume that one of these IDs is always the verifier.
 From the repository root:
 
 ~~~powershell
-$env:VIRTUAL_ENV = 'C:\AI\PalaNote-ASR\.venv'
+$env:VIRTUAL_ENV = 'C:\AI\build\Local-Dictation\server-env'
 py -B -m unittest discover -s server -p 'test_*.py' -v
 ~~~
 
-This selects the existing Python environment and runs checkout unit tests.
-It does not start/stop a listener, download a model, or capture audio.
+VIRTUAL_ENV tells the Windows py launcher to use the prepared candidate
+Python environment. The full checkout suite includes session API tests, whose
+dependencies are not all installed in the deployed batch environment.
+Use the rebuild and recovery guide above to prepare the candidate environment.
+
+These tests use synthetic data. They do not start/stop a listener, download
+models, capture audio, or validate real transcription quality.
 
 
 ## Runtime separation
@@ -66,9 +76,15 @@ The imported baseline resolves models relative to its script directory.
 Do not start another production listener from this checkout or download
 duplicate weights just to make that baseline path resolve.
 
-The first backend implementation work must add an explicit external model
-root and candidate configuration, with regression coverage. Until then,
-the deployed installation remains the operational server.
+The session service already uses an explicit external model root and separate
+candidate configuration. scripts/Start-CandidateServer.ps1 defaults to
+C:\AI\PalaNote-ASR\models for existing weights and port 48125 for the
+candidate API. It refuses the batch service's port 8123. See the rebuild and
+recovery guide for setup and custom paths.
+
+The native client keeps the latest 20 transcripts and recordings in protected
+local History; Pending Review is separate. Client data belongs outside this
+source directory. See the current client guide for retention and export.
 
 Keep the production .venv, models, recordings, benchmarks with private
 payloads, logs, and previous deployment backups outside this repository.

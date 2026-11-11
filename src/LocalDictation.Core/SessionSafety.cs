@@ -5,6 +5,11 @@ public sealed class DestinationEpoch
 {
     long generation;
     public void UserInput() => Interlocked.Increment(ref generation);
+    public bool UserInput(long observedWindow,long nonActivatingWindow)
+    {
+        if(nonActivatingWindow!=0&&observedWindow==nonActivatingWindow)return false;
+        UserInput();return true;
+    }
     public DestinationStamp Capture(long window) => new(window,Volatile.Read(ref generation));
     public bool CanAdopt(DestinationStamp stamp,long window) =>
         stamp.Window==window && stamp.Generation==Volatile.Read(ref generation);
@@ -32,11 +37,27 @@ public enum InputCommand {None,Toggle,Cancel}
 public readonly record struct InputDecision(InputCommand Command,bool Suppress);
 public sealed class InputCommands
 {
-    readonly ModifierChord chord=new();
+    ModifierChord chord=new();
+    ShortcutSpec shortcut=ShortcutSpec.Parse("Ctrl+Shift");
+    readonly HashSet<int> down=[];
+    bool armed;
+    public ShortcutSpec Shortcut {get=>shortcut;set {shortcut=value;down.Clear();armed=false;chord=new();}}
     bool escapeConsumed;
     public InputDecision Update(int key,bool pressed,bool sessionActive,bool shortcutEnabled)
     {
-        var toggle=chord.Update(key,pressed);
+        bool toggle=false,suppress=false;
+        if(shortcut.Key==0)toggle=chord.Update(key,pressed);
+        else
+        {
+            var first=pressed&&down.Add(key);
+            if(pressed&&key==shortcut.Key&&(armed||shortcutEnabled&&shortcut.Matches(down)))
+            {if(first)armed=true;suppress=true;}
+            if(!pressed)
+            {
+                var wasDown=down.Remove(key);
+                if(key==shortcut.Key&&armed){toggle=wasDown;armed=false;suppress=true;}
+            }
+        }
         if(key==0x1B)
         {
             if(pressed&&sessionActive)
@@ -46,7 +67,7 @@ public sealed class InputCommands
             }
             if(!pressed&&escapeConsumed){escapeConsumed=false;return new(InputCommand.None,true);}
         }
-        return new(toggle&&shortcutEnabled?InputCommand.Toggle:InputCommand.None,false);
+        return new(toggle&&shortcutEnabled?InputCommand.Toggle:InputCommand.None,suppress);
     }
 }
 

@@ -1,0 +1,148 @@
+# Fresh checkout, rebuild, and agent recovery
+
+## What Git restores
+
+A checkout restores application/server source, tests, scripts, icon assets,
+offline Help, product requirements, and agent instructions. It must not depend
+on an old chat, untracked file, generated EXE, or the original worktree path.
+
+This is source reproducibility with documented dependencies, not a promise of
+byte-identical builds across different SDK/package versions or machines.
+The verified development SDK is .NET 10.0.403 on Windows x64.
+
+Git does not restore model weights, Python environments, SDK installations,
+settings, recordings, pending reviews, or operational logs. Preserve these
+separately. Current-user DPAPI files require the original Windows user/key
+context; copying them to another account is not a supported recovery procedure.
+
+## 1. Preserve work before removing a checkout
+
+Commit and push intended changes first. Confirm the remote branch and commit,
+and separately back up private data that matters. Never delete a dirty checkout
+or assume files under .worktrees have their own independent Git database.
+
+The current implementation branch is `feature/native-windows`. A default clone
+of main does not select that branch automatically. Until integration into main,
+clone or check out this branch explicitly.
+
+Stop any candidate service that imports code from the checkout before removing
+or moving that checkout. The verified stop script refuses busy candidates and
+the production port:
+
+~~~powershell
+.\scripts\Stop-CandidateServer.ps1 -Port 48125
+~~~
+
+This stops only the identified idle candidate. It does not delete source,
+recordings, models, environments, or the separate production API on 8123.
+An ordinary source cleanup must not stop that production API.
+
+## 2. Clone into a new location
+
+Use an empty destination. These commands create a new source checkout; they do
+not alter the existing installation or runtime data:
+
+~~~powershell
+git clone --branch feature/native-windows --single-branch https://github.com/coding-peet/Local-Dictation.git C:\Git\Local-Dictation-restore\repo
+Set-Location C:\Git\Local-Dictation-restore\repo
+git status --short --branch
+git rev-parse HEAD
+~~~
+
+If Git requests authentication, use the normal configured credential helper.
+Do not paste credentials into project files, agent prompts, or command examples.
+
+## 3. Build and test without the old output
+
+Install/provide a .NET 10 SDK on Windows x64. An installed SDK path can be found
+with `Get-Command dotnet`. On the configured PC use the existing portable SDK:
+
+~~~powershell
+.\scripts\Build.ps1 `
+    -DotnetPath C:\AI\tools\dotnet-10.0.403\dotnet.exe `
+    -BuildRoot C:\AI\build\Local-Dictation-restore `
+    -AppDirectory C:\Git\Local-Dictation-restore\app
+~~~
+
+The command restores NuGet packages as needed, runs Core tests, and publishes
+Release output into the separate app folder. It can use already cached packages;
+otherwise configured package feeds must be reachable. It does not start the
+client/API, capture audio, or replace the existing installed application.
+
+Keep every published file together. `LocalDictation.exe` requires its adjacent
+assemblies/runtime configuration and the .NET 10 Windows Desktop runtime.
+`Help.html` is included. No prebuilt executable or installer is required as input.
+
+The development Start local service action resolves the checkout that built
+that EXE. Rebuilding from the new checkout records the new location; it does not
+depend on a linked worktree called native-windows. If that source is later removed,
+run the API from another checkout or rebuild again. A running API is a separate
+prerequisite, not part of the client EXE.
+
+## 4. Reuse the existing local API environment
+
+On this PC the candidate environment is outside Git:
+
+~~~powershell
+$env:VIRTUAL_ENV = 'C:\AI\build\Local-Dictation\server-env'
+py -B -m unittest discover -s server -p 'test_*.py' -v
+~~~
+
+`VIRTUAL_ENV` selects the existing environment for the Windows `py` launcher.
+These tests use synthetic inputs/lightweight engines, not GPU model inference.
+The deployed batch environment alone lacks some session API dependencies.
+
+If the candidate environment is missing but the shared ASR environment still
+exists, review and run:
+
+~~~powershell
+.\scripts\Setup-CandidateServer.ps1
+~~~
+
+This creates/prepares the candidate environment, references the existing shared
+ASR packages, and installs pinned API dependencies into the candidate only.
+It requires the same Python ABI as the shared environment. It is not an export
+of the environment for an unrelated PC.
+
+For another PC, prepare a compatible Python/CUDA environment from
+`server/requirements-lock.txt` plus `server/requirements-api.txt`; see
+[native development](native-windows.md) and [backend setup](../../server/README.md).
+Provide the original model files and manifests separately. Package locks do not
+install GPU drivers or download model weights.
+
+Start from the new checkout when its source should own the candidate:
+
+~~~powershell
+.\scripts\Start-CandidateServer.ps1
+Invoke-RestMethod http://127.0.0.1:48125/health
+~~~
+
+Do not start a second listener on an occupied port. Wait for `ready=true`.
+Do not run inference concurrently with the production service on the same GPU.
+
+## 5. Continue with a new agent
+
+Open the new checkout as the agent's workspace. Give it the actual task, then
+ask it to read `AGENTS.md` and `docs/PRODUCT_REQUIREMENTS.md`. It should inspect
+the branch, current changes, and validation status before editing.
+
+The current requirements and Help take precedence over older design proposals.
+`docs/superpowers` preserves decision history and prior plans. Temporary files
+in a previous chat's workspace are not inputs to the build or future work.
+
+Update the product requirements whenever a user changes behavior. Update Help
+for changes visible to a user. Keep implementation commands and recovery details
+here; keep agent workflow/safety constraints in AGENTS.md.
+
+## 6. Validate an update before replacing the installed client
+
+1. Build to a candidate folder and run the relevant tests.
+2. Keep automated policy/controller results distinct from microphone and native
+   destination acceptance. Diagnostic instructions are in `diagnostics/*/README.md`.
+3. Finish active dictation and exit the installed client normally so it can save.
+4. Replace the app folder files, preserving external settings/history/models.
+5. Launch normally for shortcut testing. Use F1 in Settings to verify Help.
+
+Codex-field insertion is Peter's manual acceptance test. The latest review's
+final native probe was interrupted before completion; passing unit/controller
+tests is not a substitute for that acceptance.

@@ -20,8 +20,8 @@ public sealed record ModelInfo
     public bool LiveReady { get; init; }
     public bool VerificationEligible { get; init; }
     public string[] Languages { get; init; } = [];
-    [JsonIgnore] public string Label => Name + (!Installed ? " · not installed" :
-        QualityVerified ? " · batch quality checked" : RuntimeTested ? " · runtime tested" : " · not tested");
+    [JsonIgnore] public string Label => (Name.Length>0?Name:Id) + (!Installed ? " · not installed" : "");
+    public override string ToString()=>Label;
 }
 
 public static class Protocol

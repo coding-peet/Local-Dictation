@@ -9,7 +9,10 @@
  <SolidColorBrush x:Key="InputBorder" Color="#6B7785"/>
  <SolidColorBrush x:Key="Selected" Color="#E5F2FF"/>
  <SolidColorBrush x:Key="Warning" Color="#8A4B00"/>
+ <SolidColorBrush x:Key="OnAccent" Color="White"/>
+ <SolidColorBrush x:Key="Difference" Color="#FFF3CF"/>
  <Style TargetType="Window">
+  <Setter Property="Icon" Value="/LocalDictation;component/Assets/waveform.ico"/>
   <Setter Property="FontFamily" Value="Segoe UI"/><Setter Property="FontSize" Value="14"/>
   <Setter Property="Background" Value="{DynamicResource Canvas}"/><Setter Property="Foreground" Value="{DynamicResource Ink}"/>
  </Style>
@@ -38,10 +41,36 @@
   <Setter Property="VerticalContentAlignment" Value="Center"/>
  </Style>
  <Style TargetType="ComboBox">
-  <Setter Property="MinHeight" Value="34"/><Setter Property="Padding" Value="8,4"/>
+  <Setter Property="MinHeight" Value="40"/><Setter Property="Padding" Value="10,6"/>
+  <Setter Property="FontSize" Value="14"/><Setter Property="FontWeight" Value="SemiBold"/>
   <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+  <Setter Property="Background" Value="{DynamicResource Surface}"/><Setter Property="Foreground" Value="{DynamicResource Ink}"/>
+  <Setter Property="BorderBrush" Value="{DynamicResource InputBorder}"/>
+  <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ComboBox">
+   <Grid>
+    <ToggleButton Focusable="False" IsChecked="{Binding IsDropDownOpen,RelativeSource={RelativeSource TemplatedParent},Mode=TwoWay}">
+     <ToggleButton.Template><ControlTemplate TargetType="ToggleButton"><Border Background="{DynamicResource Surface}" BorderBrush="{DynamicResource InputBorder}" BorderThickness="1" CornerRadius="4"><TextBlock Text="▾" Foreground="{DynamicResource Ink}" HorizontalAlignment="Right" Margin="0,0,10,0" VerticalAlignment="Center"/></Border></ControlTemplate></ToggleButton.Template>
+    </ToggleButton>
+    <ContentPresenter Margin="10,5,28,5" Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}" ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}" IsHitTestVisible="False" VerticalAlignment="Center"/>
+    <Popup x:Name="PART_Popup" Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}" AllowsTransparency="True" Focusable="False" PopupAnimation="Slide">
+     <Border Background="{DynamicResource Surface}" BorderBrush="{DynamicResource InputBorder}" BorderThickness="1" MinWidth="{TemplateBinding ActualWidth}" MaxHeight="320"><ScrollViewer><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/></ScrollViewer></Border>
+    </Popup>
+   </Grid>
+  </ControlTemplate></Setter.Value></Setter>
  </Style>
- <Style TargetType="CheckBox"><Setter Property="Margin" Value="0,6,0,8"/><Setter Property="VerticalContentAlignment" Value="Center"/></Style>
+ <Style TargetType="ComboBoxItem"><Setter Property="Foreground" Value="{DynamicResource Ink}"/><Setter Property="Padding" Value="8,6"/>
+  <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ComboBoxItem"><Border x:Name="Item" Background="Transparent" Padding="{TemplateBinding Padding}"><ContentPresenter/></Border><ControlTemplate.Triggers><Trigger Property="IsHighlighted" Value="True"><Setter TargetName="Item" Property="Background" Value="{DynamicResource Selected}"/></Trigger><Trigger Property="IsSelected" Value="True"><Setter TargetName="Item" Property="Background" Value="{DynamicResource Selected}"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+ </Style>
+ <Style TargetType="CheckBox"><Setter Property="Foreground" Value="{DynamicResource Ink}"/><Setter Property="Margin" Value="0,6,0,8"/><Setter Property="VerticalContentAlignment" Value="Center"/></Style>
+ <Style TargetType="TabControl"><Setter Property="Background" Value="{DynamicResource Canvas}"/><Setter Property="Foreground" Value="{DynamicResource Ink}"/><Setter Property="BorderBrush" Value="{DynamicResource Border}"/></Style>
+ <Style TargetType="TabItem"><Setter Property="Foreground" Value="{DynamicResource Ink}"/><Setter Property="Background" Value="{DynamicResource Surface}"/><Setter Property="Padding" Value="14,8"/>
+  <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="TabItem"><Border x:Name="Tab" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}" BorderBrush="{DynamicResource Border}" BorderThickness="0,0,0,2"><ContentPresenter ContentSource="Header" RecognizesAccessKey="True"/></Border><ControlTemplate.Triggers><Trigger Property="IsSelected" Value="True"><Setter TargetName="Tab" Property="BorderBrush" Value="{DynamicResource Accent}"/><Setter TargetName="Tab" Property="Background" Value="{DynamicResource Selected}"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+ </Style>
+ <Style TargetType="ListBox"><Setter Property="Background" Value="{DynamicResource Surface}"/><Setter Property="Foreground" Value="{DynamicResource Ink}"/><Setter Property="BorderBrush" Value="{DynamicResource Border}"/></Style>
+ <Style TargetType="ListBoxItem"><Setter Property="Foreground" Value="{DynamicResource Ink}"/><Setter Property="Padding" Value="8,6"/>
+  <Style.Triggers><Trigger Property="IsSelected" Value="True"><Setter Property="Background" Value="{DynamicResource Selected}"/><Setter Property="Foreground" Value="{DynamicResource Ink}"/></Trigger></Style.Triggers>
+ </Style>
+ <Style TargetType="Expander"><Setter Property="Foreground" Value="{DynamicResource Ink}"/></Style>
  <Style TargetType="RichTextBox">
   <Setter Property="Foreground" Value="{DynamicResource Ink}"/><Setter Property="Background" Value="{DynamicResource Surface}"/>
   <Setter Property="SelectionBrush" Value="#000C18"/><Setter Property="SelectionOpacity" Value="0.2"/>

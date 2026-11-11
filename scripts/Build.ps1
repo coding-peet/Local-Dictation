@@ -2,7 +2,7 @@
 param(
     [string]$DotnetPath = 'C:\AI\tools\dotnet-10.0.403\dotnet.exe',
     [string]$BuildRoot = 'C:\AI\build\Local-Dictation',
-    [string]$AppDirectory = 'C:\AI\LocalDictation\app'
+    [string]$AppDirectory = 'C:\Git\Local-Dictation\app'
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent

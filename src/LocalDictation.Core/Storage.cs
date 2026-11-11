@@ -64,7 +64,7 @@ public sealed class ReviewStore(string directory)
                 }
                 finally { CryptographicOperations.ZeroMemory(plain); }
             }
-            catch (Exception ex) when (ex is Win32Exception or JsonException or IOException or ArgumentException)
+            catch (Exception ex) when (ex is Win32Exception or JsonException or IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException)
             { Errors.Add(Path.GetFileName(path)); }
         }
         return result.OrderByDescending(d => d.Created).ToList();
@@ -121,6 +121,8 @@ public sealed class Settings
     public bool Live { get; set; } = true;
     public string Language { get; set; } = "sk";
     public bool EnableShortcut { get; set; } = true;
+    public string Shortcut {get;set;}="Ctrl+Shift";
+    public string Theme {get;set;}="System";
 
     public Uri ServerUri()
     {
@@ -139,6 +141,8 @@ public sealed class Settings
     public void Save(string? directory = null)
     {
         ServerUri();
+        ShortcutSpec.Parse(Shortcut);
+        if(Theme is not ("System" or "Light" or "Dark"))throw new ArgumentException("Choose System, Light, or Dark.");
         AtomicFile.Write(Path.Combine(directory ?? AppPaths.Data, "settings.json"),
             JsonSerializer.SerializeToUtf8Bytes(this, new JsonSerializerOptions { WriteIndented = true }));
     }

@@ -18,8 +18,9 @@ static class Ui
         System.Windows.Automation.AutomationProperties.SetName(button, label.Replace("_", ""));
         if (primary)
         {
-            button.Background = Brush("Accent"); button.Foreground = Brushes.White;
-            button.BorderBrush = Brush("Accent");
+            button.SetResourceReference(Control.BackgroundProperty,"Accent");
+            button.SetResourceReference(Control.ForegroundProperty,"OnAccent");
+            button.SetResourceReference(Control.BorderBrushProperty,"Accent");
         }
         button.Click += (_, _) => action();
         return button;
@@ -30,21 +31,21 @@ static class Ui
         foreach (var child in children) row.Children.Add(child);
         return row;
     }
-    public static Border Card(UIElement content) => new()
+    public static Border Card(UIElement content)
     {
-        Child = content, Background = Brush("Surface"), BorderBrush = Brush("Border"),
-        BorderThickness = new(1), CornerRadius = new(5), Padding = new(16), Margin = new(0, 0, 0, 16)
-    };
+        var card=new Border {Child=content,BorderThickness=new(1),CornerRadius=new(5),Padding=new(16),Margin=new(0,0,0,16)};
+        card.SetResourceReference(Border.BackgroundProperty,"Surface");card.SetResourceReference(Border.BorderBrushProperty,"Border");return card;
+    }
     public static void Label(StackPanel parent, string label, UIElement control, string? hint = null)
     {
-        parent.Children.Add(Text(label,14,true));
+        var caption=Text(label,12,true);caption.Margin=new(0,10,0,7);parent.Children.Add(caption);
         parent.Children.Add(control);
         if (hint != null)
         {
-            var text = Text(hint,12); text.Foreground = Brush("Muted"); text.Margin = new(0,5,0,12);
+            var text = Text(hint,12); text.SetResourceReference(TextBlock.ForegroundProperty,"Muted"); text.Margin = new(0,7,0,16);
             parent.Children.Add(text);
         }
-        else if (control is FrameworkElement element) element.Margin = new(0,0,0,16);
+        else if (control is FrameworkElement element) element.Margin = new(0,0,0,10);
         System.Windows.Automation.AutomationProperties.SetName(control, label);
     }
     public static TextBox Box(bool editable = true, double height = 76) => new()

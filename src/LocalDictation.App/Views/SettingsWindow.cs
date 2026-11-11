@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Threading;
 using LocalDictation.Core;
 using LocalDictation.App.Services;
@@ -12,13 +13,15 @@ public sealed class SettingsWindow : Window
     readonly AppController controller;
     readonly TextBlock connection=Ui.Text(""), shortcut=Ui.Text(""), message=Ui.Text(""), importStatus=Ui.Text(""), modelStatus=Ui.Text("");
     readonly TextBox endpoint=new(), repository=new();
+    readonly TextBox shortcutValue=new();
+    readonly ComboBox theme=new(){ItemsSource=new[]{"System","Light","Dark"}};
     readonly ComboBox microphone=new(){DisplayMemberPath="Name",SelectedValuePath="Id"},
         primary=new(){DisplayMemberPath="Label",SelectedValuePath="Id"},
         verifier=new(){DisplayMemberPath="Label",SelectedValuePath="Id"},
         language=new(){ItemsSource=new[]{"sk","en","auto"}};
     readonly CheckBox live=new(){Content="Live transcription (experimental)"},
-        verify=new(){Content="Verify after recording"},insert=new(){Content="Insert directly at the cursor"},
-        shortcutEnabled=new(){Content="Enable Ctrl+Shift shortcut"};
+        verify=new(){Content="Verify after recording"},insert=new(){Content="Insert live text at the cursor"},
+        shortcutEnabled=new(){Content="Enable keyboard shortcut"};
     readonly ListBox catalogModels=new(){MinHeight=96,MaxHeight=160,DisplayMemberPath="Label",SelectedValuePath="Id"};
     Button inspectCatalog=null!;
     readonly ListBox reviews=new(){MinHeight=70,MaxHeight=170,DisplayMemberPath="Reason"};
@@ -31,29 +34,37 @@ public sealed class SettingsWindow : Window
     public SettingsWindow(AppController controller)
     {
         this.controller=controller;
-        Title="Local Dictation";Width=790;Height=820;MinWidth=610;MinHeight=540;
+        PreviewKeyDown+=(_,e)=>
+        {
+            if(e.Key!=Key.F1||Keyboard.Modifiers!=ModifierKeys.None)return;
+            e.Handled=true;
+            if(!e.IsRepeat)OpenHelp();
+        };
+        Title="Local Dictation";Width=920;Height=800;MinWidth=740;MinHeight=620;
         WindowStartupLocation=WindowStartupLocation.CenterScreen;
         var root=new DockPanel{Margin=new(24)};
         var header=new StackPanel();header.Children.Add(Ui.Text("Local Dictation",24,true));
         header.Children.Add(Ui.Text("Local speech, wherever you write.",14));
-        connection.Foreground=Ui.Brush("Muted");header.Children.Add(connection);
+        connection.SetResourceReference(TextBlock.ForegroundProperty,"Muted");connection.FontSize=12;connection.Margin=new(0,6,0,20);header.Children.Add(connection);
         DockPanel.SetDock(header,Dock.Top);root.Children.Add(header);
 
         var footer=new StackPanel{Margin=new(0,12,0,0)};
         var actions=new WrapPanel();
         foreach(var button in new[]{
-            Ui.Button("_Save settings",()=>Save(),true),
-            Ui.Button("_Reconnect",()=>_ = Reconnect()),
-            record=Ui.Button("Record to Review",()=>{if(Save())controller.Toggle();}),
+            record=Ui.Button("Record in banner",()=>{if(Save())controller.ToggleReview();},true),
+            Ui.Button("_Save settings",()=>Save()),
+            Ui.Button("Help (F1)",OpenHelp),
             Ui.Button("Close",Close)})
         {button.Margin=new(0,0,8,8);actions.Children.Add(button);}
-        footer.Children.Add(actions);message.Foreground=Ui.Brush("Warning");footer.Children.Add(message);
-        footer.Children.Add(Ui.Text("Audio stays in RAM · 10-minute limit · Only pending Review is saved",12));
+        footer.Children.Add(actions);message.SetResourceReference(TextBlock.ForegroundProperty,"Warning");footer.Children.Add(message);
+        footer.Children.Add(Ui.Text("Latest 20 transcripts and recordings saved locally · 10-minute recording limit",12));
         DockPanel.SetDock(footer,Dock.Bottom);root.Children.Add(footer);
         var tabs=new TabControl();
         tabs.Items.Add(new TabItem{Header="_Dictation",Content=DictationPage()});
         tabs.Items.Add(new TabItem{Header="_Models",Content=ModelsPage()});
         tabs.Items.Add(new TabItem{Header="_Pending Review",Content=ReviewPage()});
+        tabs.Items.Add(new TabItem{Header="_History",Content=HistoryPage()});
+        tabs.Items.Add(new TabItem{Header="_Settings",Content=PreferencesPage()});
         root.Children.Add(tabs);Content=root;
         controller.Changed+=Refresh;
         Closed+=(_,_)=>{controller.Changed-=Refresh;poll.Stop();};
@@ -64,22 +75,46 @@ public sealed class SettingsWindow : Window
         Refresh(true);
     }
 
+    void OpenHelp()
+    {
+        if(!LocalHelp.TryOpen(out var error))message.Text=error;
+    }
+
     UIElement DictationPage()
     {
-        var page=new StackPanel{Margin=new(16)};
-        Ui.Label(page,"API address",endpoint,"Loopback session API. The existing batch-only server remains separate during development.");
-        Ui.Label(page,"Microphone",microphone,"Choose the actual microphone, not an unused headset input.");
-        page.Children.Add(Ui.Button("Refresh microphones",LoadMicrophones));
-        Ui.Label(page,"Dictation model",primary);
-        page.Children.Add(live);page.Children.Add(modelStatus);
-        Ui.Label(page,"Language",language);
-        page.Children.Add(insert);
-        page.Children.Add(Ui.Text("When the cursor or window changes, delivery stops and the complete text opens in native Review.",12));
-        page.Children.Add(verify);
-        Ui.Label(page,"Verification model",verifier,"A second pass checks the original recording after Stop. Review lets you choose each differing phrase.");
-        page.Children.Add(shortcutEnabled);page.Children.Add(shortcut);
-        page.Children.Add(Ui.Button("Recheck shortcut",()=>{controller.RecheckShortcut();Refresh();}));
-        page.Children.Add(Ui.Text("Use Ctrl+Shift in the destination field. Record to Review is for microphone checks from this window.",12));
+        var page=new StackPanel{Margin=new(18)};
+        var recording=new StackPanel();recording.Children.Add(Ui.Text("Recording",18,true));
+        recording.Children.Add(Ui.Text("Choose what you record and which model transcribes it.",13));
+        Ui.Label(recording,"Microphone",microphone);
+        var refresh=Ui.Button("Refresh microphones",LoadMicrophones);refresh.HorizontalAlignment=HorizontalAlignment.Left;refresh.Margin=new(0,0,0,18);recording.Children.Add(refresh);
+        Ui.Label(recording,"Dictation model",primary);
+        Ui.Label(recording,"Language",language);
+        recording.Children.Add(live);modelStatus.FontSize=12;modelStatus.SetResourceReference(TextBlock.ForegroundProperty,"Muted");recording.Children.Add(modelStatus);
+        page.Children.Add(Ui.Card(recording));
+        var delivery=new StackPanel();delivery.Children.Add(Ui.Text("Text and verification",18,true));
+        delivery.Children.Add(insert);
+        delivery.Children.Add(Ui.Text("Start with the shortcut in your destination field. Live insertion can be turned off while the banner shows your draft. Finished text returns automatically; if verification finds differences, choose their wording in the banner first.",12));
+        delivery.Children.Add(verify);
+        Ui.Label(delivery,"Verification model",verifier,"An optional second pass. Review lets you choose between the two versions.");
+        page.Children.Add(Ui.Card(delivery));
+        return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
+    }
+
+    UIElement PreferencesPage()
+    {
+        var page=new StackPanel{Margin=new(18)};
+        var appearance=new StackPanel();appearance.Children.Add(Ui.Text("Appearance",18,true));
+        Ui.Label(appearance,"Color theme",theme,"System follows Windows. Light and Dark override it.");
+        theme.SelectionChanged+=(_,_)=>{if(!loading&&theme.SelectedItem is string value)ThemeManager.Apply(value);};
+        page.Children.Add(Ui.Card(appearance));
+        var keyboard=new StackPanel();keyboard.Children.Add(Ui.Text("Keyboard shortcut",18,true));keyboard.Children.Add(shortcutEnabled);
+        Ui.Label(keyboard,"Start / stop recording",shortcutValue,"Examples: Ctrl+Shift, Ctrl+Alt+Space, Ctrl+Shift+D, Alt+F9.");
+        shortcut.FontSize=12;keyboard.Children.Add(shortcut);
+        var recheck=Ui.Button("Recheck shortcut",()=>{controller.RecheckShortcut();Refresh();});recheck.HorizontalAlignment=HorizontalAlignment.Left;keyboard.Children.Add(recheck);page.Children.Add(Ui.Card(keyboard));
+        var service=new StackPanel();service.Children.Add(Ui.Text("Local transcription service",18,true));
+        Ui.Label(service,"Local service address",endpoint,"The session service supplies your installed models and transcriptions.");
+        service.Children.Add(Ui.Row(Ui.Button("Reconnect",()=>_ = Reconnect()),Ui.Button("Start local API",()=>_ = controller.StartLocalApi())));
+        page.Children.Add(Ui.Card(service));
         return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
     }
 
@@ -111,12 +146,20 @@ public sealed class SettingsWindow : Window
     {
         var page=new StackPanel{Margin=new(16)};
         page.Children.Add(Ui.Text("Pending Review",18,true));
-        page.Children.Add(Ui.Text("Unfinished text and choices are encrypted for this Windows user. Successfully inserted dictations are not archived. Audio is temporary and unavailable after inference.",13));
+        page.Children.Add(Ui.Text("Unfinished text and choices are protected for this Windows user. The latest 20 dictations and their audio are also available in History.",13));
         page.Children.Add(reviews);
         reviews.MouseDoubleClick+=(_,_)=>OpenSelected();
         page.Children.Add(Ui.Button("_Open selected Review",OpenSelected));
         page.Children.Add(Ui.Text("Copy and Close keep an item. Use Dismiss inside Review to remove it.",12));
         return page;
+    }
+    UIElement HistoryPage()
+    {
+        var page=new StackPanel{Margin=new(16)};
+        page.Children.Add(Ui.Text("Recent dictations",18,true));
+        page.Children.Add(Ui.Text("Keep the latest 20 transcripts and recordings. Open History to play audio, copy text, export a WAV, or remove an item.",13));
+        var open=Ui.Button("Open transcript and audio history",controller.ShowHistory);
+        open.HorizontalAlignment=HorizontalAlignment.Left;page.Children.Add(open);return page;
     }
 
     void LoadMicrophones()
@@ -140,7 +183,8 @@ public sealed class SettingsWindow : Window
         {
             connection.Text=controller.ConnectionMessage;
             shortcut.Text=controller.ShortcutMessage;
-            record.Content=controller.IsRecording?"Stop recording":"Record to Review";
+            record.Content=controller.IsRecording?"Stop recording":"Record in banner";
+            System.Windows.Automation.AutomationProperties.SetName(record,(string)record.Content);
             record.IsEnabled=controller.Connected;
             var selected=primary.SelectedValue as string??controller.Settings.PrimaryModel;
             primary.ItemsSource=controller.Models;primary.SelectedValue=selected;
@@ -149,6 +193,7 @@ public sealed class SettingsWindow : Window
                 endpoint.Text=controller.Settings.Endpoint;
                 live.IsChecked=controller.Settings.Live;verify.IsChecked=controller.Settings.VerifyAfterRecording;
                 insert.IsChecked=controller.Settings.InsertAtCursor;shortcutEnabled.IsChecked=controller.Settings.EnableShortcut;
+                shortcutValue.Text=controller.Settings.Shortcut;theme.SelectedItem=controller.Settings.Theme;
                 language.SelectedItem=controller.Settings.Language;LoadMicrophones();
             }
             UpdateModelChoices();
@@ -174,28 +219,30 @@ public sealed class SettingsWindow : Window
         if(selected!=null&&!live.IsEnabled)live.IsChecked=false;
         modelStatus.Text=selected==null?"The saved model is unavailable. Select an installed model.":
             !selected.Installed?"This catalog model is not installed.":
-            selected.LiveSupported&&!selected.LiveReady?"Live transcription is experimental. Accuracy and latency have not passed acceptance for everyday use.":
-            selected.LiveSupported?"Live runtime is ready.":"After-recording model. Live capability has not been verified.";
+            !selected.RuntimeTested?"Installed · Run a model test before first use.":
+            selected.LiveSupported?"Installed · Live preview or after-recording transcription":"Installed · After recording. This profile is not qualified for live transcription.";
     }
 
     bool Save()
     {
         try
         {
-            if(primary.SelectedItem is not ModelInfo model||!model.Installed)
+            var model=primary.SelectedItem as ModelInfo;
+            if(controller.Models.Count>0&&(model==null||!model.Installed))
                 throw new ArgumentException("Select an installed Dictation model.");
             if(microphone.SelectedIndex<0)throw new ArgumentException("Select an available microphone.");
             var selectedLanguage=language.SelectedItem as string??"sk";
-            if(selectedLanguage!="auto"&&!model.Languages.Contains(selectedLanguage))
+            if(model!=null&&selectedLanguage!="auto"&&!model.Languages.Contains(selectedLanguage))
                 throw new ArgumentException("The selected model does not support this language.");
-            var verification=verifier.SelectedValue as string;
-            if(verify.IsChecked==true&&(verification==null||!controller.Models.Any(m=>m.Id==verification&&ModelEligibility.CanVerify(m,selectedLanguage,model))))throw new ArgumentException("Choose an eligible Verification model.");
+            var verification=verifier.SelectedValue as string??(controller.Models.Count==0?controller.Settings.VerificationModel:null);
+            if(verify.IsChecked==true&&controller.Models.Count>0&&(verification==null||model==null||!controller.Models.Any(m=>m.Id==verification&&ModelEligibility.CanVerify(m,selectedLanguage,model))))throw new ArgumentException("Choose an eligible Verification model.");
             controller.SaveSettings(new Settings{
                 Endpoint=endpoint.Text.Trim(),MicrophoneId=microphone.SelectedValue as string,
-                PrimaryModel=model.Id,VerificationModel=verification,
+                PrimaryModel=model?.Id??controller.Settings.PrimaryModel,VerificationModel=verification,
                 VerifyAfterRecording=verify.IsChecked==true,InsertAtCursor=insert.IsChecked==true,
                 Live=live.IsChecked==true,Language=language.SelectedItem as string??"sk",
-                EnableShortcut=shortcutEnabled.IsChecked==true});
+                EnableShortcut=shortcutEnabled.IsChecked==true,Shortcut=ShortcutSpec.Parse(shortcutValue.Text).ToString(),
+                Theme=theme.SelectedItem as string??"System"});
             message.Text=controller.IsBusy?"Saved. Changes apply to the next recording.":"Settings saved.";
             return true;
         }
@@ -207,7 +254,7 @@ public sealed class SettingsWindow : Window
     {
         try
         {
-            var value=controller.Settings;
+            var value=JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(controller.Settings))!;
             value.Endpoint=endpoint.Text.Trim();value.ServerUri();controller.SaveSettings(value);
             await controller.RefreshConnection();Refresh();
         }

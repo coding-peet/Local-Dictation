@@ -5,12 +5,16 @@ namespace LocalDictation.Core;
 public sealed record ReviewPiece(string Id, string Primary, string Verification, bool Different);
 public sealed record ReviewChoice(string Kind, string? Custom = null);
 public sealed record ReviewSnapshot(Dictionary<string, ReviewChoice> Choices, string? ManualFinalDraft);
+public sealed record ReviewInsertionResult(bool Success,string Message);
 
 public sealed class ReviewDocument
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public DateTimeOffset Created { get; set; } = DateTimeOffset.Now;
     public string Reason { get; set; } = "Review before inserting";
+    public DateTimeOffset? InsertedAt {get;set;}
+    public bool DraftWithdrawn {get;set;}
+    [JsonIgnore] public bool CanInsert=>InsertedAt==null&&UnresolvedCount==0;
     public ReviewProvenance? Provenance {get;set;}
     public string PrimaryModel { get; set; } = "";
     public string? VerificationModel { get; set; }

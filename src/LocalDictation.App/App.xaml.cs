@@ -10,6 +10,8 @@ public partial class App : System.Windows.Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        EventManager.RegisterClassHandler(typeof(Window),FrameworkElement.LoadedEvent,
+            new RoutedEventHandler((sender,_)=>{if(sender is Window window)Services.ThemeManager.TitleBar(window);}));
         mutex = new Mutex(true, @"Local\LocalDictation.NativeClient", out var created);
         if (!created)
         {

@@ -13,7 +13,7 @@ NAMES = [
     "LocalDictation.exe", "LocalDictation.dll", "LocalDictation.Core.dll",
     "LocalDictation.deps.json", "LocalDictation.runtimeconfig.json",
     "NAudio.Core.dll", "NAudio.dll", "NAudio.Midi.dll", "NAudio.Wasapi.dll",
-    "NAudio.WinMM.dll", "System.Numerics.Tensors.dll",
+    "NAudio.WinMM.dll", "System.Numerics.Tensors.dll", "Help.html",
 ]
 
 
@@ -96,6 +96,13 @@ function Rows($sql,$count) {
         (self.source / "LocalDictation.runtimeconfig.json").unlink()
         result = self.build()
         self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.output.exists())
+
+    def test_missing_help_is_rejected_before_output(self):
+        (self.source / "Help.html").unlink()
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Help.html", result.stderr)
         self.assertFalse(self.output.exists())
 
     def test_existing_destination_is_preserved(self):

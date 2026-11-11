@@ -1,4 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><ApplicationIcon>Assets\waveform.ico</ApplicationIcon></PropertyGroup>
+  <ItemGroup><Resource Include="Assets\waveform.ico" /></ItemGroup>
+  <ItemGroup>
+    <AssemblyMetadata Include="LocalDictation.SourceRoot" Value="$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\..'))" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="Help\index.html" TargetPath="Help.html" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <UseWPF>true</UseWPF>

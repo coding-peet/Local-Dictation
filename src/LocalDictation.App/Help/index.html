@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
+  <meta name="description" content="Offline guide to Local Dictation for Windows: recording, live text, Review, models, shortcuts, and audio history.">
+  <title>Local Dictation Help</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --page: #f5f7fb;
+      --surface: #ffffff;
+      --ink: #202938;
+      --muted: #536174;
+      --line: #dce2eb;
+      --accent: #a62f4d;
+      --tint: #fff0f3;
+      --note: #eef4ff;
+      --key: #edf1f6;
+      --shadow: 0 10px 36px #18263a08;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--ink);
+      font: 16px/1.7 "Segoe UI", system-ui, sans-serif;
+    }
+    a { color: var(--accent); text-underline-offset: 3px; }
+    a:hover { text-decoration-thickness: 2px; }
+    a:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
+      outline: 3px solid var(--accent);
+      outline-offset: 5px;
+      border-radius: 3px;
+    }
+    .skip { position: absolute; top: 12px; left: 12px; z-index: 2; padding: 10px 16px; background: var(--surface); transform: translateY(-180%); }
+    .skip:focus { transform: none; }
+    .layout { display: grid; grid-template-columns: 240px minmax(0, 860px); gap: 44px; max-width: 1220px; margin: auto; padding: 42px 30px 60px; }
+    aside { min-width: 0; }
+    .sidebar { position: sticky; top: 28px; }
+    .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 26px; font-weight: 650; font-size: 17px; line-height: 1.35; }
+    .brand svg { flex: 0 0 48px; width: 48px; height: 48px; }
+    .brand small { display: block; color: var(--muted); font-size: 12px; font-weight: 400; margin-top: 4px; }
+    nav p { margin: 0 0 9px; font-size: 11px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); font-weight: 650; }
+    nav ul { list-style: none; padding: 0; margin: 0; }
+    nav a { display: block; padding: 6px 11px; margin: 2px 0; border-radius: 6px; text-decoration: none; color: var(--muted); line-height: 1.5; font-size: 14px; }
+    nav a:hover, nav a:focus-visible { background: var(--tint); color: var(--accent); }
+    .sidebar-note { margin: 24px 11px 0; font-size: 12px; color: var(--muted); }
+    main { min-width: 0; }
+    header { padding: 32px 36px; border: 1px solid var(--line); background: var(--surface); border-radius: 18px; box-shadow: var(--shadow); margin-bottom: 34px; }
+    .eyebrow { margin: 0 0 8px; color: var(--accent); font-size: 11px; letter-spacing: .13em; font-weight: 700; text-transform: uppercase; }
+    h1 { margin: 0 0 10px; font-size: clamp(30px, 4vw, 42px); line-height: 1.16; letter-spacing: -.035em; }
+    .lead { font-size: 18px; line-height: 1.6; margin: 0; color: var(--muted); max-width: 36em; }
+    .help-keys { margin: 20px 0 0; font-size: 13px; color: var(--muted); }
+    section { scroll-margin-top: 25px; margin: 0 0 42px; }
+    h2 { font-size: 25px; line-height: 1.3; letter-spacing: -.02em; margin: 0 0 15px; }
+    h3 { font-size: 17px; line-height: 1.4; margin: 26px 0 9px; }
+    p { margin: 0 0 15px; }
+    ul, ol { margin: 10px 0 20px; padding-left: 24px; }
+    li { padding-left: 3px; margin: 7px 0; }
+    li > ul { margin-bottom: 10px; }
+    strong { font-weight: 650; }
+    kbd, code { font-family: "Cascadia Code", Consolas, monospace; font-size: .86em; }
+    kbd { display: inline-block; padding: 1px 6px; line-height: 1.65; background: var(--key); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; white-space: nowrap; color: var(--ink); }
+    code { overflow-wrap: anywhere; }
+    .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .card { padding: 23px 25px; border: 1px solid var(--line); background: var(--surface); border-radius: 12px; }
+    .card h3 { margin-top: 0; }
+    .card p:last-child, .callout p:last-child { margin-bottom: 0; }
+    .card ol { margin-bottom: 0; }
+    .callout { padding: 17px 21px; border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; background: var(--tint); margin: 19px 0; }
+    .callout.info { background: var(--note); border-left-color: var(--muted); }
+    .callout strong { display: block; margin-bottom: 4px; }
+    .table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; margin: 18px 0; background: var(--surface); }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 1.6; }
+    caption { text-align: left; padding: 15px 17px 8px; font-weight: 650; color: var(--muted); }
+    th, td { text-align: left; vertical-align: top; padding: 12px 17px; border-bottom: 1px solid var(--line); }
+    th { font-weight: 650; background: var(--key); }
+    tr:last-child td { border-bottom: 0; }
+    .tag { display: inline-block; padding: 1px 7px; border-radius: 4px; background: var(--tint); color: var(--accent); font-size: 11px; font-weight: 650; white-space: nowrap; }
+    details { border: 1px solid var(--line); border-radius: 9px; padding: 0 20px; margin: 11px 0; background: var(--surface); }
+    summary { padding: 14px 0; font-weight: 650; cursor: pointer; line-height: 1.5; }
+    details[open] summary { margin-bottom: 4px; }
+    details p, details ol { font-size: 14px; }
+    dl { margin: 15px 0; }
+    dt { font-weight: 650; margin-top: 17px; }
+    dd { margin: 4px 0 0; color: var(--muted); }
+    .top-link { font-size: 12px; }
+    footer { border-top: 1px solid var(--line); margin-top: 44px; padding-top: 18px; color: var(--muted); font-size: 12px; }
+    @media (prefers-color-scheme: dark) {
+      :root { --page: #141920; --surface: #202631; --ink: #eef2f8; --muted: #bcc7d8; --line: #3b4657; --accent: #ff9ba7; --tint: #342833; --note: #232f42; --key: #293343; --shadow: none; }
+    }
+    @media (max-width: 850px) {
+      .layout { display: block; padding: 23px 20px 40px; max-width: 760px; }
+      .sidebar { position: static; }
+      .brand { margin-bottom: 18px; }
+      nav { margin-bottom: 26px; padding-bottom: 21px; border-bottom: 1px solid var(--line); }
+      nav ul { display: flex; flex-wrap: wrap; gap: 3px 6px; }
+      nav a { padding: 5px 8px; font-size: 13px; }
+      .sidebar-note { display: none; }
+      header { padding: 25px 26px; }
+    }
+    @media (max-width: 560px) {
+      .layout { padding: 18px 16px 32px; }
+      .cards { grid-template-columns: 1fr; }
+      .card { padding: 20px; }
+      header { padding: 23px 20px; border-radius: 12px; }
+      body { font-size: 15px; }
+      .lead { font-size: 17px; }
+      th, td { padding: 10px 12px; }
+    }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+    @media print {
+      :root { --page: white; --surface: white; --ink: black; --muted: #333; --line: #aaa; --accent: #444; --tint: #f3f3f3; --note: #f3f3f3; --key: #eee; }
+      body { font: 10.5pt/1.5 "Segoe UI", sans-serif; }
+      .layout { display: block; max-width: none; margin: 0; padding: 0; }
+      aside, .skip, .help-keys, .top-link { display: none; }
+      header { box-shadow: none; padding: 18px; margin-bottom: 25px; }
+      h1 { font-size: 28pt; } h2 { font-size: 18pt; } h3 { font-size: 12pt; }
+      section { margin-bottom: 25px; } h2, h3, summary { break-after: avoid; }
+      .card, .callout, tr { break-inside: avoid; }
+      .table-scroll { overflow: visible; }
+      details { border: 0; padding: 0; }
+      details > * { display: block; }
+      summary { list-style: none; padding-bottom: 5px; }
+      a { color: black; text-decoration: none; }
+    }
+  </style>
+</head>
+<body id="top">
+  <a class="skip" href="#content">Skip to the guide</a>
+  <div class="layout">
+    <aside aria-label="Help navigation">
+      <div class="sidebar">
+        <div class="brand">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" aria-hidden="true" focusable="false">
+            <rect x="7.68" y="7.68" width="240.64" height="240.64" rx="51.2" fill="#202631"/>
+            <g stroke="#ff858d" stroke-width="6.6" stroke-linecap="round">
+              <path d="M31.29 116.8V139.2M42.67 108.8V147.2M54.04 96V160M65.42 81.6V174.4M76.8 102.4V153.6M88.18 89.6V166.4M99.56 78.4V177.6M110.93 99.2V156.8M122.31 88V168M133.69 105.6V150.4M145.07 94.4V161.6M156.44 76.8V179.2M167.82 91.2V164.8M179.2 104V152M190.58 88V168M201.96 99.2V156.8M213.33 110.4V145.6M224.71 118.4V137.6"/>
+            </g>
+          </svg>
+          <div>Local Dictation<small>Windows user guide</small></div>
+        </div>
+        <nav aria-label="Contents">
+          <p>In this guide</p>
+          <ul>
+            <li><a href="#quick-start">Start dictating</a></li>
+            <li><a href="#live-text">Live text and the banner</a></li>
+            <li><a href="#review">Verify and Review</a></li>
+            <li><a href="#destination">Choose a destination</a></li>
+            <li><a href="#models">Models and languages</a></li>
+            <li><a href="#history">History and audio</a></li>
+            <li><a href="#settings">Settings and shortcuts</a></li>
+            <li><a href="#troubleshooting">Troubleshooting</a></li>
+            <li><a href="#privacy">Local files and privacy</a></li>
+          </ul>
+        </nav>
+        <p class="sidebar-note">Press <kbd>F1</kbd> in the app's Settings window to open this guide.<br><br>Use <kbd>Ctrl</kbd> + <kbd>F</kbd> to find a word on this page.</p>
+      </div>
+    </aside>
+
+    <main id="content">
+      <header>
+        <p class="eyebrow">Help · works offline</p>
+        <h1>Speak. Check. Keep writing.</h1>
+        <p class="lead">Record speech, watch the local transcript, and return reviewed wording to the field where you started.</p>
+        <p class="help-keys"><kbd>F1</kbd> opens Help from Settings. <kbd>Ctrl</kbd> + <kbd>F</kbd> searches this guide in your browser.</p>
+      </header>
+
+      <section id="quick-start" aria-labelledby="quick-start-title">
+        <h2 id="quick-start-title">Start dictating</h2>
+        <p>Open Local Dictation from the Windows notification area. Wait for <strong>Ready · Local transcription</strong>, choose your microphone and model, then <strong>Save settings</strong>.</p>
+        <div class="cards">
+          <div class="card">
+            <h3>Write directly at your cursor</h3>
+            <ol>
+              <li>Enable <strong>Insert live text at the cursor</strong> on the <strong>Dictation</strong> tab. Save.</li>
+              <li>Click your destination field, with no text selected.</li>
+              <li>Press and release your shortcut, <kbd>Ctrl</kbd> + <kbd>Shift</kbd> by default. Speak.</li>
+              <li>Press the shortcut again, or select <strong>Finish</strong> in the banner, to stop.</li>
+            </ol>
+          </div>
+          <div class="card">
+            <h3>Keep live text in the banner</h3>
+            <p>Turn off <strong>Insert live text at the cursor</strong>, save, then start with the shortcut from your destination field.</p>
+            <p>The app remembers that cursor while live text stays in its own banner. After normal completion and any required word choices, it returns the finished text automatically.</p>
+            <p><strong>Record in banner</strong> starts from the app window without an external cursor. Use <strong>Choose destination</strong> when the text is ready.</p>
+          </div>
+        </div>
+        <div class="callout info">
+          <strong>The app inserts text; it does not send it.</strong>
+          <p>Sending, submitting, and saving the destination remain your actions.</p>
+        </div>
+        <p>Recordings last up to <strong>10 minutes</strong>. During a session, <kbd>Esc</kbd> cancels recording or verification. Cancellation or an interrupted recording does not automatically insert received text; it stays available for review.</p>
+      </section>
+
+      <section id="live-text" aria-labelledby="live-text-title">
+        <h2 id="live-text-title">Live text and the banner</h2>
+        <p><strong>Live transcription (experimental)</strong> shows partial wording in the banner. With <strong>Insert live text at the cursor</strong> enabled it also updates a valid destination as you speak. With that option off, a shortcut-started recording remembers the original field and inserts the final text after normal completion and any required choices. Updates arrive after speech segments and processing, and can be revised. Without live mode, wait for the result after <strong>Finish</strong>.</p>
+
+        <h3>Move or collapse the banner</h3>
+        <ul>
+          <li>Drag the microphone tile, title/status area, or waveform to move the banner away from your text.</li>
+          <li><strong>Hide text</strong> collapses the recording preview. <strong>Show text</strong> opens it again. Word choices remain visible during compact Review.</li>
+          <li>Banner controls preserve your destination cursor.</li>
+          <li>Manual position is kept for the current app run, including later recordings, but not across restarts.</li>
+        </ul>
+
+        <h3>What happens when you click elsewhere?</h3>
+        <p>Recording continues; insertion pauses. Return to the <strong>same unchanged field</strong> to resume at the draft's end, even if you click inside it.</p>
+        <div class="callout">
+          <strong>A changed field needs a new decision.</strong>
+          <p>Manual edits or a closed destination prevent automatic replacement. Your transcript stays in Review. Use <a href="#destination">Choose destination</a> when needed.</p>
+        </div>
+        <p>Insertion requires reliable Windows accessibility access. Protected, elevated, or unsupported fields fall back to Review.</p>
+      </section>
+
+      <section id="review" aria-labelledby="review-title">
+        <h2 id="review-title">Verify after recording and Review</h2>
+        <p>Enable <strong>Verify after recording</strong> and choose a different eligible <strong>Verification model</strong> for a second pass over the audio. This takes extra time. Either model can be wrong.</p>
+        <ol>
+          <li>Dictate and stop recording.</li>
+          <li>The transcript is saved before its live draft is removed from a validated destination. Surrounding text stays.</li>
+          <li>Wait for comparison to finish. Review stays inside the small recording banner.</li>
+          <li>Click an underlined phrase and choose its correct wording from the two alternatives. The live wording is first; the alternative is second. There are no model labels in the choices.</li>
+          <li>After each choice, the next unresolved phrase opens automatically.</li>
+          <li>The final choice returns the finished text to the remembered cursor. If no differences need a choice, normal completion returns the text automatically.</li>
+        </ol>
+        <p>The destination is checked again before insertion. If it changed or cannot be validated, the draft may remain in place and the banner keeps your text with an explanation. Use <strong>Choose destination</strong> when needed. Cancelled or failed sessions do not automatically insert on completion.</p>
+
+        <h3>Choose the words you heard</h3>
+        <div class="table-scroll" role="region" aria-label="Review controls" tabindex="0">
+          <table>
+            <thead><tr><th scope="col">Control</th><th scope="col">What it does</th></tr></thead>
+            <tbody>
+              <tr><td>Underlined phrase</td><td>Opens its two wordings. You can revisit an earlier choice before the text is inserted.</td></tr>
+              <tr><td>First / second wording</td><td>Choose the correct text. The first comes from live dictation; the second is its alternative. The next unresolved phrase opens automatically. With keyboard focus on a wording, press and release <kbd>Enter</kbd> to choose it once.</td></tr>
+              <tr><td>Remove this text</td><td>An empty alternative deliberately removes the phrase. <strong>∅</strong> marks an empty phrase in the transcript.</td></tr>
+              <tr><td>Edit wording → Use this wording</td><td>Type your correction, then select <strong>Use this wording</strong> or press and release <kbd>Enter</kbd> to apply it and advance. <strong>Cancel</strong> or <kbd>Esc</kbd> leaves it unapplied.</td></tr>
+              <tr><td>Keep the remaining wording</td><td>Keeps the displayed wording for remaining phrases without changing existing choices, then inserts when possible.</td></tr>
+              <tr><td>Insert</td><td>Retries a ready text's insertion when a previous attempt could not finish. No manual copy/paste is needed.</td></tr>
+              <tr><td>Details</td><td>Opens the optional full editor with original model outputs, revision information, undo, and whole-text editing.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>A phrase correction is saved as you type, but changes the transcript only after <strong>Use this wording</strong>. Cancelling the editor, choosing another phrase, or reopening Review keeps that draft for the next time you select <strong>Edit wording</strong> on the same phrase. Holding <kbd>Enter</kbd> does not accept following phrases.</p>
+        <p>In <strong>Details</strong>, <strong>Dictation original</strong> and <strong>Verification original</strong> keep model outputs unchanged. An edited final draft takes precedence over phrase choices; <strong>Rebuild from choices</strong> preserves a previous draft for restoration.</p>
+        <div class="callout info">
+          <strong>Ordinary Review stays in the banner.</strong>
+          <p>No large editor opens automatically. Pending items remain available for later. In the optional Details editor, <strong>Close</strong> and <strong>Copy reviewed text</strong> keep the item; <strong>Dismiss</strong> removes pending Review. Retained History is separate.</p>
+        </div>
+        <p>Automatic insertion accepts <strong>single-paragraph text</strong>. Remove added line breaks/control characters before insertion. Rejection leaves the field unchanged and keeps the text available.</p>
+      </section>
+
+      <section id="destination" aria-labelledby="destination-title">
+        <h2 id="destination-title">Choose a destination</h2>
+        <p>Use this when no external cursor was captured, for older Reviews after restart, or when the original field is no longer valid. A preview-only recording started with the shortcut from a valid field already has a remembered destination.</p>
+        <ol>
+          <li>Resolve all differences in Review.</li>
+          <li>Select <strong>Choose destination</strong>. The banner shows placement instructions.</li>
+          <li>Click the desired editable field and leave an empty cursor at the insertion point.</li>
+          <li>Press your configured recording shortcut.</li>
+        </ol>
+        <p>The shortcut now inserts Review instead of recording. Opening Settings or returning to Review cancels placement; choose again to rearm. Check for drafts left elsewhere to avoid keeping two copies.</p>
+      </section>
+
+      <section id="models" aria-labelledby="models-title">
+        <h2 id="models-title">Models and languages</h2>
+        <p>Choose <strong>Dictation model</strong> and <strong>Language</strong> on the <strong>Dictation</strong> tab, then save. The dropdown also lists catalog entries marked <strong>not installed</strong>; install those before selecting them for recording. Available languages and verification choices depend on the model.</p>
+        <div class="table-scroll" role="region" aria-label="Current model modes" tabindex="0">
+          <table>
+            <caption>Current local model profiles</caption>
+            <thead><tr><th scope="col">Model</th><th scope="col">How to use it</th></tr></thead>
+            <tbody>
+              <tr><td><strong>KInIT Turbo · Slovak</strong><br><span class="tag">Live experimental</span></td><td>Slovak live preview, or after-recording transcription with live off.</td></tr>
+              <tr><td><strong>Whisper Large-v3 · Multilingual</strong><br><span class="tag">After recording</span></td><td>After Finish or eligible verification. Live testing showed higher latency and more errors on the tested samples; normal live use remains unqualified.</td></tr>
+              <tr><td><strong>Whisper Tiny</strong><br><span class="tag">After recording</span></td><td>A small additional model when installed. Check accuracy on your recordings.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Install or test a model</h3>
+        <ol>
+          <li>Open the <strong>Models</strong> tab.</li>
+          <li>Use <strong>Inspect selected catalog model</strong>, or enter a public repository URL/<code>owner/name</code> and <strong>Inspect compatibility and size</strong>.</li>
+          <li>Check the size, then <strong>Download inspected model</strong>.</li>
+          <li>Select the installed Dictation model and <strong>Test selected model with audio…</strong>.</li>
+        </ol>
+        <p>Imports support compatible built-in Whisper Transformers models with original safetensors; private, gated, and remote-code models are rejected. New imports start after-recording. Closing Settings does not stop downloading; use <strong>Cancel download</strong>.</p>
+        <p>The status below <strong>Live transcription (experimental)</strong> says whether the selected model is missing, needs a runtime test, supports live preview, or works after recording only. A disabled live option means that profile is not qualified for live transcription.</p>
+        <p><strong>Installed</strong>, <strong>runtime-tested</strong>, <strong>quality-checked</strong>, and <strong>live-ready</strong> are separate states. A successful runtime test proves the model can transcribe; check its accuracy and live performance separately. Verification needs a different, installed, runtime-tested model supporting your language.</p>
+      </section>
+
+      <section id="history" aria-labelledby="history-title">
+        <h2 id="history-title">History and original audio</h2>
+        <p>Open <strong>History</strong> from the notification-area menu, or select <strong>Open transcript and audio history</strong> on the <strong>History</strong> tab.</p>
+        <ul>
+          <li><strong>Play audio</strong> plays the selected original recording; <strong>Stop</strong> stops playback.</li>
+          <li><strong>Copy text</strong> copies the current transcript.</li>
+          <li><strong>Open Review</strong> opens the item's current text in the compact banner. Select <strong>Details</strong> for its original wordings and recording information. Reopening an item does not insert it.</li>
+          <li><strong>Save audio…</strong> exports an ordinary WAV to a location you choose.</li>
+          <li><strong>Delete</strong> removes the selected history transcript and audio after confirmation.</li>
+        </ul>
+        <div class="callout">
+          <strong>History keeps the latest 20 dictations with audio.</strong>
+          <p>The next saved item removes the oldest transcript and audio. Pending Review is separate. Recordings without received text do not create history items.</p>
+        </div>
+        <p>An item marked <strong>Already inserted</strong> shows the saved text with insertion and phrase editing disabled. Its original choices and recording information remain available through <strong>Details</strong>. Use <strong>Copy text</strong> if you want to reuse that text manually.</p>
+        <p>History is protected for your Windows account. Exported WAV files are ordinary, unencrypted audio; export recordings you need beyond the limit.</p>
+      </section>
+
+      <section id="settings" aria-labelledby="settings-title">
+        <h2 id="settings-title">Settings and shortcuts</h2>
+        <p>Open the <strong>Settings</strong> tab for appearance, shortcut, and local service preferences.</p>
+        <dl>
+          <dt>Appearance</dt>
+          <dd><strong>System</strong> follows Windows at app startup. <strong>Light</strong> / <strong>Dark</strong> override it. Preview is immediate; save to keep it. Windows high contrast takes priority.</dd>
+          <dt>Recording shortcut</dt>
+          <dd>Enable the shortcut and save. Default: <kbd>Ctrl</kbd> + <kbd>Shift</kbd>. Alternatives: <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Space</kbd>, <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>D</kbd>, <kbd>Alt</kbd> + <kbd>F9</kbd>. Use Ctrl/Shift/Alt with Space, letters, digits, or F1–F24.</dd>
+          <dt>Saving</dt>
+          <dd><strong>Save settings</strong> keeps your changes. During a session, changes apply to the next recording.</dd>
+          <dt>Help</dt>
+          <dd><kbd>F1</kbd> or <strong>Help (F1)</strong> in the Settings window opens this local guide in your default browser. Opening Help does not save Settings. <kbd>Ctrl</kbd> + <kbd>F</kbd> searches; the browser's Print command makes a paper/PDF copy.</dd>
+        </dl>
+        <h3>Close Settings or exit the app</h3>
+        <p><strong>Close</strong> closes Settings; the app stays available in the Windows notification area. Choose <strong>Exit</strong> from its notification-area menu to quit.</p>
+        <p>If a session is active, Exit asks to stop it, then waits while it saves the received text and original recording before closing. Stopping this way keeps the text for Review and does not complete automatic insertion. A recording needs received text to appear in History. If protected Review saving fails, the app stays open so you can copy or explicitly dismiss the unsaved text.</p>
+        <h3>Local transcription service</h3>
+        <p>If offline, use <strong>Start local API</strong>, wait for preparation, then <strong>Reconnect</strong>. Disconnected clients also retry automatically.</p>
+        <p>Current address: <code>http://127.0.0.1:48125</code>. TypeWhisper's separate batch server on port <code>8123</code> is not this client's session service.</p>
+      </section>
+
+      <section id="troubleshooting" aria-labelledby="troubleshooting-title">
+        <h2 id="troubleshooting-title">Troubleshooting</h2>
+        <details open>
+          <summary>No models appear, or the service is offline</summary>
+          <ol>
+            <li>Open <strong>Settings → Local transcription service</strong> and select <strong>Start local API</strong>.</li>
+            <li>Wait for preparation, then select <strong>Reconnect</strong>. Confirm the address points to the session service.</li>
+            <li>Check that the required model is installed on the <strong>Models</strong> tab.</li>
+          </ol>
+        </details>
+        <details>
+          <summary>The shortcut does nothing</summary>
+          <ol>
+            <li>Check <strong>Enable keyboard shortcut</strong>, save, and read the shortcut status.</li>
+            <li>If TypeWhisper is running, the shared default <kbd>Ctrl</kbd> + <kbd>Shift</kbd> is disabled here. Quit TypeWhisper and use <strong>Recheck shortcut</strong>, or save a different shortcut.</li>
+            <li>A test launch with <code>--no-hotkey</code> disables shortcuts. Relaunch normally. Also check whether another app uses the same key combination.</li>
+          </ol>
+        </details>
+        <details>
+          <summary>The microphone is silent, unavailable, or recording is interrupted</summary>
+          <ol>
+            <li>Reconnect the microphone and select <strong>Refresh microphones</strong> on the <strong>Dictation</strong> tab.</li>
+            <li>Select the intended input device and save. <strong>System default microphone</strong> follows the Windows default capture device.</li>
+            <li>Check Windows microphone access and the input level. Watch whether the banner's waveform reacts while you speak.</li>
+            <li>Retry after correcting the device or service issue. Check Pending Review for text already received.</li>
+          </ol>
+        </details>
+        <details>
+          <summary>The banner records, but no text appears yet</summary>
+          <p>Check whether live transcription is enabled for this model. After-recording profiles return text after Finish. In live mode, initial model loading and processing can delay the first partial. An empty transcript can also indicate silence or the wrong microphone.</p>
+        </details>
+        <details>
+          <summary>The app switched to Review or will not resume at the cursor</summary>
+          <p>Return to the original field and leave its text unchanged. The destination must expose reliable editable text and selection access. A protected, elevated, unsupported, closed, or manually edited field cannot be used automatically. Continue through Review and <strong>Choose destination</strong>.</p>
+          <p><strong>Record in banner</strong> starts from the app window and needs a destination selection. For preview-only dictation with an automatic final return, turn off <strong>Insert live text at the cursor</strong> and start with the shortcut from the destination field.</p>
+        </details>
+        <details>
+          <summary>A wording choice or final insertion could not finish</summary>
+          <p>Resolve every underlined phrase, or select <strong>Keep the remaining wording</strong>. The last choice inserts automatically when the original field is valid. If that destination is gone, use <strong>Choose destination</strong>. Reviews reopened after restarting the app need a new destination selection.</p>
+          <p>Remove line breaks/control characters from a manual final draft. If protected saving fails, keep Review open and correct the storage problem before retrying.</p>
+          <p>If the app says text was inserted but its saved insertion status could not be updated, check the destination and preserve a copy. Do not insert the same pending item again after restarting. Items marked <strong>Already inserted</strong> have insertion disabled.</p>
+        </details>
+        <details>
+          <summary>Why is live mode unavailable for Large-v3 or another model?</summary>
+          <p>A model can run after recording without qualifying for live use. Large-v3 produced partial results in local tests, but the tested live profile was slower and less accurate on those samples than its after-recording output. New imports also start without live qualification. Use after-recording mode or select a supported live profile.</p>
+        </details>
+        <details>
+          <summary>Local Dictation is already running</summary>
+          <p>Open the existing app from its Windows notification-area icon instead of launching another copy. The notification-area menu also offers Settings, Pending Review, History, and Exit.</p>
+        </details>
+        <details>
+          <summary>A recording is missing from History or will not play</summary>
+          <p>History contains the latest 20 items that had both received text and recorded audio. Earlier items may have been removed by the limit or explicitly deleted. Check your playback device if a saved item will not play. A pending Review can outlive its history audio; it is not an unlimited recording archive. If History saving fails, the transcript is kept in Pending Review, but audio recovery is unavailable.</p>
+        </details>
+      </section>
+
+      <section id="privacy" aria-labelledby="privacy-title">
+        <h2 id="privacy-title">Local files and privacy</h2>
+        <p>Recording and speech transcription run locally. The client sends audio to its loopback session service, not to a cloud transcription provider. Installing a model can contact Hugging Face to download its files. This Help page has no network dependencies or tracking.</p>
+        <div class="table-scroll" role="region" aria-label="Current installation paths" tabindex="0">
+          <table>
+            <caption>Current Windows installation</caption>
+            <thead><tr><th scope="col">What</th><th scope="col">Typical location</th></tr></thead>
+            <tbody>
+              <tr><td>Application</td><td><code>C:\Git\Local-Dictation\app\LocalDictation.exe</code></td></tr>
+              <tr><td>Settings, protected history, and pending Review</td><td><code>C:\AI\LocalDictation\data</code></td></tr>
+              <tr><td>Diagnostic logs</td><td><code>C:\AI\LocalDictation\logs</code></td></tr>
+              <tr><td>Existing original model storage</td><td><code>C:\AI\PalaNote-ASR\models</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Data locations can differ in a custom installation. History metadata, history audio, and pending Review are protected with Windows DPAPI for the current user. Keep that account and its recovery arrangements in mind when backing up or moving data. Settings and explicit audio exports are ordinary files.</p>
+        <p class="top-link"><a href="#top">Back to the top</a></p>
+      </section>
+
+      <footer>
+        <p>Local Dictation · Windows client · Guide updated 11 November 2026</p>
+        <p>Labels in this guide match the current English interface. Model quality and cursor compatibility should be checked with your own recordings and destination apps.</p>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>

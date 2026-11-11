@@ -35,6 +35,8 @@ public sealed class TargetGuard(string identity, string text, int caret)
     public string OwnedText { get; private set; } = "";
     public bool Valid { get; private set; } = true;
     public void Invalidate() => Valid = false;
+    public bool CanResume(string currentIdentity,string currentText)=>
+        Valid&&currentIdentity==Identity&&currentText==ExpectedText;
     public bool CanReplace(string currentIdentity, string currentText, int selectionStart, int selectionEnd) =>
         Valid && currentIdentity == Identity && currentText == ExpectedText &&
         selectionStart == Caret && selectionEnd == Caret;

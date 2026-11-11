@@ -5,6 +5,8 @@ using LocalDictation.Core;
 
 namespace LocalDictation.App.Services;
 
+public readonly record struct DestinationInput(string Reason,bool FocusOnly,nint RootWindow);
+
 public sealed class GlobalInput : IDisposable
 {
     public static readonly nuint InjectionTag = 0x4C444943;
@@ -12,6 +14,7 @@ public sealed class GlobalInput : IDisposable
     readonly InputCommands commands = new();
     public DestinationEpoch Epoch {get;}=new();
     public bool SessionActive {get;set;}
+    public nint NonActivatingWindow {get;set;}
     public bool FocusTrackingAvailable=>focusHook!=0;
     public event Action? Cancel;
     readonly FocusCallback focusCallback;
@@ -21,8 +24,9 @@ public sealed class GlobalInput : IDisposable
     [DllImport("user32.dll")] static extern bool UnhookWinEvent(nint hook);
     nint keyboard, mouse;
     public event Action? Toggle;
-    public event Action? UserEdited;
+    public event Action<DestinationInput>? UserEdited;
     public bool ShortcutEnabled { get; set; }
+    public ShortcutSpec Shortcut {get=>commands.Shortcut;set=>commands.Shortcut=value;}
     delegate nint Hook(int code, nint message, nint data);
 
     [StructLayout(LayoutKind.Sequential)]
@@ -33,10 +37,14 @@ public sealed class GlobalInput : IDisposable
     [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(nint hook);
     [DllImport("user32.dll")] static extern nint CallNextHookEx(nint hook, int code, nint message, nint data);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern nint GetModuleHandle(string? module);
+    [StructLayout(LayoutKind.Sequential)] struct Point {public int X,Y;}
+    [DllImport("user32.dll")] static extern nint WindowFromPoint(Point point);
+    [DllImport("user32.dll")] static extern nint GetAncestor(nint window,uint flags);
+    static nint Root(nint window)=>window==0?0:GetAncestor(window,2);
 
     public GlobalInput()
     {
-        focusCallback=(_,_,_,_,_,_,_)=>ObserveEdit();
+        focusCallback=(_,_,window,_,_,_,_)=>ObserveEdit("Cursor delivery paused. Return to the original field to resume.",Root(window),true);
         focusHook=SetWinEventHook(0x8005,0x8005,0,focusCallback,0,0,0);
         keyboardCallback = Keyboard;
         mouseCallback = Mouse;
@@ -56,9 +64,8 @@ public sealed class GlobalInput : IDisposable
             if (key.Extra != InjectionTag)
             {
                 var pressed = message == 0x100 || message == 0x104;
-                if (pressed && key.Key is not (0x10 or 0x11 or 0xA0 or 0xA1 or 0xA2 or 0xA3))
-                    ObserveEdit();
                 var decision=commands.Update((int)key.Key,pressed,SessionActive,ShortcutEnabled);
+                if(pressed&&!decision.Suppress&&!ShortcutSpec.IsModifier((int)key.Key))ObserveEdit("Cursor delivery paused while you type. Return to the original unchanged field to resume.");
                 if(decision.Command==InputCommand.Toggle)Toggle?.Invoke();
                 if(decision.Command==InputCommand.Cancel)Cancel?.Invoke();
                 if(decision.Suppress)return 1;
@@ -71,11 +78,15 @@ public sealed class GlobalInput : IDisposable
         if (code >= 0 && (message == 0x201 || message == 0x204 || message == 0x207 || message == 0x20B))
         {
             var mouseData = Marshal.PtrToStructure<MouseData>(data);
-            if (mouseData.Extra != InjectionTag) ObserveEdit();
+            if (mouseData.Extra != InjectionTag) ObserveEdit("Cursor delivery paused. Return to the original field to resume.",
+                Root(WindowFromPoint(new(){X=mouseData.X,Y=mouseData.Y})));
         }
         return CallNextHookEx(mouse, code, message, data);
     }
-    void ObserveEdit(){Epoch.UserInput();UserEdited?.Invoke();}
+    void ObserveEdit(string reason,nint observedWindow=0,bool focusOnly=false)
+    {
+        if(Epoch.UserInput((long)observedWindow,(long)NonActivatingWindow))UserEdited?.Invoke(new(reason,focusOnly,observedWindow));
+    }
     public void Dispose()
     {
         if (keyboard != 0) UnhookWindowsHookEx(keyboard);

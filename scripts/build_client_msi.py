@@ -19,7 +19,7 @@ PAYLOAD = (
     "LocalDictation.exe", "LocalDictation.dll", "LocalDictation.Core.dll",
     "LocalDictation.deps.json", "LocalDictation.runtimeconfig.json",
     "NAudio.Core.dll", "NAudio.dll", "NAudio.Midi.dll", "NAudio.Wasapi.dll",
-    "NAudio.WinMM.dll", "System.Numerics.Tensors.dll",
+    "NAudio.WinMM.dll", "System.Numerics.Tensors.dll", "Help.html",
 )
 VERSION = "0.1.0"
 PRODUCT_CODE = "{6CBA1D36-B8B7-4EE0-B283-E58EAC43DF5C}"

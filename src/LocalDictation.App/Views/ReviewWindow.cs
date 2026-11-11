@@ -11,11 +11,13 @@ public sealed class ReviewWindow : Window
     readonly ReviewDocument document;
     readonly Action<ReviewDocument> save;
     readonly Action<string> dismiss;
+    readonly Func<ReviewDocument,Task<ReviewInsertionResult>> accept;
+    readonly Action<ReviewDocument> chooseDestination;
     readonly RichTextBox transcript = new() { IsReadOnly=true, VerticalScrollBarVisibility=ScrollBarVisibility.Auto,
         MinHeight=210, BorderThickness=new(0), Padding=new(8), FontSize=16 };
     readonly TextBox primary = Ui.Box(false,64), verification = Ui.Box(false,64), custom = Ui.Box(true,62), manual = Ui.Box(true,130);
     readonly TextBlock counter=Ui.Text(""), note=Ui.Text(""), sourceLabel=Ui.Text("");
-    readonly Button copy, undo, rebuild, restore;
+    readonly Button copy,acceptButton,destinationButton,undo,rebuild,restore;
     readonly StackPanel manualPanel=new();
     readonly Border choiceCard;
     readonly Grid middle=new();
@@ -23,10 +25,13 @@ public sealed class ReviewWindow : Window
     int selected;
     bool refreshing;
     public string ReviewId => document.Id;
+    public bool IsApplying {get;private set;}
 
-    public ReviewWindow(ReviewDocument document, Action<ReviewDocument> save, Action<string> dismiss)
+    public ReviewWindow(ReviewDocument document,Action<ReviewDocument> save,Action<string> dismiss,
+        Func<ReviewDocument,Task<ReviewInsertionResult>> accept,Action<ReviewDocument> chooseDestination)
     {
         this.document=document; this.save=save; this.dismiss=dismiss;
+        this.accept=accept;this.chooseDestination=chooseDestination;
         differences=document.Pieces.Where(p=>p.Different).ToList();
         Title="Review · Local Dictation"; Width=1080; Height=740; MinWidth=650; MinHeight=540;
         WindowStartupLocation=WindowStartupLocation.CenterScreen;
@@ -38,7 +43,7 @@ public sealed class ReviewWindow : Window
         static string Revision(string? value)=>string.IsNullOrEmpty(value)?"revision unknown":value[..Math.Min(value.Length,12)];
         var provenance=Ui.Text(document.PrimaryModel+" · "+Revision(pinned?.Primary.Revision)+
             (document.VerificationModel is null?"":"   →   "+document.VerificationModel+" · "+Revision(pinned?.Verification?.Revision)),12);
-        provenance.Foreground=Ui.Brush("Muted");header.Children.Add(provenance);
+        provenance.SetResourceReference(TextBlock.ForegroundProperty,"Muted");header.Children.Add(provenance);
         var details=Ui.Box(false,72);
         details.Text=pinned is null?"This older Review has no saved session or revision snapshot.":
             $"Session: {pinned.SessionId}\nSession started: {pinned.SessionStartedUtc?.ToString("O")??"unknown"}\n"+
@@ -46,17 +51,19 @@ public sealed class ReviewWindow : Window
         header.Children.Add(new Expander{Header="Recording details",Content=details,Margin=new(0,0,0,12)});
         DockPanel.SetDock(header,Dock.Top);root.Children.Add(header);
         var footer=new StackPanel();
-        note.Foreground=Ui.Brush("Muted"); note.FontSize=12;
+        note.SetResourceReference(TextBlock.ForegroundProperty,"Muted"); note.FontSize=12;
         var buttons=new WrapPanel { Margin=new(0,10,0,8) };
-        copy=Ui.Button("_Copy reviewed text",Copy,true);
+        acceptButton=Ui.Button("_Accept and insert",()=>_ = Accept(),true);
+        destinationButton=Ui.Button("Choose destination",()=>this.chooseDestination(document));
+        copy=Ui.Button("_Copy reviewed text",Copy);
         undo=Ui.Button("_Undo choice",()=>{document.Undo();Changed();});
         var keep=Ui.Button("_Keep remaining dictation",()=>{document.KeepRemaining();Changed();});
         var close=Ui.Button("Close",Close);
         var remove=Ui.Button("_Dismiss",Dismiss);
-        foreach(var button in new[]{copy,undo,keep,close,remove}) { button.Margin=new(0,0,8,8); buttons.Children.Add(button); }
+        foreach(var button in new[]{acceptButton,destinationButton,copy,undo,keep,close,remove}) { button.Margin=new(0,0,8,8); buttons.Children.Add(button); }
         footer.Children.Add(buttons);
         footer.Children.Add(note);
-        footer.Children.Add(Ui.Text("Copy and Close keep this item. Dismiss permanently removes this pending Review.",12));
+        footer.Children.Add(Ui.Text("Accept inserts the reviewed text and closes this window. Close keeps the pending Review for later.",12));
         DockPanel.SetDock(footer,Dock.Bottom);root.Children.Add(footer);
 
         var working=new StackPanel();
@@ -119,6 +126,7 @@ public sealed class ReviewWindow : Window
             if(refreshing)return;
             document.ManualFinalDraft=manual.Text;save(document);
         };
+        Closing+=(_,e)=>{if(IsApplying){e.Cancel=true;note.Text="Finishing the insertion check…";}};
         Refresh();
     }
 
@@ -130,7 +138,7 @@ public sealed class ReviewWindow : Window
         page.Children.Add(Ui.Text(confirmed?"This source stays unchanged when you choose phrases or edit the final draft.":
             "This item has no confirmed completed verification. Your dictation is preserved.",13));
         var text=Ui.Box(false,240);text.Text=confirmed?source:"";
-        text.Background=Ui.Brush("Canvas");text.BorderBrush=Ui.Brush("Border");
+        text.SetResourceReference(Control.BackgroundProperty,"Canvas");text.SetResourceReference(Control.BorderBrushProperty,"Border");
         System.Windows.Automation.AutomationProperties.SetName(text,"Original transcript from "+model);
         page.Children.Add(text);
         var copySource=Ui.Button("Copy this original",()=>
@@ -170,9 +178,10 @@ public sealed class ReviewWindow : Window
                 var index=differences.FindIndex(p=>p.Id==piece.Id);
                 var link=new Hyperlink(new Run(text.Length==0?"∅":text))
                 {
-                    Foreground=Ui.Brush("Ink"), Background=index==selected?Ui.Brush("Selected"):new SolidColorBrush(Color.FromRgb(255,243,207)),
                     TextDecorations=TextDecorations.Underline, ToolTip="Compare phrase "+(index+1)
                 };
+                link.SetResourceReference(TextElement.ForegroundProperty,"Ink");
+                link.SetResourceReference(TextElement.BackgroundProperty,index==selected?"Selected":"Difference");
                 link.Click+=(_,_)=>Select(index);paragraph.Inlines.Add(link);
             }
             flow.Blocks.Add(paragraph);transcript.Document=flow;
@@ -190,6 +199,8 @@ public sealed class ReviewWindow : Window
                     document.Choices.GetValueOrDefault(piece.Id)?.Custom??piece.Primary);
             }
             copy.IsEnabled=document.UnresolvedCount==0;
+            acceptButton.IsEnabled=document.CanInsert&&!IsApplying;
+            destinationButton.IsEnabled=document.CanInsert&&!IsApplying;
             undo.IsEnabled=document.History.Count>0;
             manualPanel.Visibility=document.ManualFinalDraft!=null||document.PreviousManualDraft!=null?Visibility.Visible:Visibility.Collapsed;
             manual.Visibility=document.ManualFinalDraft!=null?Visibility.Visible:Visibility.Collapsed;
@@ -197,8 +208,8 @@ public sealed class ReviewWindow : Window
             rebuild.IsEnabled=document.ManualFinalDraft!=null;
             restore.IsEnabled=document.PreviousManualDraft!=null||document.ManualDraftArchive.Count>0;
             note.Text=document.UnresolvedCount>0
-                ?"Resolve each difference, or use Keep remaining dictation to enable Copy. ∅ marks an empty alternative."
-                :"Ready to copy plain text. Check any text already inserted before pasting.";
+                ?"Resolve each difference, or use Keep remaining dictation to enable Accept. ∅ marks an empty alternative."
+                :document.InsertedAt!=null?"This Review was already inserted; it will not be inserted again.":"Ready. Accept returns the reviewed text to its original field.";
         }
         finally {refreshing=false;}
     }
@@ -224,9 +235,25 @@ public sealed class ReviewWindow : Window
     {
         note.Text=ReviewCopy.Copy(document,ReviewCopySource.Reviewed,System.Windows.Clipboard.SetText).Message;
     }
+    async Task Accept()
+    {
+        if(IsApplying||!document.CanInsert)return;
+        IsApplying=true;((UIElement)Content).IsEnabled=false;
+        try
+        {
+            save(document);
+            var result=await accept(document);
+            if(result.Success){IsApplying=false;Close();return;}
+            Activate();note.Text=result.Message;note.SetResourceReference(TextBlock.ForegroundProperty,"Warning");
+        }
+        catch(Exception){Activate();note.Text="Insertion did not finish. Your Review is preserved; check the destination before retrying.";}
+        finally{IsApplying=false;((UIElement)Content).IsEnabled=true;}
+    }
+    public void ShowStatus(string message)
+    {note.Text=message;note.SetResourceReference(TextBlock.ForegroundProperty,"Warning");}
     void Dismiss()
     {
-        if(MessageBox.Show(this,"Remove this pending Review? There is no saved audio recording.",
+        if(MessageBox.Show(this,"Remove this pending Review? A saved recording, if available, remains in History.",
             "Dismiss Review",MessageBoxButton.YesNo,MessageBoxImage.Question)!=MessageBoxResult.Yes)return;
         dismiss(document.Id);Close();
     }

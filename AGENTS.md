@@ -8,14 +8,39 @@ design documents, prototypes, and build/deployment scripts.
 Use English for application copy, documentation, and commit messages.
 Use py instead of python in commands on this Windows machine.
 
-Read the product design in docs/superpowers/specs before implementing.
+Start by reading docs/PRODUCT_REQUIREMENTS.md (current user input) and
+docs/development/rebuild-and-recovery.md (fresh-checkout build and continuity).
+Then read the relevant design in docs/superpowers/specs. Older plans and
+validation reports are historical where they conflict with current requirements.
+
+## Agent continuity
+
+Inspect the actual checkout, branch, status, and existing changes before editing.
+Do not depend on an old chat, a scratch mirror, an untracked asset, or a fixed
+worktree name. Add required source/assets/tests/docs to the reviewed Git scope.
+
+Keep responsibilities separate:
+
+- docs/PRODUCT_REQUIREMENTS.md records current user requirements and changes.
+- AGENTS.md records agent workflow and engineering constraints.
+- docs/development/rebuild-and-recovery.md records reproducible setup/recovery.
+- src/LocalDictation.App/Help/index.html explains current user-visible behavior.
+
+When behavior changes, update requirements and Help where relevant. Keep test
+results and remaining manual checks explicit. The review candidate is not the
+installed app; do not assume a publish command deployed it.
+
+When asked to comment, commit, push: review and stage only intended paths,
+write a meaningful English commit, push the existing branch without force,
+then verify remote HEAD and clean status. Do not merge or delete worktrees
+unless requested. Preserve models, private data, and runtime environments.
 
 
 ## Source and runtime separation
 
-Canonical checkout: C:\AI\repos\Local-Dictation.
+Canonical checkout: C:\Git\Local-Dictation\repo.
 
-Published client: C:\AI\LocalDictation\app.
+Published client: C:\Git\Local-Dictation\app.
 Client data: C:\AI\LocalDictation\data.
 Client logs: C:\AI\LocalDictation\logs.
 Build output: C:\AI\build\Local-Dictation.
@@ -36,7 +61,8 @@ candidate listener and shared read-only model files during development.
 - Preserve original model weights and FP16 behavior; no conversion or quantization.
 - Verification is a generic role with a registry-backed model dropdown.
   Large-v3 is the initial selection, not a hardcoded workflow.
-- Keep only pending Review items; audio is temporary.
+- Keep the latest 20 dictations with their audio in protected local history.
+  Pending Review is separate and is not evicted by the history limit.
 - Never submit the text inserted into another app or synthesize a send shortcut.
 - Stop automatic delivery when the owned destination cannot be validated.
 - Codex insertion requires Peter's manual application acceptance test.
@@ -45,10 +71,13 @@ candidate listener and shared read-only model files during development.
 
 ## Verification
 
-Run the existing backend tests with the deployed Python environment:
+Run the existing backend tests with the candidate API environment. It contains
+the session API dependencies; the deployed batch environment does not include
+all of them. This command runs tests with synthetic data and does not restart
+either running API or load model weights:
 
 ~~~powershell
-$env:VIRTUAL_ENV = 'C:\AI\PalaNote-ASR\.venv'
+$env:VIRTUAL_ENV = 'C:\AI\build\Local-Dictation\server-env'
 py -B -m unittest discover -s server -p 'test_*.py' -v
 ~~~
 

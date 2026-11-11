@@ -17,7 +17,9 @@ public sealed class PendingReviews
     }
     public bool Save(ReviewDocument document)
     {
-        if(!documents.Any(d=>d.Id==document.Id))documents.Insert(0,document);
+        var index=documents.FindIndex(d=>d.Id==document.Id);
+        if(index<0)documents.Insert(0,document);
+        else documents[index]=document;
         try
         {
             store.Save(document);

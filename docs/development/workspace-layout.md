@@ -3,18 +3,17 @@
 ## Locations on this PC
 
 ~~~text
+C:\Git\Local-Dictation\
+  repo\                        Git checkout and linked native-windows worktree
+  app\                         Published Windows executable and dependencies
+
 C:\AI\
-  repos\
-    Local-Dictation\            Git checkout: all editable project source
-      server\
-      docs\
-      .git\
   build\
     Local-Dictation\            Generated build/test output
   LocalDictation\
-    app\                       Published Windows executable and dependencies
     data\
       review\                  Protected pending Review items
+      history\                 Latest 20 protected transcripts and WAV recordings
     logs\                      Client operational diagnostics
   PalaNote-ASR\                 Existing deployed backend
     .venv\
@@ -26,8 +25,14 @@ The source checkout and installed application are separate sibling trees.
 Do not launch a development binary accidentally in place of the installed
 client. Build/publish scripts must use explicit output paths.
 
-The native executable is published in the app directory. Corporate execution
-policy currently blocks launch; native acceptance is pending. See validation.md.
+The native executable has run from the app directory. Later review fixes are
+published separately as candidates until a controlled update. The latest review's
+native delivery probe was interrupted; full application acceptance remains
+separate from compilation and synthetic tests. See README.md for current status.
+
+Source and generated application files can be restored from a fresh checkout;
+see [rebuild and recovery](rebuild-and-recovery.md). External models and private
+runtime data require their own preservation and are not restored by Git.
 
 
 ## Canonical source
@@ -52,7 +57,7 @@ Use C:\AI\build\Local-Dictation for generated compiler output and test
 artifacts. The SDK artifacts layout separates project/configuration output;
 override Build.ps1 -BuildRoot when building another worktree concurrently.
 
-Publish the Windows client to C:\AI\LocalDictation\app.
+Publish the Windows client to C:\Git\Local-Dictation\app.
 
 Keep settings and pending reviews in the data tree, so replacing application
 files does not overwrite user data. A future update must preserve data and
@@ -61,7 +66,8 @@ must not replace a running executable without a controlled handover.
 
 ## Retention policy
 
-Peter selected only outstanding Review items with temporary audio.
+On 2026-11-11 Peter changed retention to the latest 20 transcripts and their
+recordings. Pending Review remains a separate recovery store.
 
 - Successful ordinary dictation remains in its destination application.
 - Pending Review text survives a client restart until explicitly dismissed.
@@ -69,10 +75,13 @@ Peter selected only outstanding Review items with temporary audio.
 - Live audio uses bounded rolling RAM when no later pass needs the beginning.
 - An after-recording primary or an enabled verification pass needs complete
   audio in bounded RAM until the last required pass finishes.
-- Recordings and normal completed transcripts are not archived.
+- History saves transcripts and original WAV recordings protected for the current
+  Windows user. Adding a 21st item removes the oldest history transcript and audio.
+- History offers playback, text copy, Review, explicit WAV export, and deletion.
+- Exported WAV files are ordinary files in the destination chosen by the user.
 - Operational logs do not contain transcript text or audio by default.
 
-The native client protects pending Review with current-user Windows DPAPI.
+The native client protects pending Review and history with current-user DPAPI.
 The browser concept remains a design artifact and writes no real user data.
 
 

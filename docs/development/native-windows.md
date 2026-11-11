@@ -1,5 +1,15 @@
 # Native Windows development
 
+For current requirements and a new checkout, start with
+[product requirements](../PRODUCT_REQUIREMENTS.md) and
+[rebuild and recovery](rebuild-and-recovery.md).
+
+Current status (11 November 2026): the client runs from C:\Git. Compact Review,
+protected latest-20 audio history, configurable shortcuts, themes, and offline
+F1 Help are implemented. The reviewed candidate passed automated tests but is
+not yet deployed; its final native delivery probe was interrupted. Codex-field
+acceptance remains Peter's manual check.
+
 ## Development-machine prerequisites
 
 - Windows x64 with .NET 10 Windows Desktop runtime.
@@ -35,6 +45,7 @@ tested packages. It is not a portable environment export.
 ~~~
 
 The default SDK path is explicit. Global PATH and Windows startup are unchanged.
+The default published client directory is C:\Git\Local-Dictation\app.
 You can override -DotnetPath, -BuildRoot and -AppDirectory.
 
 The SDK's artifacts layout places bin/obj under the external build root.
@@ -78,7 +89,12 @@ Both processes use the same physical GPU. Avoid simultaneous inference through
 both APIs. Keep TypeWhisper's shortcut inactive during Local Dictation acceptance.
 
 
-## Native acceptance and execution check
+## Historical execution denial on 10 November 2026
+
+The following evidence predates the approved move to C:\Git. It is retained as
+history, not a current launch diagnosis or an instruction to repeat Unblock.
+Peter subsequently confirmed that the existing C:\Git policy covers this app;
+the client has run there. No security setting was changed by this project.
 
 Both the development EXE and Peter's manual launch of the published app-folder
 EXE triggered Defender event 1121 for this ASR rule:
@@ -107,8 +123,8 @@ Peter reported confirming Unblock. The subsequent normal agent launch at 17:27
 (Europe/Bratislava) was still denied by the same ASR rule. Peter then confirmed
 that direct launch and Run as administrator also failed. Subsequent event 1121
 records corroborated the manual attempts. File ACLs grant Users read/execute.
-No effective allowance or successful native launch has been confirmed. The next
-step is approval/deployment of this specific client through the company process.
+At that point, no effective allowance or successful native launch had been
+confirmed. That historical conclusion was superseded by the later C:\Git launch.
 
 If the prompt is unavailable or approval is rejected, report that specific result
 and use the normal company approval process. Do not change policy, add exclusions,
@@ -119,11 +135,11 @@ References:
 - [Microsoft ASR rule modes](https://learn.microsoft.com/en-us/defender-endpoint/attack-surface-reduction-rules-overview#modes-for-asr-rules)
 - [Executable trust rule](https://learn.microsoft.com/en-us/defender-endpoint/attack-surface-reduction-rules-reference#block-executable-files-from-running-unless-they-meet-a-prevalence-age-or-trusted-list-criterion)
 
-Manual acceptance checklist:
+## Manual acceptance checklist
 
 1. Launch LocalDictation.exe --no-hotkey.
 2. Check wide and narrow Settings/Review windows and display scaling.
-3. Select the microphone and use Record to Review. Confirm real level changes,
+3. Select the microphone and use Record in banner. Confirm real level changes,
    Stop, Escape, unplug/error behavior and the 10-minute normal stop.
 4. Quit TypeWhisper, launch without --no-hotkey, and recheck Ctrl+Shift.
 5. Test a controlled native text field first. Dictate successive corrections,
@@ -175,8 +191,9 @@ quality recommendation.
 PCM is signed little-endian 16-bit, mono, 16 kHz. Maximum WebSocket frame:
 64 KiB. Maximum recording: 600 seconds.
 
-Live buffering is bounded to 32 seconds. Full audio is retained only for an
-after-recording primary or verification. A duration/buffer limit stops normally,
+The backend live buffer is bounded to 32 seconds. A complete backend buffer is
+needed for an after-recording primary or verification. The client also retains
+bounded audio for its protected History. A duration/buffer limit stops normally,
 preserves accepted audio and completes transcription. Further frames are ignored
 after that preserving stop.
 
@@ -185,12 +202,17 @@ and admission release. Request/task cancellation follows the same rule.
 Worker exceptions are sanitized after leaving their original traceback scope,
 so discarded generation frames cannot retain CUDA tensors through cleanup.
 
-The client records a start-time destination generation and window. Keyboard,
-mouse and focus events invalidate it, including while UIA capture is pending.
+The client records a start-time destination generation and window. Input while
+initial UIA capture is pending prevents adoption of a changed destination.
+After capture, user typing/clicks/focus changes pause delivery. Returning to the
+same unchanged field can resume it; manual edits or uncertain insertion cause a
+conflict requiring an explicit destination decision.
+
 Insertion checks field identity, expected full text and selection. Only the changed
-owned suffix is selected/replaced. No focus restoration, Enter or guessed
-Backspace sequence is used. Elevated destination processes remain Review-only
-even if the client accidentally inherits an elevated token.
+owned suffix is selected/replaced. Final completion or Review acceptance may
+restore validated target focus after acceptance keys are released. No Enter,
+submit shortcut or guessed Backspace sequence is sent. Elevated destination
+processes remain Review-only even if the client inherits an elevated token.
 
 Third-party accessibility providers can stall or implement ranges differently.
 Those outcomes use Review; real application acceptance is still required.

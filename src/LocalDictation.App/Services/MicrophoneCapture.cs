@@ -6,16 +6,21 @@ using LocalDictation.Core;
 
 namespace LocalDictation.App.Services;
 
-public sealed record MicrophoneInfo(string Id, string Name);
+public sealed record MicrophoneInfo(string Id, string Name)
+{
+    public override string ToString()=>Name;
+}
 
 public sealed class MicrophoneCapture : IAsyncDisposable
 {
     readonly MMDeviceEnumerator enumerator = new();
     MMDevice? device;
     WasapiRecorder? recorder;
-    long? expectedPosition;
+    readonly AudioContinuity continuity=new();
     readonly AudioBudget budget=new(600L*32000);
     bool limitSignaled;
+    readonly MemoryStream historyAudio=new();
+    readonly object audioGate=new();
     public string DeviceName {get;private set;}="Microphone";
     public event Action? LimitReached;
     public Channel<byte[]> Frames { get; } = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(256)
@@ -43,13 +48,12 @@ public sealed class MicrophoneCapture : IAsyncDisposable
             .WithFormat(new WaveFormat(16000, 16, 1)).WithBufferLength(30).Build();
         recorder.DataAvailable += (buffer, flags, position, qpcPosition) =>
         {
-            var current = Convert.ToInt64(position);
-            if (expectedPosition.HasValue && current != expectedPosition.Value)
+            if(buffer.Length==0)return;
+            if (!continuity.Accept(buffer.Length,(uint)flags))
             {
                 Fail("The microphone stream has a gap. Stop and check the selected device.");
                 return;
             }
-            expectedPosition = current + buffer.Length / 2;
             var accepted=budget.Accept(buffer.Length);
             var bytes = buffer[..accepted].ToArray();
             if (((uint)flags & 2) != 0) Array.Clear(bytes);
@@ -58,6 +62,7 @@ public sealed class MicrophoneCapture : IAsyncDisposable
                 peak = Math.Max(peak, Math.Abs(BinaryPrimitives.ReadInt16LittleEndian(bytes.AsSpan(i, 2)) / 32768f));
             Level = peak;
             CapturedBytes += bytes.Length;
+            lock(audioGate)historyAudio.Write(bytes);
             if (bytes.Length>0&&!Frames.Writer.TryWrite(bytes))
             {
                 Array.Clear(bytes);
@@ -88,6 +93,15 @@ public sealed class MicrophoneCapture : IAsyncDisposable
         }
     }
     public void Stop() => recorder?.StopRecording();
+    public byte[] TakeAudio()
+    {
+        lock(audioGate)
+        {
+            var bytes=historyAudio.ToArray();
+            if(historyAudio.TryGetBuffer(out var buffer))Array.Clear(buffer.Array!,buffer.Offset,buffer.Count);
+            historyAudio.SetLength(0);return bytes;
+        }
+    }
 
     public async ValueTask DisposeAsync()
     {
