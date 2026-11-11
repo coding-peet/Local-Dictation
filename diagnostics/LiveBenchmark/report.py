@@ -59,7 +59,7 @@ def audit_spans(result, sample_count):
     silent = result.get('skipped_silence_spans', [])
     return dict(disjoint_commit_spans=not overlaps, commit_gaps=gaps,
                 skipped_silence_spans=silent, whole_recording_refined=refined,
-                full_final_audio_pass=refined or (not gaps and not overlaps))
+                all_final_audio_covered=refined or (not gaps and not overlaps))
 
 
 def main():
@@ -117,7 +117,8 @@ def main():
                 min_coverage=min(x['result']['audio_coverage_fraction'] for x in group),
                 max_word_run=max(x['result']['max_word_run'] for x in group),
                 phrase_repeat_flags=sum(x['phrase_repeat_candidate']['repeats']>=2 for x in group),
-                full_final_audio_passes=sum(x['span_audit']['full_final_audio_pass'] for x in group)))
+                full_audio_covered_outputs=sum(x['span_audit']['all_final_audio_covered'] for x in group),
+                whole_recording_refinements=sum(x['span_audit']['whole_recording_refined'] for x in group)))
     if len(sources)>1:
         raise ValueError('Mixed benchmark/profile/session source fingerprints')
     args.output.mkdir(parents=True, exist_ok=True)

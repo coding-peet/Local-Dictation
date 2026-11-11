@@ -19,6 +19,10 @@ punctuation, whitespace, and Unicode must be preserved.
   After-recording transcription remains available when live mode is unavailable.
 - Models use original Transformers weights in FP16, without conversion or
   quantization. Keep weights outside the repository under C:\AI.
+- Include original OpenAI Whisper Large-v3 Turbo alongside KInIT Turbo Slovak
+  and original Whisper Large-v3. Preserve multilingual capability for the OpenAI
+  models; do not inherit KInIT's Slovak-only constraint or Large-v3's costly
+  encoder offload/beam profile for the smaller original Turbo.
 - Select Verification as a generic model role. Large-v3 is the initial option,
   not a hardcoded workflow. It must differ from the Dictation model and support
   the effective language.
@@ -35,6 +39,22 @@ punctuation, whitespace, and Unicode must be preserved.
   do not disable a technically supported mode merely because it is experimental.
 - Start/stop with the shortcut, or record in the banner from Settings. Escape
   cancels recording or verification. Stop normally at the 10-minute limit.
+
+## Live transcription quality
+
+- Retain every accepted original sample through the configured recording limit.
+  Slow recognition must not stop capture merely because 32 seconds are queued.
+- Use the evaluated adaptive live policy: growing previews after about three
+  seconds of audio, quiet-valley commits within 12–24 seconds, and a final
+  whole-recording primary pass. Suppress isolated quiet live fragments.
+- Final primary refinement is separate from optional second-model verification.
+  Avoid decoding a tail that will immediately be replaced by the whole pass;
+  reuse only an exact unchanged whole-recording inference from the same profile.
+- Empty recognition must never erase a nonempty received draft or its recovery
+  state. Preserve text for explicit Review when final recognition fails.
+- Evaluate changes with explicit audio identity, inference/profile provenance,
+  actual transcripts, coverage and latency. Model agreement is consistency, not
+  independent accuracy. Keep private benchmark transcripts/audio outside Git.
 
 ## Banner and live cursor delivery
 
@@ -55,6 +75,9 @@ punctuation, whitespace, and Unicode must be preserved.
   exact destination acknowledgement. Preserve supported previous clipboard
   formats and exclude temporary dictation from Windows clipboard history/cloud.
   Refuse unsupported clipboard formats before replacing them.
+- A transient post-paste accessibility/selection state may retry only readback
+  within a bounded deadline. Keep the original field, full text and exact caret
+  requirements; do not issue another paste to obtain acknowledgement.
 - Manual edits, a closed field, or failed ownership validation require an
   explicit destination decision. Never adopt arbitrary focus.
 - Never submit text or synthesize a send shortcut. Wait for acceptance keys to

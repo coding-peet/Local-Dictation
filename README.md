@@ -90,19 +90,23 @@ weights, environments, recordings, or keys needed by another Windows account.
 
 ## Validation status
 
-The current delivery/repetition update is installed under
-C:\Git\Local-Dictation\app. It passed 84 Core tests, 91 backend tests,
-62 controller/WPF scenarios, and 15 native delivery checks. These include actual
-controller completion into synthetic native fields, long Unicode paste, rich
-text, delayed paste, and clipboard recovery. The incident recording was replayed
-against the original Large-v3 model to reproduce and remove the observed loop.
-See [delivery incident validation](docs/development/delivery-incident-validation-20261111.md).
+The live-quality and cursor-acknowledgement update is installed under
+C:\Git\Local-Dictation\app, with candidate session API 48125. It passed
+116 backend tests, 84 Core tests, 16 benchmark/report tests, 18 controlled native
+WPF delivery checks, and all nine actual production-path model/recording replays.
+Ten alternative policies produced 90 measured outputs plus nine baseline controls;
+the selected policy preserves original audio and refines the complete recording.
+See [live-quality validation](docs/development/live-quality-validation-20261111.md)
+for anonymous metrics, exact evidence boundaries and deployment verification.
 
-Automated delivery checks use synthetic test data and do not establish microphone
-timing or compatibility with every destination. Outlook and Codex insertion still
-require Peter's manual acceptance. The earlier UI inspection is recorded in
-[UI update validation](docs/development/ui-usability-validation-20261111.md).
-Historical Defender/signing/installation reports predate the C:\Git execution.
+Only one 63-word intended-text reference was independently supplied; agreement
+with model controls is consistency, not independent accuracy. Replay timing is
+not physical microphone latency. Positive Chrome insertion and visible F1 Help
+inspection remain unvalidated after the application-control turn stopped.
+Outlook and Codex insertion still require Peter's application acceptance.
+Static offline Help checks passed. Historical checks are recorded in
+[delivery incident validation](docs/development/delivery-incident-validation-20261111.md)
+and [UI update validation](docs/development/ui-usability-validation-20261111.md).
 
 ## Repository layout
 

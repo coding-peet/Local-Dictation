@@ -14,7 +14,11 @@ BUILTINS = [
      "revision":"06f233fe06e710322aca913c1bc4249a0d71fce1","languages":["sk","en","auto"],
      # The original-weight session path supports live updates; measured latency
      # and quality remain separate from capability (see live-visibility.md).
-     "live_supported":True,"live_ready":False}
+     "live_supported":True,"live_ready":False},
+    {"id":"openai/whisper-large-v3-turbo","name":"Whisper Large-v3 Turbo · Multilingual",
+     "folder":"whisper-large-turbo",
+     "revision":"41f01f3fe87f28c78e2fbf8b568835947dd65ed9","languages":["sk","en","auto"],
+     "live_supported":True,"live_ready":False,"prevalidated":False}
 ]
 
 class Catalog:
@@ -29,7 +33,10 @@ class Catalog:
                    "compatible":True,"runtime_tested":False,"quality_verified":False}
             self.check(entry)
             pinned=entry.get("installed_revision")==model["revision"]
-            entry.update(runtime_tested=entry["installed"] and pinned,quality_verified=entry["installed"] and pinned)
+            # A new profile's pinned files are not runtime or quality evidence.
+            prevalidated=model.get("prevalidated",True)
+            entry.update(runtime_tested=entry["installed"] and pinned and prevalidated,
+                         quality_verified=entry["installed"] and pinned and prevalidated)
             self.entries[model["id"]]=entry
         if self.file.exists():
             for model in json.loads(self.file.read_text(encoding="utf-8")):
@@ -88,7 +95,8 @@ class Catalog:
                     for m in self.entries.values()]
 
     def require(self,model):
-        aliases={"kinit-turbo":BUILTINS[0]["id"],"whisper-large":BUILTINS[1]["id"]}
+        aliases={"kinit-turbo":BUILTINS[0]["id"],"whisper-large":BUILTINS[1]["id"],
+                 "whisper-large-turbo":BUILTINS[2]["id"]}
         with self.lock:
             entry=self.entries.get(aliases.get(model,model))
             if not entry:raise ValueError("Unknown model. Select an installed model from Models.")

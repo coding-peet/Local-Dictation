@@ -25,9 +25,16 @@ class ReportingTests(unittest.TestCase):
                           {'kind':'commit','start_sample':6,'end_sample':9}]}
         audit=report.audit_spans(result, 10)
         self.assertEqual(audit['commit_gaps'], [[4,6],[9,10]])
-        self.assertFalse(audit['full_final_audio_pass'])
+        self.assertFalse(audit['all_final_audio_covered'])
         result['events'].append({'kind':'refine','start_sample':0,'end_sample':10})
-        self.assertTrue(report.audit_spans(result, 10)['full_final_audio_pass'])
+        self.assertTrue(report.audit_spans(result, 10)['all_final_audio_covered'])
+
+    def test_disjoint_coverage_is_not_a_whole_recording_refinement(self):
+        result={'events':[{'kind':'commit','start_sample':0,'end_sample':4},
+                          {'kind':'commit','start_sample':4,'end_sample':10}]}
+        audit=report.audit_spans(result, 10)
+        self.assertTrue(audit['all_final_audio_covered'])
+        self.assertFalse(audit['whole_recording_refined'])
 
 
 if __name__=='__main__':

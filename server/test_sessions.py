@@ -27,19 +27,19 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         async def send(event):
             events.append(event)
             if event["type"]=="transcript.updated" and len(engine.calls)==1:
-                session.feed(b"\0\x10"*16000)
+                for _ in range(3):session.feed(b"\0\x10"*16000)
                 session.finish()
         session=AudioSession(RuntimeConfig(Path("."),Path(".")),engine,
             {"model":"fast"},send)
-        session.feed(b"\0\x10"*16000)
+        for _ in range(3):session.feed(b"\0\x10"*16000)
         await session.run()
-        self.assertEqual(engine.calls,[(32000,"fast"),(64000,"fast")])
+        self.assertEqual(engine.calls,[(96000,"fast"),(192000,"fast")])
         self.assertEqual([e["text"] for e in events if e["type"]=="transcript.updated"],
-            ["Áno, áno.","Áno, áno, to môžeme skúsiť."])
+            ["Áno, áno."])
         self.assertEqual(next(e["text"] for e in events if e["type"]=="transcript.final"),
             "Áno, áno, to môžeme skúsiť.")
 
-    async def test_live_cut_and_stop_decode_every_sample_once_and_preserve_spoken_repetition(self):
+    async def test_stop_refines_every_original_sample_and_preserves_spoken_repetition(self):
         class ChunkEngine(FakeEngine):
             def __init__(self):super().__init__();self.pcm=[]
             def transcribe_pcm(self, pcm, model, language, cancelled):
@@ -52,12 +52,12 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         for frame in frames:session.feed(frame)
         session.finish()
         await session.run()
-        self.assertEqual(len(engine.pcm),2)
-        self.assertEqual(b"".join(engine.pcm),b"".join(frames))
+        self.assertEqual(len(engine.pcm),1)
+        self.assertEqual(engine.pcm[0],b"".join(frames))
         self.assertEqual(next(e["text"] for e in events if e["type"]=="transcript.final"),
-            "Áno, áno. Nie, nie, nie.")
+            "Áno, áno.")
 
-    async def test_silence_after_a_committed_phrase_is_not_decoded_as_another_phrase(self):
+    async def test_silence_after_a_preview_is_only_included_in_whole_recording_refinement(self):
         engine, events=FakeEngine(),[]
         async def send(event):
             events.append(event)
@@ -67,9 +67,10 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         session=AudioSession(RuntimeConfig(Path("."),Path(".")),engine,
             {"model":"fast"},send)
         session.feed(b"\0\x10"*16000)
+        session.feed(b"\0\x10"*16000)
         session.feed(b"\0\0"*16000)
         await session.run()
-        self.assertEqual(engine.calls,[(64000,"fast")])
+        self.assertEqual(engine.calls,[(96000,"fast"),(128000,"fast")])
         self.assertEqual(next(e["text"] for e in events if e["type"]=="transcript.final"),"Ahoj svet.")
 
     async def test_final_and_verification_are_distinct_and_audio_released(self):

@@ -171,6 +171,60 @@ sealed class ProbeWindow : Window
         }
     }
 
+    async Task SelectionTransition(bool persistent,bool changeFocus)
+    {
+        ResetText();await FocusTarget(Prefix.Length);using var worker=new AutomationWorker();current=await CaptureOwn(worker,this);
+        const string text="Native selection transition č. 42 😀";
+        var before=ClipboardChecks.Fingerprint();
+        var settled=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var delay=new DispatcherTimer{Interval=TimeSpan.FromMilliseconds(350)};
+        var focusDelay=new DispatcherTimer{Interval=TimeSpan.FromMilliseconds(150)};
+        var pastes=0;
+        delay.Tick+=(_,_)=>{delay.Stop();target.Select(Prefix.Length+text.Length,0);settled.TrySetResult();};
+        focusDelay.Tick+=(_,_)=>{focusDelay.Stop();other.Focus();other.Select(0,0);};
+        KeyEventHandler intercept=(_,e)=>
+        {
+            if(e.Key==Key.V&&(Keyboard.Modifiers&ModifierKeys.Control)!=0)
+            {
+                e.Handled=true;pastes++;target.Paste();
+                target.Select(Prefix.Length,text.Length);if(!persistent)delay.Start();if(changeFocus)focusDelay.Start();
+            }
+        };
+        target.PreviewKeyDown+=intercept;bool applied=false;
+        try
+        {
+            applied=await worker.Run(token=>current.Apply(text,token));
+            if(persistent||changeFocus)
+            {
+                Require(!applied&&current.IsConflict,"An unstable caret or lost field was acknowledged as a safe result.");
+                Require(ClipboardRecovery.HasPending,"An unknown readback discarded its clipboard lease.");
+            }
+        }
+        finally
+        {
+            target.PreviewKeyDown-=intercept;focusDelay.Stop();
+            if(persistent&&pastes>0){target.Select(Prefix.Length+text.Length,0);settled.TrySetResult();}
+            if(pastes>0)await settled.Task.WaitAsync(TimeSpan.FromSeconds(2));delay.Stop();
+            Require(target.Text==Prefix+text+Suffix,"The controlled selection transition changed surrounding text.");
+            if(ClipboardRecovery.HasPending)
+            {
+                // This fixture owns and has inspected the result after its known transition finished.
+                var recovery=ClipboardRecovery.RestoreAfterInspection();
+                Require(recovery.Succeeded,"Controlled transition cleanup failed: "+recovery.Message);
+            }
+        }
+        if(!persistent&&!changeFocus)
+        {
+            Require(applied,"A transient native selection state aborted confirmation: "+current.Reason);
+            Require(current.InsertedText==text&&!current.IsConflict,"The settled native result was not owned exactly.");
+            Require(current.LastDiagnostic?.ReadbackRetries>0&&current.LastDiagnostic.LastReadbackStage=="selection-collapse","The native regression did not exercise the actual unstable selection readback.");
+        }
+        Require(pastes==1,"Readback recovery repeated the paste.");
+        Require(target.SelectionLength==0&&target.SelectionStart==Prefix.Length+text.Length,"The native transition did not leave the expected caret.");
+        Require(other.Text==OtherText,"A provider transition wrote to another field.");
+        ClipboardChecks.RequireSame(before,ClipboardChecks.Fingerprint());
+    }
+
     async Task RunChecks()
     {
         run.IsEnabled=false;results.Clear();log.Text="";ResetText();observedInputs=ignoredProgrammaticFocus=0;
@@ -256,6 +310,9 @@ sealed class ProbeWindow : Window
             {
                 await ControllerCompletion(worker,verify:true);
             },continueAfterFailure:true);
+            await Step("Transient post-paste selection settles before exact native acknowledgement",()=>SelectionTransition(persistent:false,changeFocus:false));
+            await Step("Persistent post-paste selection cannot bypass exact caret acknowledgement",()=>SelectionTransition(persistent:true,changeFocus:false));
+            await Step("Focus loss during unstable readback cannot adopt another field",()=>SelectionTransition(persistent:false,changeFocus:true));
             await Step("Long Unicode live delivery fits the original two-second worker deadline",async()=>
             {
                 ResetText();await FocusTarget(Prefix.Length);current=await CaptureOwn(worker,this);
@@ -349,7 +406,7 @@ sealed class ProbeWindow : Window
         {
             current=null;observer?.Dispose();observer=null;reviewSurface?.Hide();temporaryTarget?.Close();temporaryTarget=null;
             var report=new{StartedUtc=started,CompletedUtc=DateTimeOffset.UtcNow,Fixture="Local Dictation DeliveryProbe",NativeProductCode=true,
-                SyntheticFieldsOnly=true,Passed=results.Count==15&&results.All(r=>r.Passed),ObservedInputs=observedInputs,
+                SyntheticFieldsOnly=true,ClipboardRecoveryPending=ClipboardRecovery.HasPending,ClipboardTransactionUnsettled=ClipboardRecovery.HasUnsettledTransaction,Passed=results.Count==18&&results.All(r=>r.Passed),ObservedInputs=observedInputs,
                 IgnoredProgrammaticFocus=ignoredProgrammaticFocus,Results=results};
             try
             {

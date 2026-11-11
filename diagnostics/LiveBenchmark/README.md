@@ -1,7 +1,7 @@
 # Live ASR segmentation experiment
 
-This diagnostic compares ten segmentation alternatives with the current live
-scheduler on complete private recordings. It changes no product behavior and
+This diagnostic compares ten segmentation alternatives with the frozen previous
+live scheduler on complete private recordings. It changes no product behavior and
 does not start, stop, or contact either API service.
 
 Every reported decode runs the original local Transformers weights in FP16.
@@ -69,7 +69,7 @@ suffix. Earlier measured results are never reused as timings for a new replay.
 
 | ID | Trigger and commitment policy |
 | --- | --- |
-| baseline | Current `AudioSession.run_live`: 20 ms PCM frames, first eligible draft at 0.5 s, 0.75 s after previous inference completion, 0.7 s silence commitment, 27 s buffer cut at the quietest point from 20 to 26 s, 32 s live buffer limit. |
+| baseline | Frozen previous `AudioSession.run_live`: 20 ms PCM frames, first eligible draft at 0.5 s, 0.75 s after previous inference completion, 0.7 s silence commitment, 27 s buffer cut at the quietest point from 20 to 26 s, 32 s live buffer limit. |
 | alt01 | Disjoint fixed 3 s segments; decode and commit each, including final tail. |
 | alt02 | Disjoint fixed 6 s segments. |
 | alt03 | Disjoint fixed 10 s segments. |
@@ -85,6 +85,12 @@ All energy measures use the current RMS threshold `0.008` on 20 ms frames.
 Quiet-valley cuts minimize energy over a centered 100 ms window, with candidate
 positions every 20 ms. alt10 candidates are restricted to already received
 audio. The search interval excludes its upper endpoint, matching Python range.
+The frozen experiment's final 24-second quiet-window candidates can inspect up
+to 30 ms beyond the current capture edge when evaluating their centered energy
+window. Inference requests themselves never include unavailable samples. The
+production adaptation excludes incomplete centered windows at that edge. Final
+whole-recording output comparisons are unaffected by this selector limitation;
+exact live timing/cut equality with the frozen experiment is not claimed.
 Alternative pause/fixed methods keep the entire source sample sequence,
 including silence. The baseline keeps its current silence-discard policy and
 reports those spans separately.
@@ -117,7 +123,8 @@ audio decoding/preprocessing/generation; `inference_seconds` is the engine's
 synchronized generation timing. Scheduler CPU overhead is not modeled as
 microphone transport latency.
 
-The current baseline can hit its 32 s buffer limit while a slow decode runs.
+The frozen previous-scheduler baseline can hit its 32 s buffer limit while a
+slow decode runs.
 The result records the accepted sample count, unprocessed tail, stop reason,
 and coverage fraction against the complete original recording. Such a result
 is a coverage failure; it is not a successful full-recording comparison.
@@ -140,9 +147,30 @@ WER runs only when the manifest explicitly enables scoring and confirms an
 independent human reference (`reference.score_enabled` and
 `reference.confirmed_human`). Otherwise the result remains unscored. Historical
 model outputs and agreement with offline controls are consistency evidence,
-not human ground truth. The optional WER is case-sensitive and whitespace
-tokenized; no punctuation or diacritics are silently normalized.
+not human ground truth. The runner's optional raw WER is case-sensitive and
+whitespace-tokenized; no punctuation or diacritics are silently normalized there. The separate report below uses
+normalized WER/CER, so its numbers must not be mixed with the raw metric.
 
 Three recordings are a small diagnostic case set. This experiment does not
 validate microphone capture, cursor insertion, native paste ownership,
 application compatibility, or broad Slovak transcription accuracy.
+
+The original experiment snapshot is commit 2a917936e1cee7d7f617e3d8cc3e5af5aec67fa0.
+Subsequent production policy/profile source changes intentionally produce a new
+identity. Use a new private output directory for a new source version; resume
+must not overwrite or relabel earlier measurements.
+
+## Generate the private comparison report
+
+~~~powershell
+py -B diagnostics/LiveBenchmark/report.py `
+    --manifest C:\AI\LocalDictation\benchmarks\20261111-live\corpus\manifest.json `
+    --results C:\AI\LocalDictation\benchmarks\20261111-live\results `
+    --output C:\AI\LocalDictation\benchmarks\20261111-live\report
+~~~
+
+The report preserves every exact transcript and writes summary.json, comparison.csv
+and a self-contained HTML comparison. Normalized WER/CER uses NFC case folding,
+preserves accents and identifiers' internal punctuation, and scores only enabled
+independent intended-text references. It distinguishes disjoint sample coverage
+from a complete-recording refinement. No report contents are committed to Git.

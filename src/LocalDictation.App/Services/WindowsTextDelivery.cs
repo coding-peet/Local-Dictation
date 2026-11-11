@@ -28,29 +28,40 @@ public sealed class WindowsTextDelivery : ITextDelivery
     public void Suspend()=>Interlocked.Increment(ref generation);
     public bool OwnsProgrammaticFocus(nint root)=>root==window&&Volatile.Read(ref operating)>0;
 
-    static string Identity(AutomationElement element) =>
-        element.Current.ProcessId + ":" + string.Join(".", element.GetRuntimeId());
+    static string Identity(AutomationElement? element) => element==null
+        ?throw new InvalidOperationException("The focused field is temporarily unavailable.")
+        :element.Current.ProcessId + ":" + string.Join(".", element.GetRuntimeId());
 
-    static (string Text, int Caret, TextPattern Pattern, TextPatternRange Selection) Inspect(AutomationElement element)
+    static (string Text, int Caret, TextPattern Pattern, TextPatternRange Selection) Inspect(AutomationElement? element,Action<string>? observeStage=null)
     {
+        observeStage?.Invoke("availability");
+        if(element==null)throw new InvalidOperationException("The focused field is temporarily unavailable.");
         if (!element.Current.IsEnabled || element.Current.IsPassword)
             throw new InvalidOperationException("The selected field is disabled or protected.");
+        observeStage?.Invoke("text-pattern");
         if (!element.TryGetCurrentPattern(TextPattern.Pattern, out var value))
             throw new InvalidOperationException("This field does not expose a safe text range. Continue in Review.");
         var pattern = (TextPattern)value;
+        observeStage?.Invoke("read-only");
         var readOnly = pattern.DocumentRange.GetAttributeValue(TextPattern.IsReadOnlyAttribute);
         if (readOnly is not false)
             throw new InvalidOperationException("The selected field does not confirm editable text access.");
+        observeStage?.Invoke("selection-count");
         var selections = pattern.GetSelection();
-        if (selections.Length != 1 ||
-            selections[0].CompareEndpoints(TextPatternRangeEndpoint.Start, selections[0], TextPatternRangeEndpoint.End) != 0)
+        if(selections.Length!=1)
+            throw new InvalidOperationException("The field does not expose one current selection.");
+        observeStage?.Invoke("selection-collapse");
+        if(selections[0].CompareEndpoints(TextPatternRangeEndpoint.Start,selections[0],TextPatternRangeEndpoint.End)!=0)
             throw new InvalidOperationException("Place an empty cursor in an editable field before dictating.");
+        observeStage?.Invoke("document-text");
         var document = pattern.DocumentRange;
         var text = document.GetText(100001);
         if (text.Length > 100000) throw new InvalidOperationException("This document is too large for safe cursor validation.");
+        observeStage?.Invoke("caret-prefix");
         var prefix = document.Clone();
         prefix.MoveEndpointByRange(TextPatternRangeEndpoint.End, selections[0], TextPatternRangeEndpoint.Start);
         var before = prefix.GetText(-1);
+        observeStage?.Invoke("prefix-coherence");
         if (!text.StartsWith(before, StringComparison.Ordinal))
             throw new InvalidOperationException("The field's text range could not be validated.");
         return (text, before.Length, pattern, selections[0]);
@@ -90,6 +101,10 @@ public sealed class WindowsTextDelivery : ITextDelivery
         ClipboardTransaction? clipboard=null;
         bool confirmed=false;
         string? failureType=null;int? failureCode=null;
+        var readbackRetries=0;
+        string? inspectionStage=null,lastReadbackStage=null,lastReadbackFailureType=null;
+        int? lastReadbackFailureCode=null;
+        Action<string> observeInspection=stage=>inspectionStage=stage;
         bool Reconcile()
         {
             if(expected==null)return false;
@@ -129,13 +144,13 @@ public sealed class WindowsTextDelivery : ITextDelivery
                 return Pause("Release Enter, Space and modifier keys before cursor delivery resumes.");
             Check(token,version);
             var element = AutomationElement.FocusedElement;
-            var current = Inspect(element);
+            var current = Inspect(element,observeInspection);
             if(!guard.CanResume(Identity(element),current.Text))
                 return Stop("The original field was edited. Its contents were left untouched; choose a destination for the reviewed text.");
             if(current.Caret!=guard.Caret)
             {
                 OwnedEnd(current.Pattern).Select();
-                Check(token,version);current=Inspect(element);
+                Check(token,version);current=Inspect(element,observeInspection);
                 if(!guard.CanReplace(Identity(element),current.Text,current.Caret,current.Caret))
                     return Pause("The original insertion point could not be restored. Your transcript is preserved.");
             }
@@ -191,21 +206,32 @@ public sealed class WindowsTextDelivery : ITextDelivery
             var confirmation=Stopwatch.StartNew();
             while(confirmation.Elapsed<TimeSpan.FromSeconds(1))
             {
-                Check(token,version);
-                var afterElement = AutomationElement.FocusedElement;
-                var after = Inspect(afterElement);
-                Check(token,version);
-                if (Identity(afterElement) != guard.Identity) return Stop("The destination changed during insertion.");
-                observedLength=after.Text.Length;observedCaret=after.Caret;
-                textMatches=after.Text==expected;caretMatches=after.Caret==guard.Start+next.Length;unchanged=after.Text==beforeText;
-                lineEndingsEquivalent=after.Text.Replace("\r\n","\n")==expected.Replace("\r\n","\n");
-                terminalParagraphEquivalent=after.Text.TrimEnd('\r','\n')==expected.TrimEnd('\r','\n');
-                nbspEquivalent=after.Text.Replace('\u00a0',' ')==expected.Replace('\u00a0',' ');
-                if (textMatches==true && caretMatches==true)
+                try
                 {
-                    confirmed=true;clipboard?.Acknowledge();
-                    guard.Applied(next, expected, after.Caret);
-                    return true;
+                    inspectionStage="focus-before-read";Check(token,version);
+                    inspectionStage="focused-element";var afterElement=AutomationElement.FocusedElement;
+                    var after=Inspect(afterElement,observeInspection);
+                    inspectionStage="focus-after-read";Check(token,version);
+                    if(Identity(afterElement)!=guard.Identity)return Stop("The destination changed during insertion.");
+                    observedLength=after.Text.Length;observedCaret=after.Caret;
+                    textMatches=after.Text==expected;caretMatches=after.Caret==guard.Start+next.Length;unchanged=after.Text==beforeText;
+                    lineEndingsEquivalent=after.Text.Replace("\r\n","\n")==expected.Replace("\r\n","\n");
+                    terminalParagraphEquivalent=after.Text.TrimEnd('\r','\n')==expected.TrimEnd('\r','\n');
+                    nbspEquivalent=after.Text.Replace('\u00a0',' ')==expected.Replace('\u00a0',' ');
+                    if(textMatches==true&&caretMatches==true)
+                    {
+                        confirmed=true;clipboard?.Acknowledge();
+                        guard.Applied(next,expected,after.Caret);return true;
+                    }
+                }
+                catch(Exception error) when(error is InvalidOperationException or ElementNotAvailableException or COMException or Win32Exception)
+                {
+                    // A provider can expose an intermediate selection/range while applying paste.
+                    // Retry only readback. No new input or target adoption occurs in this loop.
+                    readbackRetries++;lastReadbackStage=inspectionStage;
+                    lastReadbackFailureType=error.GetType().Name;lastReadbackFailureCode=error.HResult;
+                    CheckLease(token,version);
+                    if(GetForegroundWindow()!=window)throw new Interrupted();
                 }
                 Thread.Sleep(10);
             }
@@ -239,7 +265,8 @@ public sealed class WindowsTextDelivery : ITextDelivery
             }
             LastDiagnostic=new(phase,restoreFocus,queued,watch.Elapsed.TotalMilliseconds,beforeText.Length,next.Length,expected?.Length,
                 observedLength,observedCaret,textMatches,caretMatches,unchanged,lineEndingsEquivalent,terminalParagraphEquivalent,nbspEquivalent,
-                provider,clipboard?.SavedFormatCount,clipboard?.WasRestored,clipboard?.WasSuperseded,IsConflict,failureType,failureCode,ClipboardRecovery.HasPending);
+                provider,clipboard?.SavedFormatCount,clipboard?.WasRestored,clipboard?.WasSuperseded,IsConflict,failureType,failureCode,ClipboardRecovery.HasPending,
+                readbackRetries,lastReadbackStage,lastReadbackFailureType,lastReadbackFailureCode);
             LastDiagnostic.WriteIfEnabled();
             Interlocked.Decrement(ref operating);
         }

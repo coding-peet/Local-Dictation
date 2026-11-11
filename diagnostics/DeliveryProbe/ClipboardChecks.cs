@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -117,7 +118,13 @@ static class ClipboardChecks
 
     public static Dictionary<uint,string> Fingerprint()
     {
-        if(!OpenClipboard(0))throw new InvalidOperationException("The clipboard is busy during fixture verification.");
+        var waiting=Stopwatch.StartNew();
+        while(!OpenClipboard(0))
+        {
+            if(waiting.Elapsed>=TimeSpan.FromMilliseconds(400))
+                throw new InvalidOperationException("The clipboard remained busy for 400 ms during fixture verification.");
+            Thread.Sleep(10);
+        }
         var result=new Dictionary<uint,string>();
         try
         {

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Local Dictation browser fixture</title>
+<style>
+  body { max-width: 880px; margin: 36px auto; padding: 0 20px; font: 18px system-ui; background: #f5f6f8; color: #15202b; }
+  h1 { font-size: 27px; }
+  textarea, [contenteditable] { box-sizing: border-box; width: 100%; min-height: 110px; margin: 8px 0 24px; padding: 16px; border: 2px solid #607d8b; border-radius: 8px; background: white; font: 18px system-ui; white-space: pre-wrap; }
+  :focus { outline: 4px solid #63b1ef; }
+  code { overflow-wrap: anywhere; }
+  button { padding: 10px 16px; font: inherit; }
+  #status { min-height: 30px; }
+</style>
+<h1>Local Dictation native browser fixture</h1>
+<p>Only synthetic local text. No microphone, model, recipient or send action.</p>
+<p>Nonce: <code id="nonce"></code></p>
+<label for="textarea">Synthetic textarea</label>
+<textarea id="textarea" spellcheck="false" autocomplete="off"></textarea>
+<label for="contenteditable">Synthetic contenteditable</label>
+<div id="contenteditable" contenteditable="true" role="textbox" aria-multiline="false" spellcheck="false"></div>
+<button type="button" id="reset">Reset both synthetic fields</button>
+<p id="status" role="status">Checking fixture nonce…</p>
+<script>
+'use strict';
+const nonce = new URLSearchParams(location.search).get('nonce') || '';
+const validNonce = /^[0-9a-f]{32}$/.test(nonce);
+const fields = ['textarea', 'contenteditable'];
+function prefix(control) { return '[' + control + ':' + nonce + '] before | '; }
+function baseline(control) { return prefix(control) + ' | after'; }
+function caret(control) {
+  const field = document.getElementById('ld-fixture-' + control + '-' + nonce);
+  if (!field || document.activeElement !== field) return;
+  if (control === 'textarea') field.setSelectionRange(prefix(control).length, prefix(control).length);
+  else {
+    if (!field.firstChild || field.firstChild.nodeType !== Node.TEXT_NODE) return;
+    const range = document.createRange(); range.setStart(field.firstChild, prefix(control).length); range.collapse(true);
+    const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+  }
+}
+function reset() {
+  for (const control of fields) {
+    const field = document.getElementById('ld-fixture-' + control + '-' + nonce);
+    if (control === 'textarea') field.value = baseline(control); else field.textContent = baseline(control);
+  }
+  document.getElementById('status').textContent = 'Ready. Click the requested field; its own handler places the synthetic caret.';
+}
+if (!validNonce || location.hostname !== '127.0.0.1') {
+  document.getElementById('status').textContent = 'Refused: use 127.0.0.1 and a 32-character lowercase hexadecimal nonce.';
+  for (const control of fields) { const field=document.getElementById(control); field.setAttribute('disabled',''); field.contentEditable='false'; }
+} else {
+  document.title = 'Local Dictation native browser fixture ' + nonce;
+  document.getElementById('nonce').textContent = nonce;
+  for (const control of fields) {
+    const field = document.getElementById(control);
+    field.id = 'ld-fixture-' + control + '-' + nonce;
+    field.setAttribute('aria-label', 'Local Dictation fixture ' + control + ' ' + nonce);
+    field.addEventListener('focus', () => setTimeout(() => caret(control), 0));
+    field.addEventListener('pointerup', () => setTimeout(() => caret(control), 0));
+    field.addEventListener('input', () => { document.getElementById('status').textContent = 'A native input changed the synthetic ' + control + '.'; });
+  }
+  document.getElementById('reset').addEventListener('click', reset); reset();
+}
+</script>
+</html>

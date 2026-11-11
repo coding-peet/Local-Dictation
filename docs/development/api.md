@@ -95,11 +95,20 @@ session.started additionally snapshots model_revision, verification_model,
 verification_revision and session_started_utc. Unknown revisions stay null.
 
 transcript.updated carries text, committed_text and draft_text, plus decoder/
-audio-backlog measurements. The committed prefix is finalized at phrase boundaries;
-the draft may change.
+audio-backlog measurements. The current live policy grows a preview after three
+seconds of audio, commits quiet-valley spans within 12–24 seconds, and suppresses
+isolated quiet fragments. Both visible wording and the primary final can change.
+The complete original audio is retained through the configured duration limit;
+inference backlog no longer triggers a 32-second preserving stop.
 
-transcript.final means primary text is final. It does not mean optional verification
-or model cleanup has finished. Wait for session.completed for the complete lifecycle.
+transcript.final means primary text is final. In live mode it follows a complete
+original-audio primary refinement, or reuses an exact unchanged whole-audio
+preview. The optional audio_received_seconds field reports accepted sample
+duration; refined indicates that live primary finalization used this path.
+No isolated tail is decoded immediately before the complete final pass.
+An unexpectedly empty replacement after received text fails without blanking the
+preserved draft. Final does not mean optional verification or model cleanup has
+finished. Wait for session.completed for the complete lifecycle.
 
 verification.completed includes immutable primary and verification strings and
 ordered pieces, both pinned revisions and comparison_id. Each piece has id, primary, verification and different. Compose
@@ -115,8 +124,10 @@ The recording wall/sample limit is 600 seconds. Reaching it finalizes accepted
 audio rather than cancelling it. Model work has a bounded processing deadline;
 cancellation still joins the model worker before another job can enter.
 
-The Windows client separately bounds startup acknowledgement, missing progress,
-primary finalization and verification. Timeout/error routes received text to Review.
+The Windows client separately bounds startup acknowledgement (10 seconds), missing
+progress (15 seconds), and absolute finalization (600 seconds, matching batch).
+Heartbeats do not extend that absolute deadline. Timeout/error routes received
+text to Review; Escape remains cooperative cancellation.
 
 
 ## Public model import

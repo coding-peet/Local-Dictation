@@ -1,7 +1,6 @@
 """Bounded audio sessions with a single admitted GPU owner."""
 import asyncio
 from contextlib import asynccontextmanager
-import math
 import threading
 import time
 import uuid
@@ -46,7 +45,8 @@ class AudioSession:
         self.total_bytes=0
         self.buffer,self.full_audio=bytearray(),bytearray()
         self.live=options.get("live",True)
-        self.retain_full=bool(options.get("verification_model")) or not self.live
+        # Final primary refinement needs every accepted sample, even without Verify.
+        self.retain_full=True
         self.last_voice,self.last_decode=0,0
         self.committed,self.previous,self.draft="","",""
         self.decoded_until=-1
@@ -55,8 +55,13 @@ class AudioSession:
         self.cleanup_failed=False
         self.limit_reached=False
         self.limit_announced=False
-        self.max_buffer_bytes=32*32000
+        self.max_buffer_bytes=config.max_audio_bytes
         self.inference_started=None
+        self.buffer_start=0
+        self.next_preview_bytes=3*32000
+        self.last_primary_span=None
+        self.last_primary_profile=None
+        self.last_primary_text=""
 
     @property
     def retained_bytes(self):return len(self.buffer)+len(self.full_audio)
@@ -66,17 +71,20 @@ class AudioSession:
         if not frame or len(frame)%2 or len(frame)>self.config.max_frame_bytes:
             raise ValueError("Expected an aligned PCM16 frame of at most 64 KiB.")
         available=self.config.max_audio_bytes-self.total_bytes
-        if self.live:available=min(available,self.max_buffer_bytes-len(self.buffer))
         accepted=min(len(frame),max(0,available))
         frame=frame[:accepted]
         if frame:
             self.total_bytes+=accepted
             if self.live:self.buffer.extend(frame)
             if self.retain_full:self.full_audio.extend(frame)
-            values=memoryview(frame).cast("h")
-            rms=math.sqrt(sum(v*v for v in values)/len(values))/32768
-            if rms>0.008:self.last_voice=self.total_bytes
-        if accepted<len(frame) or self.total_bytes>=self.config.max_audio_bytes or (self.live and len(self.buffer)>=self.max_buffer_bytes):
+            # Use the same 20 ms gate as live spans. A brief voiced frame must
+            # not disappear merely because a larger capture packet is quiet.
+            first=((self.total_bytes-accepted)//640)*640
+            for start in range(first,self.total_bytes,640):
+                end=min(start+640,self.total_bytes)
+                if self.has_voice(memoryview(self.full_audio)[start:end]):
+                    self.last_voice=end
+        if self.total_bytes>=self.config.max_audio_bytes:
             self.limit_reached=True
             self.finish()
         # A partially accepted final frame is also a preserving stop.
@@ -130,9 +138,39 @@ class AudioSession:
             await self.emit("recording.limit_reached",message="Recording stopped at its RAM/audio limit. Accepted audio is being transcribed.")
 
     def cut(self):
-        if len(self.buffer)<27*32000:return len(self.buffer)
-        return min(range(20*32000,26*32000,640),
+        if len(self.buffer)<24*32000:return len(self.buffer)
+        # Only compare complete centered 100 ms windows. A truncated window
+        # at the current capture edge otherwise wins merely by having fewer
+        # samples, and a live session cannot inspect future microphone audio.
+        return min(range(12*32000,min(24*32000,len(self.buffer)-1600+1),640),
             key=lambda p:sum(v*v for v in memoryview(self.buffer)[p-1600:p+1600].cast("h")))
+
+    @staticmethod
+    def has_voice(pcm):
+        values=memoryview(pcm).cast("h")
+        for start in range(0,len(values),320):
+            window=values[start:start+320]
+            if sum(v*v for v in window)>len(window)*(0.008*32768)**2:return True
+        return False
+
+    async def refine_primary(self):
+        # A matching whole-recording preview already used this model/language
+        # snapshot. Reuse it; otherwise skip the isolated tail and decode once.
+        if not self.full_audio or not self.last_voice:
+            self.committed=self.draft=""
+            return
+        span=(0,self.total_bytes)
+        profile=(self.options["model"],self.options.get("language","sk"),self.options.get("primary_revision"))
+        if self.last_primary_span==span and self.last_primary_profile==profile:
+            text=self.last_primary_text
+        else:
+            text=(await self.decode(bytes(self.full_audio),self.options["model"]))["text"].strip()
+        if not self.cancelled.is_set():
+            if not text and self.snapshot_text(self.draft).strip():
+                raise RuntimeError("Final refinement returned no text. Your received text is preserved.")
+            self.committed=text
+            self.draft=self.previous=""
+            self.decoded_until=self.total_bytes
 
     async def run(self):
         heartbeat=None
@@ -150,11 +188,13 @@ class AudioSession:
                 await self.announce_limit()
                 if not self.cancelled.is_set() and self.full_audio and self.last_voice:
                     self.committed=(await self.decode(bytes(self.full_audio),self.options["model"]))["text"].strip()
+            if self.live and not self.cancelled.is_set():await self.refine_primary()
             if self.cancelled.is_set():
                 await self.cleanup()
                 await self.emit("session.cancelled",text=self.snapshot_text(self.draft));return
             primary=self.snapshot_text(self.draft)
-            await self.emit("transcript.final",text=primary)
+            await self.emit("transcript.final",text=primary,audio_received_seconds=self.total_bytes/32000,
+                refined=bool(self.live and self.last_voice))
             await self.cleanup()
             verifier=self.options.get("verification_model")
             if verifier and self.full_audio and self.last_voice:
@@ -193,35 +233,49 @@ class AudioSession:
         while not self.cancelled.is_set():
             self.changed.clear()
             await self.announce_limit()
+            # Finish is a whole-recording primary pass. Do not spend another
+            # inference on a tail that would immediately be replaced by it.
+            if self.finishing:break
             size=len(self.buffer)
             if self.decoded_until==self.total_bytes and not self.finishing:
                 await self.changed.wait();continue
             if not size:
                 if self.finishing:break
                 await self.changed.wait();continue
-            silence=(self.total_bytes-self.last_voice)/32000
-            should_cut=size>=27*32000 or silence>=0.7
-            elapsed=time.monotonic()-self.last_decode
-            if not self.finishing and not should_cut and (size<16000 or elapsed<0.75):
-                try:await asyncio.wait_for(self.changed.wait(),timeout=max(0.05,0.75-elapsed))
-                except TimeoutError:pass
-                continue
-            if not self.last_voice or (silence>=size/32000 and not self.draft):
-                del self.buffer[:size]
-                if self.finishing:break
+            should_cut=size>=24*32000
+            if not should_cut and size<self.next_preview_bytes:
+                await self.changed.wait()
                 continue
             end=self.cut()
-            final_chunk=self.finishing or should_cut
-            self.decoded_until=self.total_bytes-size+end
+            # All-quiet spans are retained for final refinement but never sent
+            # to the recognizer as isolated live fragments.
+            voiced=self.has_voice(memoryview(self.buffer)[:end])
+            if not voiced:
+                self.buffer_start+=end
+                del self.buffer[:end]
+                self.next_preview_bytes=3*32000
+                continue
+            start=self.buffer_start
+            profile=(self.options["model"],self.options.get("language","sk"),self.options.get("primary_revision"))
             result=await self.decode(bytes(self.buffer[:end]),self.options["model"])
             self.last_decode=time.monotonic()
             if self.cancelled.is_set():break
             text=result["text"].strip()
-            if final_chunk:
+            if not text and self.snapshot_text(self.draft).strip():
+                raise RuntimeError("The model returned an empty live replacement. Your received text is preserved.")
+            self.decoded_until=start+end
+            self.last_primary_span=(start,start+end)
+            self.last_primary_profile=profile
+            self.last_primary_text=text
+            if should_cut:
                 self.committed=self.snapshot_text(text)
                 self.draft=self.previous=""
                 del self.buffer[:end]
-            else:self.draft,self.previous=text,text
+                self.buffer_start+=end
+                self.next_preview_bytes=3*32000
+            else:
+                self.draft,self.previous=text,text
+                self.next_preview_bytes=(end//(3*32000)+1)*3*32000
             snapshot=(self.committed,self.draft)
             if snapshot!=self.last_snapshot:
                 await self.emit("transcript.updated",text=self.snapshot_text(self.draft),

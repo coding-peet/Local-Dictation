@@ -201,6 +201,8 @@
       <section id="live-text" aria-labelledby="live-text-title">
         <h2 id="live-text-title">Live text and the banner</h2>
         <p><strong>Live transcription</strong> shows partial wording in the banner. With <strong>Insert live text at the cursor</strong> enabled it also updates a valid destination as you speak. With that option off, a shortcut-started recording remembers the original field and inserts the final text after normal completion and any required choices. Updates arrive after speech segments and processing, and can be revised. Without live mode, wait for the result after <strong>Finish</strong>.</p>
+        <p>Live wording is a draft. The app waits for enough speech context, then refreshes it roughly every few seconds of new audio when the model can keep up. After <strong>Finish</strong>, the same dictation model checks the complete original recording before returning the final text. This happens with <strong>Verify after recording</strong> off too; verification adds a separate model and word choices.</p>
+        <p>Finishing can revise earlier wording. Keep the original field unchanged until insertion completes. The Turbo profiles usually finish much sooner than Large-v3 on this PC; Large-v3 may need tens of seconds. Initial runtime preparation and model loading add time. Progress stays visible and <kbd>Esc</kbd> cancels.</p>
 
         <h3>Move or collapse the banner</h3>
         <ul>
@@ -274,14 +276,15 @@
 
       <section id="models" aria-labelledby="models-title">
         <h2 id="models-title">Models and languages</h2>
-        <p>Choose <strong>Dictation model</strong> and <strong>Language</strong> on the <strong>Dictation</strong> tab, then save. The dropdown also lists catalog entries marked <strong>not installed</strong>; install those before selecting them for recording. Available languages and verification choices depend on the model.</p>
+        <p>Choose <strong>Dictation model</strong> and <strong>Language</strong> on the <strong>Dictation</strong> tab; valid choices save automatically. The dropdown also lists catalog entries marked <strong>not installed</strong>; install those before selecting them for recording. Available languages and verification choices depend on the model.</p>
         <div class="table-scroll" role="region" aria-label="Current model modes" tabindex="0">
           <table>
             <caption>Current local model profiles</caption>
             <thead><tr><th scope="col">Model</th><th scope="col">How to use it</th></tr></thead>
             <tbody>
               <tr><td><strong>KInIT Turbo · Slovak</strong><br><span class="tag">Live available</span></td><td>Slovak live preview, or after-recording transcription with live off.</td></tr>
-              <tr><td><strong>Whisper Large-v3 · Multilingual</strong><br><span class="tag">Live available · slower updates</span></td><td>Live preview, after Finish, or eligible verification. Earlier local live tests returned first partials after about 5–8 seconds; speed and accuracy depend on the recording and hardware.</td></tr>
+              <tr><td><strong>Whisper Large-v3 Turbo · Multilingual</strong><br><span class="tag">Live available</span></td><td>Original OpenAI Turbo weights for Slovak, English or automatic language detection. A separate model from the Slovak KInIT fine-tune. Test technical names on your recordings.</td></tr>
+              <tr><td><strong>Whisper Large-v3 · Multilingual</strong><br><span class="tag">Live available · slower updates</span></td><td>Live preview, after Finish, or eligible verification. It uses much more processing time on this PC and can take tens of seconds to finish. A larger model does not guarantee better wording on your recording.</td></tr>
               <tr><td><strong>Whisper Tiny</strong><br><span class="tag">After recording</span></td><td>A small additional model when installed. Check accuracy on your recordings.</td></tr>
             </tbody>
           </table>
@@ -295,8 +298,9 @@
           <li>Select the installed Dictation model and <strong>Test selected model with audio…</strong>.</li>
         </ol>
         <p>Imports support compatible built-in Whisper Transformers models with original safetensors; private, gated, and remote-code models are rejected. New imports start after-recording. Closing Settings does not stop downloading; use <strong>Cancel download</strong>.</p>
-        <p>The status below <strong>Live transcription</strong> says whether the selected model is missing, needs a runtime test, supports live preview, or works after recording only. Support and measured low-latency readiness are separate. Built-in Large-v3 supports live; newly imported profiles still start without live capability.</p>
+        <p>The status below <strong>Live transcription</strong> says whether the selected model is missing, needs a runtime test, supports live preview, or works after recording only. Support and measured low-latency readiness are separate. The three named Turbo/Large-v3 profiles support live; other newly imported profiles still start without live capability.</p>
         <p><strong>Installed</strong>, <strong>runtime-tested</strong>, <strong>quality-checked</strong>, and <strong>live-ready</strong> are separate states. A successful runtime test proves the model can transcribe; check its accuracy and live performance separately. Verification needs a different, installed, runtime-tested model supporting your language.</p>
+        <p>KInIT is Slovak-only. For English, use a multilingual model and select <strong>English</strong> or <strong>Auto</strong>. Forcing the wrong language can corrupt wording. The local comparison covered three Slovak recordings and one intended-text reference; it is not a universal accuracy ranking.</p>
       </section>
 
       <section id="history" aria-labelledby="history-title">
@@ -379,6 +383,7 @@
           <p>Resolve every underlined phrase, or select <strong>Keep the remaining wording</strong>. The last choice inserts automatically when the original field is valid. If that destination is gone, use <strong>Choose destination</strong>. Reviews reopened after restarting the app need a new destination selection.</p>
           <p>Remove line breaks/control characters from a manual final draft. If protected saving fails, keep Review open and correct the storage problem before retrying.</p>
           <p>If the app says text was inserted but its saved insertion status could not be updated, check the destination and preserve a copy. Do not insert the same pending item again after restarting. Items marked <strong>Already inserted</strong> have insertion disabled.</p>
+          <p>Some editors temporarily leave pasted text selected. The app waits briefly for the original field's exact text and cursor to settle; it does not send a second paste while checking. If the field cannot confirm insertion, inspect it before retrying. Compatibility still depends on the destination application's accessibility support.</p>
         </details>
         <details>
           <summary>Paste is unconfirmed, or the previous clipboard needs recovery</summary>
@@ -389,6 +394,7 @@
           <summary>A model repeats the same word many times</summary>
           <p>Whisper can get stuck repeating a word during recognition. The current original Whisper profiles retry suspiciously repetitive segments against the audio using their native generation fallback. This does not delete repeated words from your text and cannot guarantee a correct transcript.</p>
           <p>Large-v3 can take longer to finish when it retries. Progress remains visible; <kbd>Esc</kbd> cancels. If a result is still wrong, correct it directly in Review. Keep the original recording in History for comparison.</p>
+          <p>Very short or quiet fragments can also produce invented greetings or thanks. The current live method avoids isolated quiet fragments and uses the complete original recording for its final primary pass. That improves context but cannot guarantee every word. If a model unexpectedly returns empty text after a received draft, the app preserves the preceding draft for Review instead of replacing it with a blank result.</p>
         </details>
         <details>
           <summary>Why is live mode unavailable for a model, or slow with Large-v3?</summary>

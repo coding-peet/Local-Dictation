@@ -119,11 +119,11 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(result[0][0],200)
 
 
-    def test_both_profile_models_are_discoverable(self):
+    def test_all_profile_models_are_discoverable(self):
         status,body,_=self.request()
         self.assertEqual(status,200)
         self.assertEqual({m['id'] for m in json.loads(body)['data']},
-            {'kinit/whisper-large-v3-turbo-sk','openai/whisper-large-v3'})
+            {'kinit/whisper-large-v3-turbo-sk','openai/whisper-large-v3','openai/whisper-large-v3-turbo'})
 
     def test_precise_auto_language_is_not_forced_to_slovak(self):
         status,body,_=self.post(multipart(model='openai/whisper-large-v3',language='auto'))

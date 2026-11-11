@@ -191,11 +191,17 @@ quality recommendation.
 PCM is signed little-endian 16-bit, mono, 16 kHz. Maximum WebSocket frame:
 64 KiB. Maximum recording: 600 seconds.
 
-The backend live buffer is bounded to 32 seconds. A complete backend buffer is
-needed for an after-recording primary or verification. The client also retains
-bounded audio for its protected History. A duration/buffer limit stops normally,
-preserves accepted audio and completes transcription. Further frames are ignored
-after that preserving stop.
+The backend retains complete original audio for final primary refinement, even
+when optional verification is off. Live backlog is bounded by the configured
+recording duration, not a separate 32-second stop. The full-audio and live-backlog
+PCM buffers together use at most 38.4 MB at the normal 600-second limit; inference
+can temporarily copy its input as well. Live recognition windows stay within
+24 seconds, with complete energy windows used for quiet-valley selection.
+
+The client also retains bounded audio for its protected History. Reaching the
+configured duration/sample limit stops normally and finishes accepted audio.
+Further frames are ignored after that preserving stop. Empty recognition cannot
+replace a nonempty received draft; errors keep that preceding text recoverable.
 
 Cancellation sets the cooperative model event and joins inference before unload
 and admission release. Request/task cancellation follows the same rule.

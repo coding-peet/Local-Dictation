@@ -32,7 +32,7 @@ command; the fixture and product never synthesize Enter or a send shortcut.
 
 ## What is checked
 
-The 15 checks cover:
+The 18 checks cover:
 
 - Native clipboard memory, bitmap, palette and enhanced-metafile cloning,
   including refusing an unsupported owner-managed format without changing it.
@@ -46,6 +46,10 @@ The 15 checks cover:
   original clipboard formats verified before and after the operation. Live
   delivery retains its original two-second worker deadline.
 - A native RichTextBox with surrounding text and existing formatting.
+- A real post-paste noncollapsed selection that settles after350ms; read-only
+  retries must confirm the same full text/caret without another paste.
+- A permanently noncollapsed selection and focus loss during unstable readback;
+  both must remain unconfirmed with protected clipboard recovery.
 - A forced native partial-restoration failure, retaining every original saved
   format handle until a successful retry.
 - A real native paste deferred for 1.6 seconds. Unconfirmed delivery keeps its
@@ -118,6 +122,22 @@ client logs directory. Leave it unset for ordinary operation.
 
 The log records phases, input counts, elapsed time, document lengths, caret
 positions, exact-match and normalization-equivalence booleans, technical
-provider metadata, and clipboard restoration status. It records no transcript,
+provider metadata, and clipboard restoration status. ReadbackRetries and LastReadbackStage/type/code
+identify transient native inspection failures without recording their contents. It records no transcript,
 audio, UI name, clipboard value or clipboard hash. Equivalence flags diagnose
 provider differences; they do not relax the ownership or insertion checks.
+
+## Provider readback transitions
+
+Preflight still requires a validated editable field with an empty caret. After
+queuing input, a transient provider exception is retried only as read-only
+confirmation inside the existing one-second window. Every successful attempt
+still requires the original identity before/after inspection, exact complete
+text and the exact collapsed caret. Focus loss or a changed input epoch stops
+confirmation; retries never send text again.
+
+Stage codes distinguish availability, text-pattern, read-only, selection-count,
+selection-collapse, document-text, caret-prefix and prefix-coherence, plus the
+focus checks around readback. A WPF pass proves these native transition rules;
+the separate BrowserDeliveryProbe exercises only our nonce-scoped local
+Chromium fixture. Real Outlook/Codex acceptance remains separate.

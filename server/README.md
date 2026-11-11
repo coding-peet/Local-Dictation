@@ -40,16 +40,43 @@ The transcription route receives a complete recording and returns a complete
 result. Live sessions, verification orchestration, and the model import
 registry belong to the separate session service on port 48125.
 
-The current initial model profiles are:
+The separately deployed legacy service on 8123 still has these two initial
+model profiles:
 
 ~~~text
 kinit/whisper-large-v3-turbo-sk
 openai/whisper-large-v3
 ~~~
 
-The existing batch implementation has profile-specific engine settings.
+The repository candidate source has three supported production profiles,
+including original OpenAI Turbo below; it does not imply that the deployed
+legacy service has gained the third profile. The batch engine has
+profile-specific settings.
 The native client's verification choices use registry capabilities and selected
 model IDs; neither of these IDs is a fixed verifier.
+
+## Current candidate profiles and live policy
+
+The repository's candidate source also supports original
+`openai/whisper-large-v3-turbo`, pinned at
+`41f01f3fe87f28c78e2fbf8b568835947dd65ed9`. Import it with the existing model
+registry; original weights belong in managed C:\AI storage, not this checkout.
+Source changes here do not update the separate deployed service on 8123.
+
+KInIT keeps its Slovak greedy profile. Original OpenAI Turbo uses greedy native
+long-form recognition entirely in CUDA FP16. Original Large-v3 keeps beam search
+and encoder-layer CPU offload to fit this PC's GPU. No model is quantized.
+
+The candidate live policy uses growing previews at roughly three seconds of new
+audio, quiet-valley commits within 12–24 seconds, and a whole-recording primary
+refinement after Finish. It preserves queued input through the configured
+recording limit. Optional verification remains a separate model pass. Empty
+replacement results preserve prior text for recovery.
+
+The ten-alternative experiment, controls and interpretation are documented in
+`docs/development/live-quality-validation-20261111.md` from the repository root.
+Data-free experiment tooling is in diagnostics/LiveBenchmark. All actual private
+recordings, intended text, timelines and reports remain outside Git.
 
 
 ## Test without changing the production service

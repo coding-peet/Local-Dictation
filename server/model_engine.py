@@ -1,4 +1,4 @@
-"""Offline CUDA engines for the two selected batch transcription profiles."""
+"""Original-FP16 CUDA profiles for local Whisper transcription."""
 from copy import deepcopy
 import gc
 from io import BytesIO
@@ -10,19 +10,22 @@ from asr import model_path, read_audio
 
 FAST_MODEL_ID = "kinit/whisper-large-v3-turbo-sk"
 PRECISE_MODEL_ID = "openai/whisper-large-v3"
+TURBO_MODEL_ID = "openai/whisper-large-v3-turbo"
 MODELS = {
     FAST_MODEL_ID: "kinit-turbo",
     PRECISE_MODEL_ID: "whisper-large",
+    TURBO_MODEL_ID: "whisper-large-turbo",
 }
 MODEL_LANGUAGES = {}
 LOG = logging.getLogger("local-asr")
 
 
 def resolve_request(model_id, language):
-    aliases = {"kinit-turbo": FAST_MODEL_ID, "whisper-large": PRECISE_MODEL_ID}
+    aliases = {"kinit-turbo": FAST_MODEL_ID, "whisper-large": PRECISE_MODEL_ID,
+               "whisper-large-turbo": TURBO_MODEL_ID}
     model_id = aliases.get(model_id, model_id)
     if model_id not in MODELS:
-        raise ValueError("Unknown model; select one of the two models in /v1/models.")
+        raise ValueError("Unknown model; select an installed model in /v1/models.")
     language = (language or "").strip().lower()
     language = {"slovak": "sk", "english": "en", "auto": None, "": None}.get(language, language)
     if language not in (None, "sk", "en"):
@@ -39,11 +42,12 @@ def resolve_request(model_id, language):
 
 def generation_options(model_id, language):
     fast = model_id == FAST_MODEL_ID
+    turbo = model_id == TURBO_MODEL_ID
     options = dict(language=language, task="transcribe", do_sample=False,
-                   num_beams=1 if fast else 5, use_cache=True,
+                   num_beams=1 if fast or turbo else 5, use_cache=True,
                    return_timestamps=not fast)
     if not fast:
-        options["condition_on_prev_tokens"] = True
+        options["condition_on_prev_tokens"] = not turbo
         # Use Whisper's acoustic re-decoding policy when a segment loops.
         # The Transformers ratio is measured in token
         # space (1.35), not OpenAI Whisper's text-space ratio (2.4).
@@ -236,7 +240,6 @@ class WhisperEngine:
                 raise RuntimeError("Expected active fast parameters to use CUDA FP16.")
         else:
             from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
-            from accelerate import cpu_offload
             folder = model_path(MODELS[model_id])
             processor = AutoProcessor.from_pretrained(folder, local_files_only=True, trust_remote_code=False)
             model = AutoModelForSpeechSeq2Seq.from_pretrained(
@@ -250,8 +253,12 @@ class WhisperEngine:
             # Keep the encoder stem on CUDA so Whisper's logical device stays CUDA.
             # The decoder and its KV cache stay on GPU; encoder layers execute there
             # one at a time with CPU-backed weights.
-            cpu_offload(model.model.encoder.layers, execution_device=self.torch.device("cuda:0"),
-                        offload_buffers=True, preload_module_classes=["WhisperEncoderLayer"])
+            # The measured original Turbo fits entirely in this GPU. Offloading
+            # its encoder would unnecessarily inherit the much larger profile's cost.
+            if model_id != TURBO_MODEL_ID:
+                from accelerate import cpu_offload
+                cpu_offload(model.model.encoder.layers, execution_device=self.torch.device("cuda:0"),
+                            offload_buffers=True, preload_module_classes=["WhisperEncoderLayer"])
             if model.device.type != "cuda":
                 raise RuntimeError("The precise model logical device must remain CUDA.")
             self.processor, self.model = processor, model
@@ -310,6 +317,8 @@ class WhisperEngine:
             for inputs in prepared:
                 if cancel_event is not None and cancel_event.is_set():
                     raise RuntimeError("Transcription cancelled.")
+                # Match the paired benchmark's reproducible native fallback policy.
+                self.torch.manual_seed(0)
                 tokens = self.model.generate(**inputs, generation_config=config, **options)
                 decoded.append(self.processor.batch_decode(tokens, skip_special_tokens=True)[0].strip())
         if cancel_event is not None and cancel_event.is_set():
