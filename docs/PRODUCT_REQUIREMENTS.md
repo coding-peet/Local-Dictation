@@ -1,7 +1,7 @@
 # Local Dictation product requirements
 
 Status: current input specification, consolidated from Peter's requests on
-10–11 November 2026. Update this document when the user changes a requirement.
+10–12 November 2026. Update this document when the user changes a requirement.
 Older design documents explain decisions; this file defines current behavior.
 
 ## Purpose and scope
@@ -52,6 +52,13 @@ punctuation, whitespace, and Unicode must be preserved.
   reuse only an exact unchanged whole-recording inference from the same profile.
 - Empty recognition must never erase a nonempty received draft or its recovery
   state. Preserve text for explicit Review when final recognition fails.
+- Evaluate paired short-draft/long-repair schedules against the full-context
+  method. Longer acoustic corrections own their complete audio span and must
+  not be overwritten by stale short hypotheses. Compare repaired-stream quality
+  before any global final replacement, with compute and latency costs explicit.
+- Keep human corrections separate from frozen experiment inputs. Hash references
+  and record their supplied/intended/verbatim provenance before rescoring saved
+  outputs; model agreement alone never establishes independent accuracy.
 - Evaluate changes with explicit audio identity, inference/profile provenance,
   actual transcripts, coverage and latency. Model agreement is consistency, not
   independent accuracy. Keep private benchmark transcripts/audio outside Git.

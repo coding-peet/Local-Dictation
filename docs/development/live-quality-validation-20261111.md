@@ -3,6 +3,11 @@
 Date: 11 November 2026. This record describes the live-quality update after the
 frozen experiment commit `2a917936e1cee7d7f617e3d8cc3e5af5aec67fa0`.
 
+Follow-up: the [12 November comparison](dual-lane-validation-20261112.md) adds
+three paired schedules, 27 new outputs and two user-corrected references. It
+rescores all 126 measured outputs while preserving this initial one-reference
+record and its frozen raw results.
+
 ## Result and scope
 
 Ten alternatives completed all nine model/recording combinations each. Together

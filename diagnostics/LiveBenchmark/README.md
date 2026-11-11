@@ -174,3 +174,11 @@ and a self-contained HTML comparison. Normalized WER/CER uses NFC case folding,
 preserves accents and identifiers' internal punctuation, and scores only enabled
 independent intended-text references. It distinguishes disjoint sample coverage
 from a complete-recording refinement. No report contents are committed to Git.
+
+## Additional paired schedules
+
+The separate [two-lane diagnostic](DUAL_LANE_AGENT.md) evaluates 2/6, 3/5 and
+3/12 second short-draft/authoritative-repair schedules. It preserves the frozen
+experiment and writes a new 27-output series with its own source identity.
+The combined reporter also exposes alt10 before whole-recording refinement,
+so a global final pass cannot hide the repaired stream's actual quality.

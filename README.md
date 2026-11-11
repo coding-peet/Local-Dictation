@@ -92,16 +92,21 @@ weights, environments, recordings, or keys needed by another Windows account.
 
 The live-quality and cursor-acknowledgement update is installed under
 C:\Git\Local-Dictation\app, with candidate session API 48125. It passed
-116 backend tests, 84 Core tests, 16 benchmark/report tests, 18 controlled native
+116 backend tests, 84 Core tests, 31 benchmark/report tests, 18 controlled native
 WPF delivery checks, and all nine actual production-path model/recording replays.
 Ten alternative policies produced 90 measured outputs plus nine baseline controls;
 the selected policy preserves original audio and refines the complete recording.
 See [live-quality validation](docs/development/live-quality-validation-20261111.md)
 for anonymous metrics, exact evidence boundaries and deployment verification.
 
-Only one 63-word intended-text reference was independently supplied; agreement
-with model controls is consistency, not independent accuracy. Replay timing is
-not physical microphone latency. Positive Chrome insertion and visible F1 Help
+A follow-up added three dedicated paired-schedule agents and 27 measured outputs,
+for 126 total. All outputs were rescored with three supplied/corrected wording
+references (257 normalized words). The adaptive whole-final KInIT combination
+remains the recommendation for this small workload; longer context does not
+improve every profile. See [paired-schedule validation](docs/development/dual-lane-validation-20261112.md)
+for the ranking, pre-final comparison, latency and reference-provenance limits.
+Agreement with model controls is consistency, not independent accuracy. Replay
+timing is not physical microphone latency. Positive Chrome insertion and visible F1 Help
 inspection remain unvalidated after the application-control turn stopped.
 Outlook and Codex insertion still require Peter's application acceptance.
 Static offline Help checks passed. Historical checks are recorded in
