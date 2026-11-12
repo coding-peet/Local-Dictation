@@ -1,5 +1,4 @@
-using System.Text.Json;
-using LocalDictation.Core;
+using System.Reflection;
 
 namespace LocalDictation.App.Services;
 
@@ -8,17 +7,23 @@ public sealed record DeliveryDiagnostic(string Phase,bool Final,int QueuedInputE
     int BeforeLength,int RequestedLength,int? ExpectedLength,int? ObservedLength,int? ObservedCaret,
     bool? ExactText,bool? ExactCaret,bool? Unchanged,bool? LineEndingsEquivalent,bool? TerminalParagraphEquivalent,bool? NbspEquivalent,
     string Provider,int? ClipboardFormatCount,bool? ClipboardRestored,bool? ClipboardSuperseded,bool Conflict,string? FailureType=null,int? FailureCode=null,bool ClipboardRecoveryPending=false,
-    int ReadbackRetries=0,string? LastReadbackStage=null,string? LastReadbackFailureType=null,int? LastReadbackFailureCode=null)
+    int ReadbackRetries=0,string? LastReadbackStage=null,string? LastReadbackFailureType=null,int? LastReadbackFailureCode=null,
+    string? LastInterruptionStage=null)
 {
     public void WriteIfEnabled()
     {
-        if(Environment.GetEnvironmentVariable("LOCAL_DICTATION_DELIVERY_DIAGNOSTICS")!="1")return;
+        if(!DiagnosticJournal.Enabled)return;
+        DiagnosticJournal.Append("delivery-metadata.jsonl",new{Time=DateTimeOffset.UtcNow,ProcessId=Environment.ProcessId,Delivery=this});
+    }
+
+    public static void WriteSessionIfEnabled()
+    {
+        if(!DiagnosticJournal.Enabled)return;
         try
         {
-            var directory=Path.Combine(AppPaths.Root,"logs");Directory.CreateDirectory(directory);
-            var file=Path.Combine(directory,"delivery-metadata.jsonl");
-            if(File.Exists(file)&&new FileInfo(file).Length>256*1024)File.Move(file,file+".previous",true);
-            File.AppendAllText(file,JsonSerializer.Serialize(new{Time=DateTimeOffset.UtcNow,Delivery=this})+Environment.NewLine);
+            var assembly=typeof(DeliveryDiagnostic).Assembly;
+            var buildVersion=assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion??assembly.GetName().Version?.ToString();
+            DiagnosticJournal.Session(new{Time=DateTimeOffset.UtcNow,ProcessId=Environment.ProcessId,BuildVersion=buildVersion});
         }
         catch(Exception){}
     }

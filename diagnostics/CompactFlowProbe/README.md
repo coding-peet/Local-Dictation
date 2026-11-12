@@ -35,11 +35,26 @@ cases check that Finish retains the captured destination, a missing destination
 requires an explicit decision, and an older Review cannot change the UI during
 a new destination check.
 
-The rare clipboard-recovery case holds an empty, unchanged native transaction.
-It verifies that normal Exit is refused while recovery is pending and protected
-Review text remains saved. The transaction has no clipboard formats or payload;
-the case does not read, replace or restore the user's clipboard content. Native
-queued-paste and clipboard-format recovery belong to DeliveryProbe.
+The clipboard-recovery cases hold empty, unchanged native transactions. They
+check that closing the idle banner hides it without releasing the backup or
+losing protected Review. A queued older recovery notification must not undo
+that later dismissal. Deliberate Exit remains blocked and resurfaces recovery;
+a genuinely new recovery event can also resurface it.
+
+The primary-action case checks Restore clipboard… and invokes the real banner
+handler with a private confirmation callback replaced by a synthetic Cancel.
+It verifies that confirmation is required and cancellation retains the lease.
+The production callback always uses the inspection warning dialog. The fixture
+does not automate that real dialog or bypass it through application settings.
+The action stays disabled while recovery is running. A long compact Review
+keeps its existing panel without duplicating the transcript in the ordinary
+preview; recovery remains available as the primary action.
+
+These transactions have no clipboard formats or payload; the cases do not
+read, replace or restore the user's clipboard content. Native queued-paste and
+clipboard-format recovery belong to DeliveryProbe. Run this helper only when
+the PC has been released for controlled checks: its own non-activating banner
+can appear, even though it never supplies native keyboard input.
 
 A separate empty reservation checks the period before a native worker settles:
 Exit stays blocked even though explicit recovery is not yet available. The

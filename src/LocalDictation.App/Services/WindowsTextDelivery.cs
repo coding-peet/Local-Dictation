@@ -69,21 +69,55 @@ public sealed class WindowsTextDelivery : ITextDelivery
 
     public static WindowsTextDelivery Capture(CancellationToken token, bool allowOwnProcess = false)
     {
-        var window = GetForegroundWindow();
-        var element = AutomationElement.FocusedElement ?? throw new InvalidOperationException("No editable field has focus.");
-        if (!allowOwnProcess && element.Current.ProcessId == Environment.ProcessId)
-            throw new InvalidOperationException("Choose a destination outside Local Dictation; this recording will open in Review.");
-        if (!TargetPrivileges.CanInsert(Integrity(element.Current.ProcessId), Integrity(Environment.ProcessId)))
-            throw new InvalidOperationException("The destination is elevated. Continue in Review.");
-        var info = Inspect(element);
-        token.ThrowIfCancellationRequested();
-        if (window == 0 || GetForegroundWindow() != window ||
-            Identity(AutomationElement.FocusedElement) != Identity(element))
-            throw new InvalidOperationException("The destination changed during the cursor check.");
-        return new(window,new(Identity(element),info.Text,info.Caret),element);
+        var diagnostic=CaptureDiagnostic.Begin();
+        try
+        {
+            diagnostic.Stage(CaptureStage.Foreground);
+            var window = GetForegroundWindow();
+            diagnostic.Stage(CaptureStage.FocusedElement);
+            var element = AutomationElement.FocusedElement ?? throw new InvalidOperationException("No editable field has focus.");
+            diagnostic.Stage(CaptureStage.OwnProcess);
+            if (!allowOwnProcess && element.Current.ProcessId == Environment.ProcessId)
+                throw new InvalidOperationException("Choose a destination outside Local Dictation; this recording will open in Review.");
+            diagnostic.Stage(CaptureStage.Integrity);
+            if (!TargetPrivileges.CanInsert(Integrity(element.Current.ProcessId), Integrity(Environment.ProcessId)))
+                throw new InvalidOperationException("The destination is elevated. Continue in Review.");
+            var info = Inspect(element,stage=>diagnostic.Stage(stage switch
+            {
+                "availability"=>CaptureStage.Availability,"text-pattern"=>CaptureStage.TextPattern,
+                "read-only"=>CaptureStage.ReadOnly,"selection-count"=>CaptureStage.SelectionCount,
+                "selection-collapse"=>CaptureStage.SelectionCollapse,"document-text"=>CaptureStage.DocumentText,
+                "caret-prefix"=>CaptureStage.CaretPrefix,"prefix-coherence"=>CaptureStage.PrefixCoherence,
+                _=>CaptureStage.Unknown
+            }));
+            diagnostic.Stage(CaptureStage.Cancellation);
+            token.ThrowIfCancellationRequested();
+            diagnostic.Stage(CaptureStage.PostcheckWindow);
+            if (window == 0 || GetForegroundWindow() != window)
+                throw new InvalidOperationException("The destination changed during the cursor check.");
+            diagnostic.Stage(CaptureStage.PostcheckFocusIdentity);
+            if(Identity(AutomationElement.FocusedElement) != Identity(element))
+                throw new InvalidOperationException("The destination changed during the cursor check.");
+            diagnostic.Stage(CaptureStage.ConstructIdentity);
+            var guard=new TargetGuard(Identity(element),info.Text,info.Caret);
+            diagnostic.Stage(CaptureStage.ProviderMetadata);
+            var delivery=new WindowsTextDelivery(window,guard,element);
+            diagnostic.Complete();
+            return delivery;
+        }
+        catch(Exception error){diagnostic.Fail(error);throw;}
     }
 
-    sealed class Interrupted : Exception {}
+    enum InterruptionStage { Invalidated,InputGeneration,ForegroundWindow,FocusedField,DeliveryKeysDown }
+    sealed class Interrupted(InterruptionStage stage) : Exception
+    {
+        public string Stage=>stage switch
+        {
+            InterruptionStage.Invalidated=>"invalidated",InterruptionStage.InputGeneration=>"input-generation",
+            InterruptionStage.ForegroundWindow=>"foreground-window",InterruptionStage.FocusedField=>"focused-field",
+            InterruptionStage.DeliveryKeysDown=>"delivery-keys-down",_=>"unknown"
+        };
+    }
     public bool Apply(string next,CancellationToken token,bool restoreFocus=false)
     {
         if(IsConflict)return false;
@@ -103,6 +137,7 @@ public sealed class WindowsTextDelivery : ITextDelivery
         string? failureType=null;int? failureCode=null;
         var readbackRetries=0;
         string? inspectionStage=null,lastReadbackStage=null,lastReadbackFailureType=null;
+        string? lastInterruptionStage=null;
         int? lastReadbackFailureCode=null;
         Action<string> observeInspection=stage=>inspectionStage=stage;
         bool Reconcile()
@@ -115,7 +150,11 @@ public sealed class WindowsTextDelivery : ITextDelivery
                 if(!TryConfirmLate(next,expected,out caret))return false;
                 Check(token,version);
             }
-            catch(Exception error) when(error is Interrupted or OperationCanceledException or InvalidOperationException or ElementNotAvailableException or COMException or Win32Exception){return false;}
+            catch(Exception error) when(error is Interrupted or OperationCanceledException or InvalidOperationException or ElementNotAvailableException or COMException or Win32Exception)
+            {
+                if(error is Interrupted interruption)lastInterruptionStage=interruption.Stage;
+                return false;
+            }
             guard.Applied(next,expected,caret);
             confirmed=true;clipboard?.Acknowledge();
             phase="late confirm";observedLength=expected.Length;observedCaret=guard.Start+next.Length;
@@ -231,15 +270,17 @@ public sealed class WindowsTextDelivery : ITextDelivery
                     readbackRetries++;lastReadbackStage=inspectionStage;
                     lastReadbackFailureType=error.GetType().Name;lastReadbackFailureCode=error.HResult;
                     CheckLease(token,version);
-                    if(GetForegroundWindow()!=window)throw new Interrupted();
+                    if(GetForegroundWindow()!=window)throw new Interrupted(InterruptionStage.ForegroundWindow);
                 }
                 Thread.Sleep(10);
             }
             if(Reconcile())return true;
             return Stop("The destination did not confirm the inserted text. Check the destination before retrying; the complete transcript is preserved in Review.");
         }
-        catch(Interrupted)
-        {return queued>0?(expected!=null&&Reconcile()||Stop("Insertion was interrupted. Check the destination before choosing where to insert the preserved Review.")):
+        catch(Interrupted error)
+        {
+            lastInterruptionStage=error.Stage;failureType=error.GetType().Name;failureCode=error.HResult;
+            return queued>0?(expected!=null&&Reconcile()||Stop("Insertion was interrupted. Check the destination before choosing where to insert the preserved Review.")):
             Pause("Cursor delivery is paused. Return to the original unchanged field to resume.");}
         catch(OperationCanceledException)
         {return queued>0?(expected!=null&&Reconcile()||Stop("Insertion confirmation was interrupted. Check the destination before retrying; the complete transcript is preserved in Review.")):Pause("Cursor validation was cancelled. Your text is preserved.");}
@@ -266,7 +307,7 @@ public sealed class WindowsTextDelivery : ITextDelivery
             LastDiagnostic=new(phase,restoreFocus,queued,watch.Elapsed.TotalMilliseconds,beforeText.Length,next.Length,expected?.Length,
                 observedLength,observedCaret,textMatches,caretMatches,unchanged,lineEndingsEquivalent,terminalParagraphEquivalent,nbspEquivalent,
                 provider,clipboard?.SavedFormatCount,clipboard?.WasRestored,clipboard?.WasSuperseded,IsConflict,failureType,failureCode,ClipboardRecovery.HasPending,
-                readbackRetries,lastReadbackStage,lastReadbackFailureType,lastReadbackFailureCode);
+                readbackRetries,lastReadbackStage,lastReadbackFailureType,lastReadbackFailureCode,lastInterruptionStage);
             LastDiagnostic.WriteIfEnabled();
             Interlocked.Decrement(ref operating);
         }
@@ -321,13 +362,15 @@ public sealed class WindowsTextDelivery : ITextDelivery
     void CheckLease(CancellationToken token,int version)
     {
         token.ThrowIfCancellationRequested();
-        if(IsConflict||version!=Volatile.Read(ref generation))throw new Interrupted();
+        if(IsConflict)throw new Interrupted(InterruptionStage.Invalidated);
+        if(version!=Volatile.Read(ref generation))throw new Interrupted(InterruptionStage.InputGeneration);
     }
     void Check(CancellationToken token,int version,bool modifiers=true)
     {
         CheckLease(token,version);
-        if(GetForegroundWindow()!=window||
-            Identity(AutomationElement.FocusedElement)!=guard.Identity||modifiers&&DeliveryKeysDown())throw new Interrupted();
+        if(GetForegroundWindow()!=window)throw new Interrupted(InterruptionStage.ForegroundWindow);
+        if(Identity(AutomationElement.FocusedElement)!=guard.Identity)throw new Interrupted(InterruptionStage.FocusedField);
+        if(modifiers&&DeliveryKeysDown())throw new Interrupted(InterruptionStage.DeliveryKeysDown);
     }
 
     [StructLayout(LayoutKind.Sequential)] struct KeyInput { public ushort Key, Scan; public uint Flags, Time; public nuint Extra; }

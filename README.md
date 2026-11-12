@@ -113,6 +113,13 @@ Static offline Help checks passed. Historical checks are recorded in
 [delivery incident validation](docs/development/delivery-incident-validation-20261111.md)
 and [UI update validation](docs/development/ui-usability-validation-20261111.md).
 
+The [Outlook investigation](docs/development/outlook-delivery-investigation-20261112.md)
+records the new physical Notepad acceptance, unresolved Outlook paste, recovery
+banner/microphone fixes and a PID/time-verifying diagnostic launcher. Current regressions
+pass 23 Settings, 30 compact controller and seven pure diagnostic checks. A new
+native test was stopped by CUA before execution; the Outlook transport is still
+pending an attributable retry.
+
 ## Repository layout
 
 ~~~text

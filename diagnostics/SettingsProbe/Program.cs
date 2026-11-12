@@ -170,6 +170,79 @@ internal static class Program
                     Require(!test.Controller.IsBusy,"Record started without an available selected microphone.");
                     await Task.CompletedTask;
                 });
+                foreach(var microphoneId in new[]{"","synthetic-mic"})
+                {
+                    var selectedId=microphoneId;
+                    await Case($"Selecting {(selectedId.Length==0?"System default":"an active microphone")} clears the missing microphone warning",async test=>
+                    {
+                        test.MissingMicrophone();
+                        test.Box("microphone").SelectedValue=selectedId;
+                        Require(test.Controller.Settings.MicrophoneId==selectedId&&Settings.Load().MicrophoneId==selectedId,"The recovered microphone selection was not autosaved.");
+                        Require(Field<TextBlock>(test.Window,"message").Text.Length==0,"A valid microphone selection retained the stale missing-microphone warning.");
+                        await Task.CompletedTask;
+                    });
+                }
+                await Case("A successful microphone refresh clears its warning without saving a fallback",async test=>
+                {
+                    test.MissingMicrophone();
+                    var file=Path.Combine(test.Home,"data","settings.json");var before=File.ReadAllBytes(file);
+                    test.ApplyMicrophones("",true);
+                    Require(Field<TextBlock>(test.Window,"message").Text.Length==0,"A successful microphone refresh retained a stale warning.");
+                    Require((string?)test.Box("microphone").SelectedValue==""&&File.ReadAllBytes(file).SequenceEqual(before),"A passive refresh silently rewrote the saved microphone.");
+                    await Task.CompletedTask;
+                });
+                await Case("A microphone refresh retains a missing saved choice and its warning",async test=>
+                {
+                    test.MissingMicrophone();
+                    var saved=Settings.Load().MicrophoneId!;
+                    test.ApplyMicrophones(saved,true);
+                    Require((string?)test.Box("microphone").SelectedValue==saved&&Settings.Load().MicrophoneId==saved,"A refresh silently fell back from the missing saved microphone.");
+                    Require(Field<TextBlock>(test.Window,"message").Text.Contains("unavailable",StringComparison.OrdinalIgnoreCase),"A missing saved microphone lost its warning during refresh.");
+                    await Task.CompletedTask;
+                });
+                await Case("A failed microphone refresh keeps a fresh enumeration warning",async test=>
+                {
+                    test.MissingMicrophone();
+                    test.ApplyMicrophones("",false);
+                    Require(Field<TextBlock>(test.Window,"message").Text.Contains("microphone access",StringComparison.OrdinalIgnoreCase),"A failed microphone refresh cleared or hid its fresh enumeration warning.");
+                    await Task.CompletedTask;
+                });
+                await Case("Selecting System default cannot hide a fresh microphone enumeration failure",async test=>
+                {
+                    test.MissingMicrophone();
+                    test.ApplyMicrophones(Settings.Load().MicrophoneId!,false);
+                    test.Box("microphone").SelectedValue="";
+                    Require(Settings.Load().MicrophoneId=="","System default did not autosave after enumeration failed.");
+                    Require(Field<TextBlock>(test.Window,"message").Text.Contains("microphone access",StringComparison.OrdinalIgnoreCase),"Selecting System default hid a fresh microphone enumeration failure.");
+                    test.ApplyMicrophones("",true);
+                    Require(Field<TextBlock>(test.Window,"message").Text.Length==0,"Successful enumeration did not clear its earlier failure.");
+                    await Task.CompletedTask;
+                });
+                await Case("A rejected recording cannot hide enumeration failure on subsequent microphone selection",async test=>
+                {
+                    test.MissingMicrophone();
+                    test.ApplyMicrophones(Settings.Load().MicrophoneId!,false);
+                    Field<Button>(test.Window,"record").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    Require(!test.Controller.IsBusy,"Record started with a missing microphone after enumeration failed.");
+                    test.Box("microphone").SelectedValue="";
+                    Require(Settings.Load().MicrophoneId=="","The default selection after rejected recording was not autosaved.");
+                    Require(Field<TextBlock>(test.Window,"message").Text.Length>0,"Rejected recording let microphone selection hide an unresolved enumeration failure.");
+                    test.ApplyMicrophones("",true);
+                    Require(Field<TextBlock>(test.Window,"message").Text.Length==0,"Successful enumeration did not clear the recording-blocked microphone warning.");
+                    await Task.CompletedTask;
+                });
+                await Case("Selecting an available microphone preserves an unrelated footer message",async test=>
+                {
+                    test.MissingMicrophone();
+                    const string unrelated="The runtime test did not finish. Your existing model selection was preserved.";
+                    Field<TextBlock>(test.Window,"message").Text=unrelated;
+                    test.ApplyMicrophones("",true);
+                    Require(Field<TextBlock>(test.Window,"message").Text==unrelated,"Microphone refresh erased an unrelated footer message.");
+                    test.Box("microphone").SelectedValue="synthetic-mic";
+                    Require(Settings.Load().MicrophoneId=="synthetic-mic","An unrelated footer message blocked microphone autosave.");
+                    Require(Field<TextBlock>(test.Window,"message").Text==unrelated,"Microphone recovery erased an unrelated footer message.");
+                    await Task.CompletedTask;
+                });
                 await Case("Opening with an unavailable saved verifier shows the actual problem without saving a fallback",async test=>
                 {
                     var invalid=Settings.Load();invalid.VerificationModel="synthetic/removed-verifier";test.Controller.SaveSettings(invalid);
@@ -273,6 +346,15 @@ internal static class Program
             Box("microphone").ItemsSource=new List<MicrophoneInfo>{new("","System default microphone"),new("synthetic-mic","Synthetic microphone")};Box("microphone").SelectedValue="";
             Set(Window,"loading",false);
             Layout();
+        }
+        public void ApplyMicrophones(string selected,bool enumerated)=>typeof(SettingsWindow).GetMethod("ApplyMicrophoneDevices",Members)!.Invoke(Window,
+            [enumerated?new List<MicrophoneInfo>{new("synthetic-mic","Synthetic microphone")}:new List<MicrophoneInfo>(),selected,enumerated]);
+        public void MissingMicrophone()
+        {
+            const string missingId="disconnected-settings-probe-mic";
+            var saved=Settings.Load();saved.MicrophoneId=missingId;Controller.SaveSettings(saved);
+            ApplyMicrophones(missingId,true);
+            Require(Field<TextBlock>(Window,"message").Text.Contains("saved microphone is unavailable",StringComparison.OrdinalIgnoreCase),"Fixture did not show the missing saved microphone warning.");
         }
         public ComboBox Box(string name)=>Field<ComboBox>(Window,name);
         public CheckBox Check(string name)=>Field<CheckBox>(Window,name);

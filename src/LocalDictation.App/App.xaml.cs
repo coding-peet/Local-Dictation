@@ -18,6 +18,7 @@ public partial class App : System.Windows.Application
             MessageBox.Show("Local Dictation is already running. Open it from the system tray.","Local Dictation");
             Shutdown(); return;
         }
+        Services.DeliveryDiagnostic.WriteSessionIfEnabled();
         if (SystemParameters.HighContrast)
         {
             foreach(var key in new[]{"Canvas","Surface"}) Resources[key]=SystemColors.WindowBrush;

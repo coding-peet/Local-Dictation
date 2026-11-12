@@ -41,6 +41,9 @@ public sealed class AppController : IDisposable
     readonly Dictionary<string,ReviewDocument> canonicalReviews=[];
     readonly HashSet<Task> recordingTasks=[];
     bool exiting,disposed,restoringClipboard;
+    long clipboardRecoveryVersion,dismissedClipboardRecoveryVersion=-1;
+    Func<bool> confirmClipboardRestore=()=>MessageBox.Show("Inspect or stop the original destination first. It may still have a queued paste. Select OK only after it can no longer process that paste.\n\nRestore your previous clipboard now? Your saved dictation stays in Review.",
+        "Restore previous clipboard",MessageBoxButton.OKCancel,MessageBoxImage.Warning)==MessageBoxResult.OK;
     ReviewDocument? placementReview;
     CompactReviewProgress? bannerProgress;
     string? applyingBannerId;
@@ -81,7 +84,8 @@ public sealed class AppController : IDisposable
     public bool IsRecording => active?.Recording==true;
     public bool AtCursor=>active?.CanDeliver==true;
     public bool IsBusy => active!=null;
-    public bool ShowBanner => ClipboardRecovery.HasPending||active is {DestinationChecked:true}||BannerReview!=null||DateTimeOffset.Now<hideAt;
+    public bool CanRestoreClipboard=>!IsBusy&&!IsApplyingReview&&inserting.Count==0&&!restoringClipboard&&ClipboardRecovery.HasPending;
+    public bool ShowBanner => ClipboardRecovery.HasPending&&Volatile.Read(ref clipboardRecoveryVersion)>dismissedClipboardRecoveryVersion||active is {DestinationChecked:true}||BannerReview!=null||DateTimeOffset.Now<hideAt;
     public string MicrophoneLabel=>active?.Capture.DeviceName??"Microphone";
     public string ModelLabel=>Models.FirstOrDefault(m=>m.Id==(active?.Settings.PrimaryModel??Settings.PrimaryModel))?.Name??Settings.PrimaryModel;
     public string ElapsedLabel=>active is {} run?TimeSpan.FromSeconds(run.Capture.CapturedBytes/32000.0).ToString(@"mm\:ss"):"";
@@ -116,7 +120,7 @@ public sealed class AppController : IDisposable
         menu.Items.Add("Pending Review",null,(_,_)=>OpenLatestReview());
         menu.Items.Add("History",null,(_,_)=>ShowHistory());
         clipboardRecoveryAction=(Forms.ToolStripMenuItem)menu.Items.Add("Restore previous clipboard…",null,async(_,_)=>await RestoreClipboardAfterInspection());
-        clipboardRecoveryAction.Enabled=ClipboardRecovery.HasPending;
+        clipboardRecoveryAction.Enabled=CanRestoreClipboard;
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Exit",null,(_,_)=>Exit());
         tray=new Forms.NotifyIcon {Text="Local Dictation",Icon=System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!)??System.Drawing.SystemIcons.Application,
@@ -135,6 +139,7 @@ public sealed class AppController : IDisposable
                     (active.CanDeliver?" · At cursor":" · Review")+
                     " · "+active.Capture.DeviceName+(active.Recording?" · Mic active":" · Mic stopped");
             }
+            clipboardRecoveryAction.Enabled=CanRestoreClipboard;
             banner.Refresh();
         };
         timer.Start();
@@ -150,17 +155,20 @@ public sealed class AppController : IDisposable
 
     void ClipboardRecoveryChanged()
     {
+        // Capture event order before dispatch: a later Close must win over a queued notification.
+        var version=Interlocked.Increment(ref clipboardRecoveryVersion);
         System.Windows.Application.Current.Dispatcher.BeginInvoke(()=>
         {
             if(disposed)return;
-            clipboardRecoveryAction.Enabled=ClipboardRecovery.HasPending&&!restoringClipboard;
-            if(ClipboardRecovery.HasPending)ShowClipboardRecovery();
+            clipboardRecoveryAction.Enabled=CanRestoreClipboard;
+            if(ClipboardRecovery.HasPending&&version>dismissedClipboardRecoveryVersion)ShowClipboardRecovery();
             else{Changed?.Invoke();banner.Refresh();}
         });
     }
 
     void ShowClipboardRecovery()
     {
+        dismissedClipboardRecoveryVersion=-1;
         var message=ClipboardRecovery.Message;
         ConnectionMessage=message;DetailLabel=message;lastDeliveryMessage=message;
         if(BannerReview is {} document){document.Reason=message;SaveReview(document);}
@@ -168,11 +176,11 @@ public sealed class AppController : IDisposable
         Changed?.Invoke();banner.Refresh();
     }
 
-    async Task RestoreClipboardAfterInspection()
+    public async Task RestoreClipboardAfterInspection()
     {
-        if(restoringClipboard||!ClipboardRecovery.HasPending)return;
-        if(MessageBox.Show("Inspect or stop the original destination first. It may still have a queued paste. Select OK only after it can no longer process that paste.\n\nRestore your previous clipboard now? Your saved dictation stays in Review.",
-            "Restore previous clipboard",MessageBoxButton.OKCancel,MessageBoxImage.Warning)!=MessageBoxResult.OK)return;
+        if(!CanRestoreClipboard)return;
+        ShowClipboardRecovery();
+        if(!confirmClipboardRestore()||!CanRestoreClipboard)return;
         restoringClipboard=true;clipboardRecoveryAction.Enabled=false;
         try
         {
@@ -191,7 +199,7 @@ public sealed class AppController : IDisposable
         }
         finally
         {
-            restoringClipboard=false;clipboardRecoveryAction.Enabled=ClipboardRecovery.HasPending;
+            restoringClipboard=false;clipboardRecoveryAction.Enabled=CanRestoreClipboard;
             Changed?.Invoke();banner.Refresh();
         }
     }
@@ -736,7 +744,12 @@ public sealed class AppController : IDisposable
     public void Cancel()
     {
         if(IsApplyingReview||inserting.Count>0)return;
-        if(active==null){bannerProgress=null;placementReview=null;hideAt=DateTimeOffset.MinValue;Changed?.Invoke();banner.Refresh();return;}
+        if(active==null)
+        {
+            // Hide only our UI; the recovery lease still blocks delivery and Exit.
+            dismissedClipboardRecoveryVersion=Volatile.Read(ref clipboardRecoveryVersion);
+            bannerProgress=null;placementReview=null;hideAt=DateTimeOffset.MinValue;Changed?.Invoke();banner.Refresh();return;
+        }
         active.AutoInsertBlocked=true;active.NeedsReview=true;active.Delivery?.Invalidate();active.Cancel.Cancel();active.Capture.Stop();
     }
     public void EmergencyReview()

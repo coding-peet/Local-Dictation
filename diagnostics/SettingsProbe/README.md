@@ -44,6 +44,10 @@ disposes its controllers, and terminates its own test host explicitly.
   setting. Focus loss in one field preserves another field's debounce.
 - A missing saved microphone retains its ID while unrelated settings save.
   Recording requires an available selected microphone.
+  Selecting System default or an active device autosaves the recovered choice
+  and clears its missing-device warning, preserving unrelated footer messages.
+  Deterministic refresh cases cover warning recovery, a retained missing ID,
+  fresh enumeration failure feedback, and preservation of unrelated messages.
 - Failed writes remain visible and do not change the effective model. A later
   text save retries pending valid option changes instead of hiding the failure.
   Opening with an unavailable saved verifier shows that problem without saving

@@ -79,6 +79,39 @@ C:\Git\Local-Dictation\delivery-fix-probe\candidate\DeliveryProbe.exe `
 
 A pass proves resource cloning, not application-level paste acceptance.
 
+## Diagnostic journal checks without a UI
+
+This separate mode performs only isolated temporary-file operations. It returns
+before creating a WPF Application, AppController or GlobalInput. It does not
+access the clipboard, query accessibility providers, show windows, send input,
+record audio or contact a server.
+
+Build into its own candidate folder:
+
+~~~powershell
+& C:\AI\tools\dotnet-10.0.403\dotnet.exe publish `
+    diagnostics\DeliveryProbe\DeliveryProbe.csproj `
+    -c Release --no-self-contained `
+    -o C:\Git\Local-Dictation\delivery-capture-probe\candidate `
+    --artifacts-path C:\AI\build\Local-Dictation-capture-probe
+~~~
+
+Run only the diagnostic journal checks:
+
+~~~powershell
+& C:\AI\tools\dotnet-10.0.403\dotnet.exe `
+    C:\Git\Local-Dictation\delivery-capture-probe\candidate\DeliveryProbe.dll `
+    --diagnostic-checks `
+    --report C:\AI\build\Local-Dictation-capture-probe\diagnostic-checks.json
+~~~
+
+The seven checks cover opt-out without writes, enabled startup identification,
+delivery-event PID, fixed interruption-stage serialization, capture serialization without exception messages, bounded
+journal rotation, and nonfatal IO failure. Each run uses a unique temporary
+root, restores the original process environment, and verifies the resolved
+temporary path before recursive cleanup. The report contains check names and
+results only. This does not exercise actual destination capture or insertion.
+
 ## Clipboard and confirmation boundaries
 
 Each nonempty live or final update snapshots every supported original clipboard format in memory
@@ -120,6 +153,38 @@ Start the candidate client with LOCAL_DICTATION_DELIVERY_DIAGNOSTICS=1 in its
 process environment to enable a bounded delivery-metadata.jsonl under the local
 client logs directory. Leave it unset for ordinary operation.
 
+The same opt-in writes delivery-session.json once during accepted application
+startup, containing UTC time, ProcessId and BuildVersion. Confirm that its PID
+matches the client used for the physical test: a manual restart does not inherit
+a flag set only for the earlier process. An older marker alone does not prove
+that diagnostics are enabled in the current client.
+
+Every delivery event includes ProcessId alongside its existing Delivery object.
+LastInterruptionStage identifies the most recent interrupted ownership check:
+invalidated, input-generation, foreground-window, focused-field or
+delivery-keys-down. These fixed codes distinguish the existing short-circuit
+guards without extra native calls. The top-level interruption catch also records
+its technical exception type and HRESULT. No destination values are recorded.
+Capture also writes capture-metadata.jsonl with fixed stage codes, stage-entry
+Success=null, stage-completion success, elapsed milliseconds, UTC time and PID.
+Failures include only exception type and HRESULT. It never logs exception
+messages, field text, UI names, clipboard contents, audio or document paths.
+
+Capture stages bracket the existing foreground/focus, own-process, integrity,
+inspection callbacks, cancellation, postcheck window/identity and construction/
+provider-metadata operations. Logging makes no extra accessibility calls, even
+after failure. A stage entry without completion can identify a still-blocked
+native call when the controller deadline expires; cancellation is observed only
+at the existing cancellation check. A completed capture does not prove insertion.
+
+New journal writes rotate before the active file would exceed 256 KiB, retaining
+one .previous file. Pre-existing logs can retain their earlier size. Writes
+are best effort and do not change destination guards, operation ordering, retry
+policy, cancellation, ownership or insertion behavior. Diagnostic IO failure can
+leave evidence incomplete. Provider metadata retains its existing best-effort
+behavior; its stage completing does not prove that every provider attribute was
+available. This instrumentation is not an Outlook insertion fix.
+
 The log records phases, input counts, elapsed time, document lengths, caret
 positions, exact-match and normalization-equivalence booleans, technical
 provider metadata, and clipboard restoration status. ReadbackRetries and LastReadbackStage/type/code
@@ -141,3 +206,24 @@ selection-collapse, document-text, caret-prefix and prefix-coherence, plus the
 focus checks around readback. A WPF pass proves these native transition rules;
 the separate BrowserDeliveryProbe exercises only our nonce-scoped local
 Chromium fixture. Real Outlook/Codex acceptance remains separate.
+
+
+## Launch the diagnostic client reproducibly
+
+From a source checkout, after the real client has exited normally and every
+fixture has released its clipboard transaction:
+
+~~~powershell
+.\scripts\Start-DiagnosticClient.ps1
+~~~
+
+The script starts the installed client with child-process-only diagnostics and
+normal hotkeys. It verifies that delivery-session.json names the actual new PID.
+It does not terminate a running client or fixture, restore any clipboard, start
+recording, or change machine/user environment settings. A missing marker leaves
+the client running for inspection rather than killing a possible backup.
+
+Use -AppDirectory for a separately published candidate and -DataRoot for an
+explicit isolated test data root. The defaults preserve the installed C:\Git
+application and C:\AI\LocalDictation settings/data. A later ordinary restart
+without this launcher does not inherit its process-only diagnostic opt-in.

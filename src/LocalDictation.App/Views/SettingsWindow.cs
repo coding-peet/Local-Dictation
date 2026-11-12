@@ -32,9 +32,9 @@ public sealed class SettingsWindow : Window
     readonly DispatcherTimer saveDelay=new(){Interval=TimeSpan.FromMilliseconds(650)};
     readonly HashSet<TextBox> pendingText=[];
     readonly Dictionary<TextBox,string> textErrors=[];
-    string selectionError="",saveError="";
+    string selectionError="",saveError="",microphoneWarning="";
     string? inspection,job,missingMicrophoneId;
-    bool loading,updating,polling,selectionPending;
+    bool loading,updating,polling,selectionPending,microphoneEnumerationFailed;
     public SettingsWindow(AppController controller)
     {
         this.controller=controller;
@@ -185,12 +185,17 @@ public sealed class SettingsWindow : Window
 
     void LoadMicrophones()
     {
-        var wasLoading=loading;loading=true;
         var selected=microphone.SelectedValue as string??controller.Settings.MicrophoneId??"";
-        List<MicrophoneInfo> devices;
+        List<MicrophoneInfo> devices;var enumerated=true;
         try{devices=MicrophoneCapture.Devices();}
-        catch(Exception)
-        {devices=[];message.Text="No microphone could be enumerated. Check Windows microphone access.";}
+        catch(Exception){devices=[];enumerated=false;}
+        ApplyMicrophoneDevices(devices,selected,enumerated);
+    }
+
+    void ApplyMicrophoneDevices(List<MicrophoneInfo> devices,string selected,bool enumerated)
+    {
+        var wasLoading=loading;loading=true;
+        microphoneEnumerationFailed=!enumerated;
         try
         {
             devices.Insert(0,new("","System default microphone"));
@@ -198,11 +203,20 @@ public sealed class SettingsWindow : Window
             if(selected.Length>0&&!devices.Any(device=>device.Id==selected))
             {
                 missingMicrophoneId=selected;devices.Add(new(selected,"Saved microphone (currently unavailable)"));
-                message.Text="The saved microphone is unavailable. Choose an active device before recording.";
             }
+            if(!enumerated)ShowMicrophoneWarning("No microphone could be enumerated. Check Windows microphone access.");
+            else if(missingMicrophoneId!=null)ShowMicrophoneWarning("The saved microphone is unavailable. Choose an active device before recording.");
+            else ClearMicrophoneWarning();
             microphone.ItemsSource=devices;microphone.SelectedValue=selected;
         }
         finally{loading=wasLoading;}
+    }
+
+    void ShowMicrophoneWarning(string warning){microphoneWarning=warning;message.Text=warning;}
+    void ClearMicrophoneWarning()
+    {
+        if(message.Text==microphoneWarning)message.Text="";
+        microphoneWarning="";
     }
 
     void Refresh() => Refresh(false);
@@ -272,6 +286,7 @@ public sealed class SettingsWindow : Window
     {
         if(loading)return;
         selectionPending=true;
+        if(source==microphone&&!microphoneEnumerationFailed&&microphone.SelectedIndex>=0&&microphone.SelectedValue as string!=missingMicrophoneId)ClearMicrophoneWarning();
         var modelChange=source==primary||source==verifier||source==language||source==live||source==verify;
         if(modelChange)
         {
@@ -381,7 +396,7 @@ public sealed class SettingsWindow : Window
         CommitTextEdits();
         if(!SaveSelections()||textErrors.Count>0||pendingText.Count>0||saveError.Length>0)return;
         if(microphone.SelectedIndex<0||microphone.SelectedValue as string==missingMicrophoneId)
-        {message.Text="Choose an available microphone before recording. Your saved microphone choice is retained.";return;}
+        {ShowMicrophoneWarning("Choose an available microphone before recording. Your saved microphone choice is retained.");return;}
         controller.ToggleReview();
     }
 

@@ -135,9 +135,11 @@ public sealed class BannerWindow : Window
 
     void MainAction()
     {
+        if(controller.IsRecording){controller.Stop();return;}
+        if(controller.IsBusy)return;
+        if(ClipboardRecovery.HasPending){_=controller.RestoreClipboardAfterInspection();return;}
         if(controller.BannerReview!=null){if(!controller.IsApplyingReview)_=controller.ApplyBannerReview();return;}
-        if(controller.IsRecording)controller.Stop();else if(controller.IsBusy)return;
-        else if(controller.StateLabel is "Unavailable" or "Inserted" or "Stopped")controller.Toggle();else controller.OpenLatestReview();
+        if(controller.StateLabel is "Unavailable" or "Inserted" or "Stopped")controller.Toggle();else controller.OpenLatestReview();
     }
 
     void SetReviewInteraction(bool interactive)
@@ -238,6 +240,14 @@ public sealed class BannerWindow : Window
             preview.Visibility=Visibility.Collapsed;
         }
         else timer.Visibility=Visibility.Visible;
+        if(!controller.IsBusy&&ClipboardRecovery.HasPending)
+        {
+            state.Text="Clipboard recovery";detail.Text="Inspect the destination before restoring your clipboard";
+            action.Content="Restore clipboard…";action.IsEnabled=controller.CanRestoreClipboard;
+            System.Windows.Automation.AutomationProperties.SetName(action,"Restore previous clipboard after inspection");
+            preview.Visibility=reviewing?Visibility.Collapsed:Visibility.Visible;previewTitle.Text="CLIPBOARD RECOVERY";
+        }
+        else System.Windows.Automation.AutomationProperties.SetName(action,"Finish recording or retry");
         reviewPanel.Refresh();
         if(controller.ShowBanner||reviewing){if(!IsVisible)Show();SetReviewInteraction(reviewing&&!controller.IsRecording);Position();}else Hide();
     }

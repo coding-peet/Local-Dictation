@@ -85,6 +85,15 @@ punctuation, whitespace, and Unicode must be preserved.
 - A transient post-paste accessibility/selection state may retry only readback
   within a bounded deadline. Keep the original field, full text and exact caret
   requirements; do not issue another paste to obtain acknowledgement.
+- Idle recovery can be hidden with the banner X without discarding protected
+  text, a clipboard lease or its backup. Old queued notifications must not undo
+  dismissal; a new recovery event or explicit Start/Exit can resurface it.
+- Offer the existing inspected clipboard restoration in the idle banner. Keep
+  recording Finish first, block active/inserting restoration and recheck after
+  confirmation. Recovery must use one transcript surface in compact Review.
+- Opt-in support journals record PID/build and fixed capture/readback stages,
+  never transcript, field names, audio or clipboard contents. Installation or
+  successful Notepad delivery does not establish Outlook compatibility.
 - Manual edits, a closed field, or failed ownership validation require an
   explicit destination decision. Never adopt arbitrary focus.
 - Never submit text or synthesize a send shortcut. Wait for acceptance keys to

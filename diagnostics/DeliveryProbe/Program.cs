@@ -20,6 +20,13 @@ static class Program
 {
     [STAThread] static void Main(string[] args)
     {
+        if(args.Contains("--diagnostic-checks"))
+        {
+            if(args.Length!=3||args[0]!="--diagnostic-checks"||args[1]!="--report")
+            {Environment.ExitCode=2;return;}
+            DiagnosticChecks.Run(Path.GetFullPath(args[2]));
+            return;
+        }
         if(args.Length==3&&args[0]=="--clipboard-checks"&&args[1]=="--report")
         {
             var path=Path.GetFullPath(args[2]);Directory.CreateDirectory(Path.GetDirectoryName(path)!);
