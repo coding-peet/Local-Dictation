@@ -60,6 +60,33 @@ internal static class Program
                     Require(Settings.Load().VerificationModel=="synthetic/third","Verifier selection was not autosaved.");
                     await Task.CompletedTask;
                 });
+                await Case("Verification details collapse without losing their saved model and return on enable",async test=>
+                {
+                    test.Box("verifier").SelectedValue="synthetic/third";
+                    test.Check("verify").IsChecked=false;
+                    Require(CollapsedInTree(test.Box("verifier")),"Disabled verification still occupies the settings page.");
+                    Require(Settings.Load().VerificationModel=="synthetic/third"&&!Settings.Load().VerifyAfterRecording,"Collapsing verification discarded its selected model.");
+                    test.Refresh();
+                    Require(CollapsedInTree(test.Box("verifier")),"Passive refresh expanded disabled verification.");
+                    test.Check("verify").IsChecked=true;
+                    Require(!CollapsedInTree(test.Box("verifier"))&&test.Box("verifier").IsEnabled,"Enabled verification did not reveal its controls.");
+                    Require(Settings.Load().VerificationModel=="synthetic/third"&&Settings.Load().VerifyAfterRecording,"Reopening verification changed its saved choice.");
+                    await Task.CompletedTask;
+                });
+                await Case("Opening with verification off leaves details collapsed without rewriting settings",async test=>
+                {
+                    test.Check("verify").IsChecked=false;
+                    var file=Path.Combine(test.Home,"data","settings.json");var before=File.ReadAllBytes(file);
+                    var window=new SettingsWindow(test.Controller);
+                    try
+                    {
+                        Field<DispatcherTimer>(window,"poll").Stop();
+                        Require(CollapsedInTree(Field<ComboBox>(window,"verifier")),"Opening Settings exposed disabled verification details.");
+                        Require(File.ReadAllBytes(file).SequenceEqual(before),"Opening the simplified settings rewrote stored choices.");
+                    }
+                    finally{window.Close();}
+                    await Task.CompletedTask;
+                });
                 await Case("Invalid text is never saved and does not block valid toggle changes",async test=>
                 {
                     test.Text("endpoint").Text="http://";test.Text("shortcutValue").Text="Ctrl+";
@@ -126,7 +153,7 @@ internal static class Program
                     test.Box("primary").SelectedValue=Large;
                     Require(test.Check("live").IsEnabled&&test.Check("live").IsChecked==true,"LiveSupported was incorrectly gated by LiveReady.");
                     var hint=Field<TextBlock>(test.Window,"modelStatus").Text;
-                    Require(hint.Contains("Large-v3")&&hint.Contains("latency",StringComparison.OrdinalIgnoreCase),"Unqualified Large live use has no model-specific latency hint.");
+                    Require((string?)test.Box("primary").SelectedValue==Large&&hint.Contains("latency",StringComparison.OrdinalIgnoreCase),"Unqualified Large live use has no latency hint.");
                     test.Box("primary").SelectedValue="synthetic/batch";
                     Require(!test.Check("live").IsEnabled&&!Settings.Load().Live,"An unsupported live model retained live mode.");
                     test.Box("primary").SelectedValue=Large;test.Check("live").IsChecked=true;
@@ -138,7 +165,13 @@ internal static class Program
                     Set(test.Controller,"<Models>k__BackingField",new List<ModelInfo>{Model(Large,"Whisper Large-v3",true,false)});
                     test.Refresh();test.Box("primary").SelectedValue=Large;
                     Require(Settings.Load().PrimaryModel==Large&&!Settings.Load().VerifyAfterRecording,"A missing verifier blocked saving the primary model.");
-                    Require(test.AllText().Contains("verification",StringComparison.OrdinalIgnoreCase)&&test.AllText().Contains("off",StringComparison.OrdinalIgnoreCase),"Verification was disabled without feedback.");
+                    Require(CollapsedInTree(test.Box("verifier")),"Unavailable verification left its optional controls expanded.");
+                    Require(Field<TextBlock>(test.Window,"message").Text.Contains("Verification is off",StringComparison.OrdinalIgnoreCase),"Collapsing unavailable verification hid its explanation.");
+                    test.Check("verify").IsChecked=true;
+                    Require(!test.Check("verify").IsChecked!.Value&&Field<TextBlock>(test.Window,"message").Text.Contains("no other",StringComparison.OrdinalIgnoreCase),"A rejected verification toggle failed silently.");
+                    Set(test.Controller,"<Models>k__BackingField",new List<ModelInfo>{Model(Large,"Whisper Large-v3",true,false),Model(Turbo,"Whisper Turbo",true,true)});
+                    test.Refresh();
+                    Require(Field<TextBlock>(test.Window,"message").Text.Length==0,"Recovered verification retained its unavailable-model warning.");
                     await Task.CompletedTask;
                 });
                 await Case("An unavailable selected model blocks Record without falling back",async test=>
@@ -283,7 +316,12 @@ internal static class Program
                     visual.Box("primary").SelectedValue=Large;
                     var directory=Path.GetDirectoryName(report)!;Directory.CreateDirectory(directory);
                     visual.Render(Path.Combine(directory,"settings-dictation.png"),0,872,680);
+                    visual.Check("verify").IsChecked=false;
+                    visual.Render(Path.Combine(directory,"settings-dictation-simple.png"),0,872,680);
+                    visual.Render(Path.Combine(directory,"settings-dictation-compact.png"),0,692,480);
                     visual.Render(Path.Combine(directory,"settings-preferences-short.png"),4,716,480);
+                    visual.Box("theme").SelectedItem="Light";
+                    visual.Render(Path.Combine(directory,"settings-dictation-light.png"),0,872,680);
                 }
                 exitCode=results.All(r=>r.Passed)?0:1;
             }
@@ -312,6 +350,12 @@ internal static class Program
             }
         }));
         Dispatcher.Run();return exitCode;
+    }
+    static bool CollapsedInTree(DependencyObject node)
+    {
+        for(DependencyObject? current=node;current!=null&&current is not Window;current=LogicalTreeHelper.GetParent(current))
+            if(current is UIElement element&&element.Visibility==Visibility.Collapsed)return true;
+        return false;
     }
     static void Require(bool condition,string message){if(!condition)throw new InvalidOperationException(message);}
     static T Field<T>(object target,string name)=>(T)(target.GetType().GetField(name,Members)!.GetValue(target)!);

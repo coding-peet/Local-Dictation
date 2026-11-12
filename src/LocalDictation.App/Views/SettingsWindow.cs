@@ -23,6 +23,7 @@ public sealed class SettingsWindow : Window
         verify=new(){Content="Verify after recording"},insert=new(){Content="Insert live text at the cursor"},
         shortcutEnabled=new(){Content="Enable keyboard shortcut"};
     readonly ListBox catalogModels=new(){MinHeight=96,MaxHeight=160,DisplayMemberPath="Label",SelectedValuePath="Id"};
+    readonly StackPanel verificationDetails=new(){Margin=new(22,0,0,0)};
     Button inspectCatalog=null!;
     readonly ListBox reviews=new(){MinHeight=70,MaxHeight=170,DisplayMemberPath="Reason"};
     Button download=null!,cancelDownload=null!;
@@ -32,7 +33,7 @@ public sealed class SettingsWindow : Window
     readonly DispatcherTimer saveDelay=new(){Interval=TimeSpan.FromMilliseconds(650)};
     readonly HashSet<TextBox> pendingText=[];
     readonly Dictionary<TextBox,string> textErrors=[];
-    string selectionError="",saveError="",microphoneWarning="";
+    string selectionError="",saveError="",microphoneWarning="",verificationWarning="";
     string? inspection,job,missingMicrophoneId;
     bool loading,updating,polling,selectionPending,microphoneEnumerationFailed;
     public SettingsWindow(AppController controller)
@@ -52,11 +53,15 @@ public sealed class SettingsWindow : Window
         record=Ui.Button("Record in banner",RecordInBanner,true);
         record.HorizontalAlignment=HorizontalAlignment.Right;record.Margin=new(16,0,0,0);
         DockPanel.SetDock(record,Dock.Right);titleRow.Children.Add(record);
-        titleRow.Children.Add(Ui.Text("Local Dictation",22,true));header.Children.Add(titleRow);
-        connection.SetResourceReference(TextBlock.ForegroundProperty,"Muted");connection.FontSize=13;connection.Margin=new(0,3,0,6);header.Children.Add(connection);
-        saveStatus.FontSize=13;saveStatus.Margin=new(0,0,0,16);
+        var title=Ui.Text("Local Dictation",22,true);title.Margin=new(0);title.VerticalAlignment=VerticalAlignment.Center;
+        titleRow.Children.Add(title);header.Children.Add(titleRow);
+        var statusRow=new Grid{Margin=new(0,8,0,12)};
+        statusRow.ColumnDefinitions.Add(new(){Width=new GridLength(3,GridUnitType.Star)});
+        statusRow.ColumnDefinitions.Add(new(){Width=new GridLength(2,GridUnitType.Star)});
+        connection.SetResourceReference(TextBlock.ForegroundProperty,"Muted");connection.FontSize=13;connection.Margin=new(0);statusRow.Children.Add(connection);
+        saveStatus.FontSize=13;saveStatus.Margin=new(12,0,0,0);saveStatus.TextAlignment=TextAlignment.Right;
         System.Windows.Automation.AutomationProperties.SetLiveSetting(saveStatus,System.Windows.Automation.AutomationLiveSetting.Polite);
-        header.Children.Add(saveStatus);
+        Grid.SetColumn(saveStatus,1);statusRow.Children.Add(saveStatus);header.Children.Add(statusRow);
         DockPanel.SetDock(header,Dock.Top);root.Children.Add(header);
 
         var footer=new DockPanel{Margin=new(0,14,0,0)};
@@ -97,9 +102,8 @@ public sealed class SettingsWindow : Window
 
     UIElement DictationPage()
     {
-        var page=new StackPanel{Margin=new(0,18,4,0)};
-        var recording=new StackPanel();recording.Children.Add(Ui.Text("Recording",18,true));
-        recording.Children.Add(Ui.Text("Choose what you record and which model transcribes it.",13));
+        var page=new StackPanel{Margin=new(0,14,4,0)};
+        var recording=new StackPanel();
         var microphoneRow=new DockPanel();
         var refresh=Ui.Button("Refresh microphones",LoadMicrophones);refresh.Margin=new(10,0,0,0);refresh.MinHeight=40;
         DockPanel.SetDock(refresh,Dock.Right);microphoneRow.Children.Add(refresh);microphoneRow.Children.Add(microphone);
@@ -108,14 +112,13 @@ public sealed class SettingsWindow : Window
         var modelRow=new Grid();modelRow.ColumnDefinitions.Add(new(){Width=new GridLength(1,GridUnitType.Star)});modelRow.ColumnDefinitions.Add(new(){Width=new GridLength(160)});
         var dictationChoice=new StackPanel{Margin=new(0,0,16,0)};Ui.Label(dictationChoice,"Dictation model",primary);modelRow.Children.Add(dictationChoice);
         var languageChoice=new StackPanel();Ui.Label(languageChoice,"Language",language);Grid.SetColumn(languageChoice,1);modelRow.Children.Add(languageChoice);recording.Children.Add(modelRow);
-        recording.Children.Add(live);modelStatus.FontSize=12;modelStatus.SetResourceReference(TextBlock.ForegroundProperty,"Muted");recording.Children.Add(modelStatus);
-        page.Children.Add(Section(recording));
-        var delivery=new StackPanel();delivery.Children.Add(Ui.Text("Text and verification",18,true));
-        delivery.Children.Add(insert);delivery.Children.Add(verify);
-        delivery.Children.Add(Ui.Text("Start with the shortcut in your destination field. Live insertion can be turned off while the banner shows your draft. Finished text returns automatically; if verification finds differences, choose their wording in the banner first.",12));
-        Ui.Label(delivery,"Verification model",verifier,"An optional second pass. Review lets you choose between the two versions.");
-        verificationStatus.FontSize=12;verificationStatus.SetResourceReference(TextBlock.ForegroundProperty,"Muted");delivery.Children.Add(verificationStatus);
-        page.Children.Add(Section(delivery));
+        modelStatus.FontSize=12;modelStatus.Margin=new(0,0,0,10);modelStatus.SetResourceReference(TextBlock.ForegroundProperty,"Muted");recording.Children.Add(modelStatus);
+        recording.Children.Add(live);recording.Children.Add(insert);page.Children.Add(recording);
+        var divider=new Border{Height=1,Margin=new(0,14,0,14)};divider.SetResourceReference(Border.BackgroundProperty,"Border");page.Children.Add(divider);
+        page.Children.Add(verify);
+        Ui.Label(verificationDetails,"Verification model",verifier);
+        verificationStatus.FontSize=12;verificationStatus.SetResourceReference(TextBlock.ForegroundProperty,"Muted");verificationDetails.Children.Add(verificationStatus);
+        page.Children.Add(verificationDetails);
         return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
     }
 
@@ -262,24 +265,36 @@ public sealed class SettingsWindow : Window
         var eligible=choices.FirstOrDefault(m=>m.Id==previous);
         if(userChange)eligible??=choices.FirstOrDefault();
         verifier.SelectedValue=eligible?.Id;
-        if(userChange&&selected!=null&&choices.Count==0&&verify.IsChecked==true)verify.IsChecked=false;
+        var verificationWasEnabled=verify.IsChecked==true;
+        if(userChange&&selected!=null&&choices.Count==0&&verificationWasEnabled)verify.IsChecked=false;
         verifier.IsEnabled=verify.IsChecked==true&&choices.Count>0;
+        verificationDetails.Visibility=verify.IsChecked==true?Visibility.Visible:Visibility.Collapsed;
         var unavailableSavedVerifier=!userChange&&verify.IsChecked==true&&eligible==null&&controller.Models.Count>0;
         verificationStatus.SetResourceReference(TextBlock.ForegroundProperty,unavailableSavedVerifier?"Warning":"Muted");
         verificationStatus.Text=controller.Models.Count==0?"Service offline; your saved verification choice is retained.":
             unavailableSavedVerifier?"The saved verification model is unavailable or incompatible. Choose another model or turn verification off.":
             choices.Count==0?"Verification is off: no other installed, runtime-tested model supports this language.":
             eligible!=null&&eligible.Id!=previous&&verify.IsChecked==true?$"Verification will use {eligible.Name}; it must differ from Dictation.":"";
+        if(userChange&&verificationWasEnabled&&verify.IsChecked!=true)
+        {
+            // Keep a rejected toggle explicit even though its optional controls are collapsed.
+            verificationWarning=verificationStatus.Text;message.Text=verificationWarning;
+        }
+        else if(choices.Count>0&&verificationWarning.Length>0)
+        {
+            if(message.Text==verificationWarning)message.Text="";
+            verificationWarning="";
+        }
         live.IsEnabled=selected?.LiveSupported==true;
         if(userChange&&selected!=null&&!live.IsEnabled)live.IsChecked=false;
         modelStatus.Text=selected==null?controller.Models.Count==0
             ?$"Service offline; saved model retained: {controller.Settings.PrimaryModel}."
             :"The saved model is unavailable. Select an installed model.":
             !selected.Installed?"This catalog model is not installed.":
-            !selected.RuntimeTested?$"{selected.Name} · Installed. Run a model test before first use.":
-            !selected.LiveSupported?$"{selected.Name} · After-recording transcription only.":
-            !selected.LiveReady?$"{selected.Name} · Live transcription available. Preview latency can be several seconds; larger models may update more slowly.":
-            $"{selected.Name} · Live preview or after-recording transcription.";
+            !selected.RuntimeTested?"Installed. Run a model test before first use.":
+            !selected.LiveSupported?"After-recording transcription only.":
+            !selected.LiveReady?"Live preview latency may be several seconds.":"";
+        modelStatus.Visibility=modelStatus.Text.Length>0?Visibility.Visible:Visibility.Collapsed;
     }
 
     void SelectionChanged(Control source)

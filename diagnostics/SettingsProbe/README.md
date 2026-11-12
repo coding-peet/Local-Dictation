@@ -39,6 +39,10 @@ disposes its controllers, and terminates its own test host explicitly.
 - Installed Large-v3 autosaves immediately, selects a different eligible
   verifier, and survives an ordinary model-list refresh.
 - Microphone, language, verifier, toggles, shortcut enablement, and theme persist.
+- Verification controls collapse while off and return on enable with the eligible
+  saved model intact. Opening/refreshing an off state does not expand controls or
+  rewrite settings. Rejected enabling without another eligible model keeps its
+  explanation visible outside the collapsed controls; recovery clears that warning.
 - Valid text saves after a debounce or focus loss; closing flushes a valid edit.
   Invalid intermediate text is never persisted and cannot block another valid
   setting. Focus loss in one field preserves another field's debounce.
@@ -61,7 +65,8 @@ disposes its controllers, and terminates its own test host explicitly.
   settings and explicit feedback.
 - Passive offline refreshes preserve the saved file and choices without writes.
 
-When --report is supplied, the probe also renders the WPF content to two PNGs
-beside the report for layout review, including a short settings pane. These are
+When --report is supplied, the probe also renders the WPF content to PNGs
+beside the report for layout review: verification expanded/off, compact-width
+Dictation, and a short preferences pane. These are
 application-rendered content images; they do not show a native window frame,
 physical keyboard operation, live microphone latency, or model quality.

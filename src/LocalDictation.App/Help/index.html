@@ -223,7 +223,7 @@
 
       <section id="review" aria-labelledby="review-title">
         <h2 id="review-title">Verify after recording and Review</h2>
-        <p>Enable <strong>Verify after recording</strong> and choose a different eligible <strong>Verification model</strong> for a second pass over the audio. This takes extra time. Either model can be wrong.</p>
+        <p>Enable <strong>Verify after recording</strong> on the <strong>Dictation</strong> tab to reveal the <strong>Verification model</strong> selector. Choose a different eligible model for a second pass over the audio. Verification takes extra time, and either model can be wrong. Turning verification off hides these details and retains an eligible selected model for next time.</p>
         <ol>
           <li>Dictate and stop recording.</li>
           <li>The transcript is saved before its live draft is removed from a validated destination. Surrounding text stays.</li>
@@ -298,7 +298,7 @@
           <li>Select the installed Dictation model and <strong>Test selected model with audio…</strong>.</li>
         </ol>
         <p>Imports support compatible built-in Whisper Transformers models with original safetensors; private, gated, and remote-code models are rejected. New imports start after-recording. Closing Settings does not stop downloading; use <strong>Cancel download</strong>.</p>
-        <p>The status below <strong>Live transcription</strong> says whether the selected model is missing, needs a runtime test, supports live preview, or works after recording only. Support and measured low-latency readiness are separate. The three named Turbo/Large-v3 profiles support live; other newly imported profiles still start without live capability.</p>
+        <p>A note below <strong>Dictation model</strong> appears when it needs a runtime test, is missing, works after recording only, or may have slow live previews. Support and measured low-latency readiness are separate. The three named Turbo/Large-v3 profiles support live; other newly imported profiles still start without live capability.</p>
         <p><strong>Installed</strong>, <strong>runtime-tested</strong>, <strong>quality-checked</strong>, and <strong>live-ready</strong> are separate states. A successful runtime test proves the model can transcribe; check its accuracy and live performance separately. Verification needs a different, installed, runtime-tested model supporting your language.</p>
         <p>KInIT is Slovak-only. For English, use a multilingual model and select <strong>English</strong> or <strong>Auto</strong>. Forcing the wrong language can corrupt wording. The local comparison covered three Slovak recordings with user-supplied or corrected reference wording; it is not a universal accuracy ranking.</p>
       </section>
@@ -323,7 +323,8 @@
 
       <section id="settings" aria-labelledby="settings-title">
         <h2 id="settings-title">Settings and shortcuts</h2>
-        <p>Open the <strong>Settings</strong> tab for appearance, shortcut, and local service preferences.</p>
+        <p>The <strong>Dictation</strong> tab groups the microphone, model, language, and both live options. <strong>Insert live text at the cursor</strong> sits directly below <strong>Live transcription</strong>. Enable <strong>Verify after recording</strong> to show its additional settings.</p>
+        <p>Open the <strong>Settings</strong> tab for appearance, shortcut, and local service preferences. Connection and automatic saving status share one row at the top of the window.</p>
         <dl>
           <dt>Appearance</dt>
           <dd><strong>System</strong> follows Windows at app startup. <strong>Light</strong> / <strong>Dark</strong> override it. Preview is immediate and saves automatically. Windows high contrast takes priority.</dd>

@@ -30,6 +30,12 @@ punctuation, whitespace, and Unicode must be preserved.
   A successful download or test does not prove quality or live suitability.
 - The default shortcut is Ctrl+Shift. Make it configurable in Settings, with
   repeat suppression and a clear disabled/collision state.
+- Keep the Settings header compact, with connection and autosave in one status
+  row. Avoid duplicate Recording/Text and verification headings and introductory
+  paragraphs on the Dictation tab. Put Insert live text at the cursor immediately
+  after Live transcription. Separate Verify after recording with spacing/a rule;
+  reveal its model/details only while enabled, retaining the eligible selection
+  when hidden. Keep actionable errors visible even when details collapse.
 - Persist valid settings changes automatically. Model/microphone choices and
   toggles must not require a separate Save action before shortcut recording.
   Debounce text settings, preserve the last valid configuration on errors, and
