@@ -159,6 +159,27 @@ and displayed its complete new paragraph without clipping. The published Help
 and application-level F1 check passed; no user settings were changed for this
 inspection.
 
+## Follow-up trial and shortcut collision
+
+The first physical trial after deployment was blocked because TypeWhisper was
+running with the same Ctrl+Shift shortcut. The client deliberately disabled
+that colliding chord. Peter chose to quit TypeWhisper and retain Ctrl+Shift,
+then confirmed that he had also exited Local Dictation himself. This is not
+evidence of a spontaneous client crash or a successful Outlook insertion.
+
+The client was restarted normally with diagnostics at 19:05:48 CET. The startup
+marker and process command line identify PID 8716, the same code version above,
+and exactly C:\Git\Local-Dictation\app\LocalDictation.exe without arguments.
+TypeWhisper was absent. Saved shortcut settings were EnableShortcut=true and
+Shortcut=Ctrl+Shift. In the running Settings window, Recheck shortcut displayed
+"Ctrl+Shift starts and stops dictation." The local API was ready and idle.
+
+Settings was closed while leaving the client running, and the empty test draft
+was left open. A fresh physical shortcut/microphone trial was requested. The UI
+status proves configuration and collision checks, not actual delivery of a
+physical keyboard hook event or successful Outlook insertion. That acceptance
+remains pending.
+
 ## Remaining acceptance
 
 Manual Outlook acceptance remains pending. Use the attributable installed
