@@ -75,7 +75,7 @@ with generated output outside the checkout. No new worktree was created.
   and the existing restrictive content security policy. All three edited
   documents passed UTF-8/content/trailing-whitespace checks; the tracked Help
   and requirements changes passed `git diff --check`. Help was not opened or
-  rendered for this documentation update.
+  rendered at that earlier static-only checkpoint; the installed F1 check is recorded below.
 
 The native paragraph provider first performs an ordinary synchronous native
 paste, then models the single-LF projection. It is a controlled synthetic
@@ -129,14 +129,44 @@ The final 26/26 native run passed afterward with strict format checks retained.
     C:\AI\build\Local-Dictation-outlook-lf-native\bitmap-green.json
     C:\AI\build\Local-Dictation-outlook-lf-native\green-final.json
 
+## Deployment and Help verification
+
+The code commit is 05447e4927c5d5d347cddb7e49aa4200edb76e1e. The release
+build passed 201/201 Core tests and was published from the canonical checkout.
+The published assembly records LocalDictation.SourceRoot as
+C:\Git\Local-Dictation\repo and its informational version as
+0.1.0+05447e4927c5d5d347cddb7e49aa4200edb76e1e.
+
+After verifying no client or fixture was running, all 14 client files were
+backed up, replaced and hash-checked. All 78 protected data/settings files were
+unchanged during that file copy. Models and user data remain under C:\AI.
+The local backup and deployment manifest are at:
+
+    C:\AI\build\Local-Dictation-deploy-20261112T175158Z
+
+The candidate service was found offline after the user's pause. It was started from
+the canonical checkout with Start-CandidateServer.ps1; port 48125 then reported
+ready=true and busy=false. No production service was restarted.
+
+The installed client launched normally with hotkeys and child-only delivery
+diagnostics. Startup marker and actual process path matched PID 38892 and the
+version above at 18:52:01 CET. This identifies the next Outlook trial; it does
+not by itself establish insertion acceptance.
+
+F1 in the installed Settings window opened C:\Git\Local-Dictation\app\Help.html
+in the default browser. The updated Outlook troubleshooting disclosure opened
+and displayed its complete new paragraph without clipping. The published Help
+and application-level F1 check passed; no user settings were changed for this
+inspection.
+
 ## Remaining acceptance
 
-Deployment of this correction to the app folder and manual Outlook acceptance
-remain pending. Use a fresh attributable candidate for the user's actual Outlook
-test, confirming the complete visible result, preserved signature, durable
-insertion status, restored clipboard and absence of replay. Review-approved return and focus-switch
+Manual Outlook acceptance remains pending. Use the attributable installed
+client identified above for the user's actual Outlook test, confirming the
+complete visible result, preserved signature, durable insertion status, restored
+clipboard and absence of replay. Review-approved return and focus-switch
 resumption remain distinct acceptance checks.
 
 The corrected installed Outlook flow has not yet passed a manual test. A build,
 Core tests, diagnostic checks or synthetic native field does not establish that
-result. Updated Help still needs its published F1/application-level check.
+result. The published Help and F1/application-level check passed as recorded above.
