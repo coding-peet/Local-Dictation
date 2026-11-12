@@ -21,6 +21,7 @@ public sealed class AppController : IDisposable
         public MicrophoneCapture Capture=new();
         public SessionStream Stream=new();
         public ITextDelivery? Delivery;
+        public bool FinalOnlyDestination;
         public DestinationStamp Destination;
         public bool CanDeliver,NeedsReview,PrimaryFinal,Completed,NormalCompletion,AutoInsertBlocked,Verifying,Closing,DestinationChecked,Recording=true;
         public DateTimeOffset Started=DateTimeOffset.Now;
@@ -78,8 +79,11 @@ public sealed class AppController : IDisposable
     public string LatestText => active?.Text??BannerReview?.OutputText??lastTranscript;
     public bool LiveTranscription=>active?.Settings.Live??Settings.Live;
     public string DeliveryMessage=>ClipboardRecovery.HasPending?ClipboardRecovery.Message:active is {} run
-        ?run.CanDeliver?"Text is also inserted at the original cursor.":run.Review.Reason
+        ?run.FinalOnlyDestination&&!run.AutoInsertBlocked?"Live text stays in this banner. Finished text returns to the original Outlook cursor after any required wording choices.":
+            run.CanDeliver?"Text is also inserted at the original cursor.":run.Review.Reason
         :BannerReview?.Reason??lastDeliveryMessage;
+    public string RecordingDeliveryLabel=>active is {FinalOnlyDestination:true}?"Outlook · Inserts after Finish":
+        AtCursor?(LiveTranscription?"Live text · At your cursor":"After Finish · At your cursor"):"Review mode · Text stays here";
     public float Level => active?.Capture.Level??0;
     public bool IsRecording => active?.Recording==true;
     public bool AtCursor=>active?.CanDeliver==true;
@@ -136,7 +140,7 @@ public sealed class AppController : IDisposable
             {
                 var elapsed=TimeSpan.FromSeconds(active.Capture.CapturedBytes/32000.0);
                 DetailLabel=$"{(int)elapsed.TotalMinutes:00}:{elapsed.Seconds:00} · {Models.FirstOrDefault(m=>m.Id==active.Settings.PrimaryModel)?.Name??active.Settings.PrimaryModel}"+
-                    (active.CanDeliver?" · At cursor":" · Review")+
+                    (active.FinalOnlyDestination?" · Outlook · Inserts after Finish":active.CanDeliver?" · At cursor":" · Review")+
                     " · "+active.Capture.DeviceName+(active.Recording?" · Mic active":" · Mic stopped");
             }
             clipboardRecoveryAction.Enabled=CanRestoreClipboard;
@@ -222,7 +226,7 @@ public sealed class AppController : IDisposable
 
     async Task Deliver(Run run,bool wait=false)
     {
-        if(!run.Settings.InsertAtCursor||run.Delivery==null||run.PrimaryFinal&&run.Settings.VerifyAfterRecording)return;
+        if(run.FinalOnlyDestination||!run.Settings.InsertAtCursor||run.Delivery==null||run.PrimaryFinal&&run.Settings.VerifyAfterRecording)return;
         if(wait)await deliveryGate.WaitAsync();
         else if(!await deliveryGate.WaitAsync(0))return;
         deliveryBusy=true;
@@ -536,6 +540,20 @@ public sealed class AppController : IDisposable
         finally{recordingTasks.Remove(recording);}
     }
 
+    void ConfigureDestination(Run run,ITextDelivery delivery,string? processName)
+    {
+        run.Delivery=delivery;destinations[run.Review.Id]=delivery;
+        run.FinalOnlyDestination=DestinationDeliveryPolicy.InsertsAfterFinish(processName);
+        run.CanDeliver=run.Settings.InsertAtCursor&&!run.FinalOnlyDestination;
+        if(!run.CanDeliver)
+        {
+            run.NeedsReview=true;
+            run.Review.Reason=run.FinalOnlyDestination
+                ?"Outlook keeps live text in this banner. The completed text will return to the original cursor."
+                :"Preview only while recording. The completed text will return to the original cursor.";
+        }
+    }
+
     async Task Record(Run run)
     {
         Task? sender=null,receiver=null;
@@ -558,9 +576,7 @@ public sealed class AppController : IDisposable
                     {delivery.Invalidate();throw new InvalidOperationException("The initial destination changed.");}
                     if(active!=run||run.Cancel.IsCancellationRequested)
                     {delivery.Invalidate();run.Cancel.Token.ThrowIfCancellationRequested();return;}
-                    run.Delivery=delivery;destinations[run.Review.Id]=delivery;run.CanDeliver=run.Settings.InsertAtCursor;
-                    if(!run.Settings.InsertAtCursor)
-                    {run.NeedsReview=true;run.Review.Reason="Preview only while recording. The completed text will return to the original cursor.";}
+                    ConfigureDestination(run,delivery,WindowsDestinationApplication.ProcessName(delivery.Window));
                 }
                 catch(Exception ex){run.Review.Reason=ex is InvalidOperationException?ex.Message:
                     "The original cursor could not be validated. Dictation continues in this preview.";run.NeedsReview=true;}

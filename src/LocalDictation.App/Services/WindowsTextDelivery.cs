@@ -13,6 +13,7 @@ public sealed class WindowsTextDelivery : ITextDelivery
     readonly nint window;
     readonly TargetGuard guard;
     readonly AutomationElement original;
+    readonly TextPatternRange? beforeOriginalCaret;
     readonly string provider;
     int invalid,operating,generation;
     public nint Window=>window;
@@ -22,8 +23,8 @@ public sealed class WindowsTextDelivery : ITextDelivery
     public string InsertedText => guard.OwnedText;
     public DeliveryDiagnostic? LastDiagnostic {get;private set;}
 
-    WindowsTextDelivery(nint window,TargetGuard guard,AutomationElement original)
-    {this.window=window;this.guard=guard;this.original=original;provider=ProviderMetadata(original);}
+    WindowsTextDelivery(nint window,TargetGuard guard,AutomationElement original,TextPatternRange? beforeOriginalCaret)
+    {this.window=window;this.guard=guard;this.original=original;this.beforeOriginalCaret=beforeOriginalCaret;provider=ProviderMetadata(original);}
     public void Invalidate() => Interlocked.Exchange(ref invalid, 1);
     public void Suspend()=>Interlocked.Increment(ref generation);
     public bool OwnsProgrammaticFocus(nint root)=>root==window&&Volatile.Read(ref operating)>0;
@@ -93,6 +94,9 @@ public sealed class WindowsTextDelivery : ITextDelivery
             }));
             diagnostic.Stage(CaptureStage.Cancellation);
             token.ThrowIfCancellationRequested();
+            diagnostic.Stage(CaptureStage.CaretAnchor);
+            var beforeCaret=info.Caret==0?null:CaptureBeforeCaret(info.Pattern,info.Selection);
+            token.ThrowIfCancellationRequested();
             diagnostic.Stage(CaptureStage.PostcheckWindow);
             if (window == 0 || GetForegroundWindow() != window)
                 throw new InvalidOperationException("The destination changed during the cursor check.");
@@ -102,7 +106,7 @@ public sealed class WindowsTextDelivery : ITextDelivery
             diagnostic.Stage(CaptureStage.ConstructIdentity);
             var guard=new TargetGuard(Identity(element),info.Text,info.Caret);
             diagnostic.Stage(CaptureStage.ProviderMetadata);
-            var delivery=new WindowsTextDelivery(window,guard,element);
+            var delivery=new WindowsTextDelivery(window,guard,element,beforeCaret);
             diagnostic.Complete();
             return delivery;
         }
@@ -203,30 +207,17 @@ public sealed class WindowsTextDelivery : ITextDelivery
                     return Pause("The original insertion point could not be restored. Your transcript is preserved.");
             }
             if (next == guard.OwnedText) return true;
-            var common = 0;
-            while (common < next.Length && common < guard.OwnedText.Length && next[common] == guard.OwnedText[common]) common++;
-            if (common > 0 && common < next.Length && char.IsLowSurrogate(next[common])) common--;
+            var common = DraftRevision.CommonPrefixBoundary(guard.OwnedText,next);
             var oldTail = guard.OwnedText[common..];
             var replacement = next[common..];
             expected = guard.ReplacedText(next);
             TextPatternRange selected = current.Selection;
             if (oldTail.Length != 0)
             {
-                var search = current.Pattern.DocumentRange.Clone();
-                var found = false;
-                for (var attempt = 0; attempt < 256; attempt++)
-                {
-                    var candidate = search.FindText(oldTail, false, false);
-                    if (candidate == null) break;
-                    var prefix = current.Pattern.DocumentRange.Clone();
-                    prefix.MoveEndpointByRange(TextPatternRangeEndpoint.End, candidate, TextPatternRangeEndpoint.Start);
-                    if (prefix.GetText(-1) == guard.ExpectedText[..(guard.Start + common)] &&
-                        candidate.GetText(-1) == oldTail &&
-                        candidate.CompareEndpoints(TextPatternRangeEndpoint.End, current.Selection, TextPatternRangeEndpoint.Start) == 0)
-                    { selected = candidate; found = true; break; }
-                    search.MoveEndpointByRange(TextPatternRangeEndpoint.Start, candidate, TextPatternRangeEndpoint.End);
-                }
-                if (!found) return Stop("The owned draft range is no longer available.");
+                phase="owned range";
+                var owned=OwnedSuffix(current.Pattern,current.Selection,oldTail,common,token,version);
+                if(owned==null)return Stop("The owned draft range is no longer available.");
+                selected=owned;
             }
             if(replacement.Length>0)
             {
@@ -346,6 +337,96 @@ public sealed class WindowsTextDelivery : ITextDelivery
             return Safe(element.Current.FrameworkId)+"/"+Safe(element.Current.ClassName)+"/"+element.Current.ControlType.Id;
         }
         catch(Exception){return "unavailable";}
+    }
+
+    static TextPatternRange? CaptureBeforeCaret(TextPattern pattern,TextPatternRange caret)
+    {
+        try
+        {
+            var anchor=caret.Clone();
+            var moved=anchor.MoveEndpointByUnit(TextPatternRangeEndpoint.Start,TextUnit.Character,-1);
+            var document=pattern.DocumentRange;
+            return moved==-1&&
+                anchor.CompareEndpoints(TextPatternRangeEndpoint.Start,caret,TextPatternRangeEndpoint.Start)<0&&
+                anchor.CompareEndpoints(TextPatternRangeEndpoint.End,caret,TextPatternRangeEndpoint.Start)==0&&
+                anchor.CompareEndpoints(TextPatternRangeEndpoint.Start,document,TextPatternRangeEndpoint.Start)>=0&&
+                anchor.CompareEndpoints(TextPatternRangeEndpoint.End,document,TextPatternRangeEndpoint.End)<=0?anchor:null;
+        }
+        catch(Exception error) when(error is InvalidOperationException or ElementNotAvailableException or COMException or ArgumentException)
+        {return null;}
+    }
+
+    TextPatternRange? OwnedSuffix(TextPattern pattern,TextPatternRange caret,string tail,int common,CancellationToken token,int version)
+    {
+        var document=pattern.DocumentRange;
+        var expectedPrefix=guard.ExpectedText[..(guard.Start+common)];
+        // Anchor strictly before the insertion boundary, whose gravity may move
+        // with pasted text. Limit forward probing to a short shared prefix; large
+        // unchanged prefixes keep using the shorter caret-to-suffix construction.
+        if(common==0||beforeOriginalCaret!=null&&common<128&&common+1<tail.Length)
+        {
+            TextPatternRange? cached=null;
+            Check(token,version);
+            try
+            {
+                var anchored=guard.Start==0&&common==0?document.Clone():beforeOriginalCaret?.Clone();
+                if(anchored!=null)
+                {
+                    var canAdvance=guard.Start==0&&common==0;
+                    if(!canAdvance)
+                    {
+                        var previous=anchored.Clone();
+                        var moved=anchored.MoveEndpointByUnit(TextPatternRangeEndpoint.Start,TextUnit.Character,common+1);
+                        canAdvance=moved==common+1&&anchored.CompareEndpoints(TextPatternRangeEndpoint.Start,previous,TextPatternRangeEndpoint.Start)>0;
+                    }
+                    token.ThrowIfCancellationRequested();
+                    if(canAdvance)
+                    {
+                        anchored.MoveEndpointByRange(TextPatternRangeEndpoint.End,caret,TextPatternRangeEndpoint.Start);
+                        if(anchored.CompareEndpoints(TextPatternRangeEndpoint.Start,caret,TextPatternRangeEndpoint.Start)<0&&
+                            anchored.CompareEndpoints(TextPatternRangeEndpoint.End,caret,TextPatternRangeEndpoint.Start)==0&&
+                            anchored.CompareEndpoints(TextPatternRangeEndpoint.Start,document,TextPatternRangeEndpoint.Start)>=0&&
+                            anchored.CompareEndpoints(TextPatternRangeEndpoint.End,document,TextPatternRangeEndpoint.End)<=0&&
+                            anchored.GetText(tail.Length+1)==tail)
+                        {
+                            var prefix=document.Clone();
+                            prefix.MoveEndpointByRange(TextPatternRangeEndpoint.End,anchored,TextPatternRangeEndpoint.Start);
+                            if(prefix.GetText(-1)==expectedPrefix)cached=anchored;
+                        }
+                    }
+                }
+            }
+            catch(Exception error) when(error is InvalidOperationException or ElementNotAvailableException or COMException or ArgumentException)
+            { /* A stale optional anchor is a cache miss, never a new destination. */ }
+            Check(token,version);
+            if(cached!=null)return cached;
+        }
+        // Character units are provider-defined, not UTF-16 offsets. Text length
+        // only bounds a logarithmic search; every candidate needs exact proofs.
+        var low=1;var high=tail.Length;var units=high;
+        while(low<=high)
+        {
+            Check(token,version);
+            var candidate=caret.Clone();
+            var moved=candidate.MoveEndpointByUnit(TextPatternRangeEndpoint.Start,TextUnit.Character,-units);
+            if(moved>=0||moved < -units||
+                candidate.CompareEndpoints(TextPatternRangeEndpoint.Start,caret,TextPatternRangeEndpoint.Start)>=0||
+                candidate.CompareEndpoints(TextPatternRangeEndpoint.End,caret,TextPatternRangeEndpoint.Start)!=0||
+                candidate.CompareEndpoints(TextPatternRangeEndpoint.Start,document,TextPatternRangeEndpoint.Start)<0||
+                candidate.CompareEndpoints(TextPatternRangeEndpoint.End,document,TextPatternRangeEndpoint.End)>0)return null;
+            var text=candidate.GetText(tail.Length+1);
+            if(text.Length==tail.Length)
+            {
+                if(text!=tail)return null;
+                var prefix=document.Clone();
+                prefix.MoveEndpointByRange(TextPatternRangeEndpoint.End,candidate,TextPatternRangeEndpoint.Start);
+                Check(token,version);
+                return prefix.GetText(-1)==expectedPrefix?candidate:null;
+            }
+            if(text.Length>tail.Length)high=units-1;else low=units+1;
+            units=low+(high-low)/2;
+        }
+        return null;
     }
 
     TextPatternRange OwnedEnd(TextPattern pattern)

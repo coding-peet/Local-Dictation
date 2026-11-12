@@ -118,9 +118,17 @@ The [Outlook investigation](docs/development/outlook-delivery-investigation-2026
 records the physical Notepad acceptance and the remaining Outlook confirmation
 mismatch. Avoiding redundant caret selection passes 19 native regression cases;
 focused-provider/text-shape diagnostics pass nine pure checks and the windowless
-MTA worker passes six. Actual Outlook now receives the first partial, but a
-one-character projected-document difference still blocks complete dictation.
-The next diagnostic candidate identifies that difference without logging text.
+MTA worker passes six. An earlier Outlook candidate received the first partial, then a
+one-character projected-document difference blocked complete dictation.
+That historical first-paste difference remains distinct from the later owned-range
+correction failure.
+
+The current [Outlook delivery update](docs/development/owned-range-repair-20261112.md)
+keeps desktop Outlook's live wording in the banner and returns the completed text
+once after Finish and any required choices. Other apps retain the saved live
+insertion preference. Exact owned-range construction passes 23/23 native fixture
+checks, Core passes 125/125, and controller/Review checks pass 35/35. Actual Outlook
+acceptance remains separate from those controlled fields and synthetic checks.
 
 ## Repository layout
 

@@ -201,6 +201,7 @@
       <section id="live-text" aria-labelledby="live-text-title">
         <h2 id="live-text-title">Live text and the banner</h2>
         <p><strong>Live transcription</strong> shows partial wording in the banner. With <strong>Insert live text at the cursor</strong> enabled it also updates a valid destination as you speak. With that option off, a shortcut-started recording remembers the original field and inserts the final text after normal completion and any required choices. Updates arrive after speech segments and processing, and can be revised. Without live mode, wait for the result after <strong>Finish</strong>.</p>
+        <p>In desktop <strong>Outlook</strong>, live wording stays in the banner. After <strong>Finish</strong>, the complete result is inserted once at the original valid cursor, after any verification choices. Live recognition stays on, and your live-insertion preference still applies to other apps.</p>
         <p>Live wording is a draft. The app waits for enough speech context, then refreshes it roughly every few seconds of new audio when the model can keep up. After <strong>Finish</strong>, the same dictation model checks the complete original recording before returning the final text. This happens with <strong>Verify after recording</strong> off too; verification adds a separate model and word choices.</p>
         <p>Finishing can revise earlier wording. Keep the original field unchanged until insertion completes. The Turbo profiles usually finish much sooner than Large-v3 on this PC; Large-v3 may need tens of seconds. Initial runtime preparation and model loading add time. Progress stays visible and <kbd>Esc</kbd> cancels.</p>
 
@@ -376,6 +377,7 @@
         </details>
         <details>
           <summary>The app switched to Review or will not resume at the cursor</summary>
+          <p>If only the beginning of a dictation appeared, the full transcript remains in the banner. A live correction must validate the text already inserted before replacing it. A range warning means delivery stopped; inspect the partial text before choosing another destination so it is not inserted twice.</p>
           <p>Return to the original field and leave its text unchanged. The destination must expose reliable editable text and selection access. A protected, elevated, unsupported, closed, or manually edited field cannot be used automatically. Continue through Review and <strong>Choose destination</strong>.</p>
           <p><strong>Record in banner</strong> starts from the app window and needs a destination selection. For preview-only dictation with an automatic final return, turn off <strong>Insert live text at the cursor</strong> and start with the shortcut from the destination field.</p>
         </details>
@@ -388,7 +390,7 @@
         </details>
         <details>
           <summary>Dictating into Outlook or another Office editor</summary>
-          <p>Click in the message body so the text cursor is visible, then start with your dictation shortcut. Your signature and surrounding text stay in place. Paste Special is not part of the dictation workflow.</p>
+          <p>Click in the message body so the text cursor is visible, then start with your dictation shortcut. In desktop Outlook, the live draft stays in the banner; <strong>Finish</strong> returns the complete text to that original cursor after processing and any required word choices. Your signature and surrounding text stay in place. Paste Special is not part of the dictation workflow.</p>
           <p>If an Office paste menu or another small editing popup is open, close it and return the cursor to the message body before starting. A Paste Options button belongs to Office; it is separate from the dictation banner. If insertion is unconfirmed, inspect the message and follow clipboard recovery below before retrying.</p>
         </details>
         <details>
@@ -438,7 +440,7 @@
       </section>
 
       <footer>
-        <p>Local Dictation · Windows client · Guide updated 11 November 2026</p>
+        <p>Local Dictation · Windows client · Guide updated 12 November 2026</p>
         <p>Labels in this guide match the current English interface. Model quality and cursor compatibility should be checked with your own recordings and destination apps.</p>
       </footer>
     </main>

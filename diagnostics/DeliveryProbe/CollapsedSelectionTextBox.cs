@@ -16,11 +16,19 @@ sealed class CollapsedSelectionTextBox : TextBox
     bool poisoned;
     public int CollapsedProviderSelections {get;private set;}
     public int SuppressedPastes {get;private set;}
+    public int PasteCommands {get;private set;}
+    public bool SuppressFindText {get;set;}
+    public int SuppressedFindTextCalls {get;private set;}
+    public bool RefuseBackwardCharacterMovement {get;set;}
+    public int RefusedRangeMovements {get;private set;}
+    public bool ThrowStaleRangeClone {get;set;}
+    public int StaleRangeCloneFailures {get;private set;}
     public bool ProviderPoisoned=>poisoned;
 
     protected override AutomationPeer OnCreateAutomationPeer()=>new Peer(this);
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
+        if(e.Key==Key.V&&(Keyboard.Modifiers&ModifierKeys.Control)!=0)PasteCommands++;
         if(poisoned&&e.Key==Key.V&&(Keyboard.Modifiers&ModifierKeys.Control)!=0)
         {SuppressedPastes++;e.Handled=true;return;}
         base.OnPreviewKeyDown(e);
@@ -38,7 +46,7 @@ sealed class CollapsedSelectionTextBox : TextBox
     }
     sealed class Provider(CollapsedSelectionTextBox owner,ITextProvider inner) : ITextProvider
     {
-        ITextRangeProvider Wrap(ITextRangeProvider range)=>new Range(owner,range);
+        ITextRangeProvider Wrap(ITextRangeProvider range)=>new Range(owner,range,owner.PasteCommands);
         public ITextRangeProvider DocumentRange=>Wrap(inner.DocumentRange);
         public SupportedTextSelection SupportedTextSelection=>inner.SupportedTextSelection;
         public ITextRangeProvider[] GetSelection()=>owner.poisoned?[]:inner.GetSelection().Select(Wrap).ToArray();
@@ -46,18 +54,30 @@ sealed class CollapsedSelectionTextBox : TextBox
         public ITextRangeProvider RangeFromChild(IRawElementProviderSimple childElement)=>Wrap(inner.RangeFromChild(childElement));
         public ITextRangeProvider RangeFromPoint(Point screenLocation)=>Wrap(inner.RangeFromPoint(screenLocation));
     }
-    sealed class Range(CollapsedSelectionTextBox owner,ITextRangeProvider inner) : ITextRangeProvider
+    sealed class Range(CollapsedSelectionTextBox owner,ITextRangeProvider inner,int creationPasteCount) : ITextRangeProvider
     {
         readonly ITextRangeProvider source=inner;
         static ITextRangeProvider Unwrap(ITextRangeProvider range)=>range is Range wrapper?wrapper.source:range;
-        ITextRangeProvider? Wrap(ITextRangeProvider? range)=>range==null?null:new Range(owner,range);
-        public ITextRangeProvider Clone()=>Wrap(source.Clone())!;
+        ITextRangeProvider? Wrap(ITextRangeProvider? range)=>range==null?null:new Range(owner,range,creationPasteCount);
+        public ITextRangeProvider Clone()
+        {
+            if(owner.ThrowStaleRangeClone&&creationPasteCount==0&&owner.PasteCommands>0)
+            {
+                owner.StaleRangeCloneFailures++;
+                throw new InvalidOperationException("Synthetic pre-paste range expired.");
+            }
+            return Wrap(source.Clone())!;
+        }
         public bool Compare(ITextRangeProvider range)=>source.Compare(Unwrap(range));
         public int CompareEndpoints(TextPatternRangeEndpoint endpoint,ITextRangeProvider targetRange,TextPatternRangeEndpoint targetEndpoint)
             =>source.CompareEndpoints(endpoint,Unwrap(targetRange),targetEndpoint);
         public void ExpandToEnclosingUnit(TextUnit unit)=>source.ExpandToEnclosingUnit(unit);
         public ITextRangeProvider? FindAttribute(int attributeId,object value,bool backward)=>Wrap(source.FindAttribute(attributeId,value,backward));
-        public ITextRangeProvider? FindText(string text,bool backward,bool ignoreCase)=>Wrap(source.FindText(text,backward,ignoreCase));
+        public ITextRangeProvider? FindText(string text,bool backward,bool ignoreCase)
+        {
+            if(owner.SuppressFindText){owner.SuppressedFindTextCalls++;return null;}
+            return Wrap(source.FindText(text,backward,ignoreCase));
+        }
         public object GetAttributeValue(int attributeId)=>source.GetAttributeValue(attributeId);
         public double[] GetBoundingRectangles()=>source.GetBoundingRectangles();
         public IRawElementProviderSimple[] GetChildren()=>source.GetChildren();
@@ -66,7 +86,12 @@ sealed class CollapsedSelectionTextBox : TextBox
         public int Move(TextUnit unit,int count)=>source.Move(unit,count);
         public void MoveEndpointByRange(TextPatternRangeEndpoint endpoint,ITextRangeProvider targetRange,TextPatternRangeEndpoint targetEndpoint)
             =>source.MoveEndpointByRange(endpoint,Unwrap(targetRange),targetEndpoint);
-        public int MoveEndpointByUnit(TextPatternRangeEndpoint endpoint,TextUnit unit,int count)=>source.MoveEndpointByUnit(endpoint,unit,count);
+        public int MoveEndpointByUnit(TextPatternRangeEndpoint endpoint,TextUnit unit,int count)
+        {
+            if(owner.RefuseBackwardCharacterMovement&&endpoint==TextPatternRangeEndpoint.Start&&unit==TextUnit.Character&&count<0)
+            {owner.RefusedRangeMovements++;return count;}
+            return source.MoveEndpointByUnit(endpoint,unit,count);
+        }
         public void AddToSelection()=>source.AddToSelection();
         public void RemoveFromSelection()=>source.RemoveFromSelection();
         public void ScrollIntoView(bool alignToTop)=>source.ScrollIntoView(alignToTop);

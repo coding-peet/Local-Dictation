@@ -270,6 +270,115 @@ sealed class ProbeWindow : Window
         }
     }
 
+    async Task OwnedSuffixWithoutFindText(bool unicode,bool badMovement=false,bool staleAnchor=false)
+    {
+        var lead=unicode?string.Concat(Enumerable.Repeat("  č. 42 😀 — žĺťučký kôň; technical term  ",40)):"";
+        var initial=unicode?lead+"cafe\u0301 👩":Draft;
+        var corrected=unicode?lead+"cafe\u0300 👩":badMovement?"pôvodný opravený text":"opravený diktát";
+        var appended=unicode?corrected+"\u200d🔬 e":corrected+" pokračuje";
+        var accented=unicode?appended+"\u0301":appended;
+        var revised=unicode?lead+"cafe\u0300 👩\u200d🚀 e\u0301":"opravený text pokračuje";
+        var final=unicode?lead+"overené 🧑\u200d💻 cafe\u0301":Approved;
+        // The same long draft occurs on both sides of the actual insertion point.
+        var prefix=unicode?"Repeated | "+initial+" | "+initial+" | 🧑\u200d💻":badMovement?Prefix:"Prefix | cafe\u0301";
+        var suffix=unicode?" | "+initial+" | "+corrected+" | Repeated":Suffix;
+        var field=new CollapsedSelectionTextBox{Text=prefix+suffix,Margin=new(16),FontSize=16};
+        var fixture=new Window{Title="Delivery probe — owned suffix regression",Width=780,Height=190,
+            Owner=this,Content=field,WindowStartupLocation=WindowStartupLocation.CenterOwner};
+        temporaryTarget=fixture;
+        var mainBefore=target.Text;var otherBefore=other.Text;
+        var clipboardBefore=ClipboardChecks.Fingerprint();
+        var acknowledged="";
+        using var suffixWorker=new AutomationWorker();
+        try
+        {
+            Require(!ClipboardRecovery.HasPending&&!ClipboardRecovery.HasUnsettledTransaction,"The owned-suffix fixture requires a settled clipboard.");
+            fixture.Show();fixture.Activate();field.Focus();field.Select(prefix.Length,0);await Settle();
+            var owned=await CaptureOwn(suffixWorker,fixture);current=owned;
+            async Task Apply(string label,string text,bool reject=false)
+            {
+                var pastesBefore=field.PasteCommands;
+                var finished=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var applied=false;
+                try
+                {
+                    applied=await suffixWorker.Run(token=>
+                    {
+                        try{return owned.Apply(text,token);}
+                        finally{finished.TrySetResult();}
+                    });
+                }
+                finally
+                {
+                    if(!applied)owned.Invalidate();
+                    await finished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                }
+                if(reject||!applied)
+                {
+                    Require(!applied,"A provider that did not move its range was accepted.");
+                    Require(owned.LastDiagnostic?.QueuedInputEvents==0&&field.PasteCommands==pastesBefore,
+                        "Range validation failed after input was already queued.");
+                    Require(!ClipboardRecovery.HasPending&&!ClipboardRecovery.HasUnsettledTransaction,
+                        "Range validation failure retained a clipboard transaction.");
+                    Require(field.Text==prefix+acknowledged+suffix&&field.SelectionLength==0&&field.SelectionStart==prefix.Length+acknowledged.Length,
+                        "Range validation failure changed the synthetic destination or caret.");
+                    ClipboardChecks.RequireSame(clipboardBefore,ClipboardChecks.Fingerprint());
+                    if(!reject)
+                    {
+                        Require(owned.Reason=="The owned draft range is no longer available."&&field.SuppressedFindTextCalls>0,
+                            label+" failed for an unexpected reason: "+owned.Reason);
+                        throw new InvalidOperationException(label+" failed before any replacement input: "+owned.Reason+"; queued=0; clipboard settled.");
+                    }
+                    Require(field.RefusedRangeMovements>0,"The invalid endpoint movement was not exercised.");
+                    return;
+                }
+                Require(owned.InsertedText==text&&!owned.IsConflict,label+" was not acknowledged as the exact owned draft.");
+                Require(owned.LastDiagnostic is {ExactText:true,ExactCaret:true}&&owned.LastDiagnostic.QueuedInputEvents==(text.Length==0?2:4),
+                    label+" did not receive exact native text/caret acknowledgement.");
+                Require(field.Text==prefix+text+suffix,label+" changed surrounding text or duplicated the owned draft.");
+                Require(field.SelectionLength==0&&field.SelectionStart==prefix.Length+text.Length,label+" changed the exact native caret.");
+                Require(field.PasteCommands==pastesBefore+(text.Length==0?0:1),label+" repeated or omitted its paste command.");
+                Require(!ClipboardRecovery.HasPending&&!ClipboardRecovery.HasUnsettledTransaction,label+" left a clipboard transaction pending.");
+                Require(target.Text==mainBefore&&other.Text==otherBefore&&other.Text==OtherText,label+" changed an unrelated field.");
+                ClipboardChecks.RequireSame(clipboardBefore,ClipboardChecks.Fingerprint());
+                acknowledged=text;
+            }
+            // FindText is available until the first paste has genuinely ACKed.
+            await Apply("Initial draft",initial);
+            field.SuppressFindText=true;field.RefuseBackwardCharacterMovement=badMovement;field.ThrowStaleRangeClone=staleAnchor;
+            await Apply("Corrected draft",corrected,reject:badMovement);
+            if(badMovement)return;
+            if(staleAnchor)
+            {
+                Require(field.StaleRangeCloneFailures>0,"The expired pre-paste range was not exercised.");
+                Require(field.CollapsedProviderSelections==0&&!field.ProviderPoisoned&&field.SuppressedPastes==0,
+                    "Stale-anchor fallback selected a collapsed range or lost the native caret.");
+                return;
+            }
+            await Apply("Appended draft",appended);
+            if(unicode)await Apply("Appended combining accent",accented);
+            await Apply("Revised draft",revised);
+            await Apply("Owned draft withdrawal","");
+            await Apply("Final draft",final);
+            Require(field.CollapsedProviderSelections==0&&!field.ProviderPoisoned&&field.SuppressedPastes==0,
+                "Owned-suffix delivery selected a collapsed range or lost the native caret.");
+        }
+        finally
+        {
+            if(ClipboardRecovery.HasPending)
+            {
+                // This fixture has no deferred paste handler. The completed worker
+                // operation and UI continuation have observed its synchronous input.
+                Require(field.PasteCommands>0,"No owned paste was observed; keep its clipboard backup alive.");
+                var recovery=ClipboardRecovery.RestoreAfterInspection();
+                Require(recovery.Succeeded,"Owned-suffix cleanup failed: "+recovery.Message);
+            }
+            fixture.Close();if(ReferenceEquals(temporaryTarget,fixture))temporaryTarget=null;await Settle();
+            Require(target.Text==mainBefore&&other.Text==otherBefore,"Owned-suffix cleanup changed an unrelated field.");
+            ClipboardChecks.RequireSame(clipboardBefore,ClipboardChecks.Fingerprint());
+        }
+    }
+
     async Task RunChecks()
     {
         run.IsEnabled=false;results.Clear();log.Text="";ResetText();observedInputs=ignoredProgrammaticFocus=0;
@@ -437,6 +546,10 @@ sealed class ProbeWindow : Window
                 ClipboardChecks.RequireSame(before,ClipboardChecks.Fingerprint());
             });
             await Step("Append preserves an existing caret without selecting its collapsed UIA range",CollapsedSelectionAppend,continueAfterFailure:true);
+            await Step("Acknowledged draft correction, append and withdrawal survive unavailable FindText",()=>OwnedSuffixWithoutFindText(unicode:false),continueAfterFailure:true);
+            await Step("Repeated surroundings and long Unicode revisions survive unavailable FindText",()=>OwnedSuffixWithoutFindText(unicode:true),continueAfterFailure:true);
+            await Step("Invalid provider endpoint movement cannot queue replacement input",()=>OwnedSuffixWithoutFindText(unicode:false,badMovement:true),continueAfterFailure:true);
+            await Step("Expired pre-paste anchor falls back to a fresh exact caret range",()=>OwnedSuffixWithoutFindText(unicode:false,staleAnchor:true),continueAfterFailure:true);
             var passed=results.All(r=>r.Passed);status.Text=$"{(passed?"PASS":"FAIL")} — {results.Count(r=>r.Passed)}/{results.Count} native delivery checks";status.Foreground=passed?Brushes.DarkGreen:Brushes.DarkRed;
         }
         catch(Exception exception)
@@ -452,7 +565,7 @@ sealed class ProbeWindow : Window
         {
             current=null;observer?.Dispose();observer=null;reviewSurface?.Hide();temporaryTarget?.Close();temporaryTarget=null;
             var report=new{StartedUtc=started,CompletedUtc=DateTimeOffset.UtcNow,Fixture="Local Dictation DeliveryProbe",NativeProductCode=true,
-                SyntheticFieldsOnly=true,ClipboardRecoveryPending=ClipboardRecovery.HasPending,ClipboardTransactionUnsettled=ClipboardRecovery.HasUnsettledTransaction,Passed=results.Count==19&&results.All(r=>r.Passed),ObservedInputs=observedInputs,
+                SyntheticFieldsOnly=true,ClipboardRecoveryPending=ClipboardRecovery.HasPending,ClipboardTransactionUnsettled=ClipboardRecovery.HasUnsettledTransaction,Passed=results.Count==23&&results.All(r=>r.Passed),ObservedInputs=observedInputs,
                 IgnoredProgrammaticFocus=ignoredProgrammaticFocus,Results=results};
             try
             {

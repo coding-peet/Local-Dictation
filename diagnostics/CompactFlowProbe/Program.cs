@@ -58,6 +58,88 @@ internal static class Program
                     test.NoLargeWindow();
                 });
 
+                await Case("Outlook keeps live partials in the banner and inserts once after Finish",async test=>
+                {
+                    var doc=Text("");var original=new FakeDelivery();
+                    var settings=new Settings{Live=true,InsertAtCursor=true};settings.Save();
+                    test.Controller.SaveSettings(settings);
+                    var run=test.Run(doc,original,settings,primaryFinal:false,completed:false,processName:"olk");
+                    Set(run,"Recording",true);Set(run,"Closing",false);
+                    var exposedReview=false;
+                    test.Controller.Changed+=()=>exposedReview|=test.Controller.BannerReview!=null;
+                    await test.Handle(run,"""{"type":"transcript.updated","text":"First Outlook draft"}""");
+                    await test.Handle(run,"""{"type":"transcript.updated","text":"Growing Outlook draft"}""");
+                    await test.Deliver(run);
+                    Require(original.ApplyCount==0,"Outlook partial updates or resume wrote into the destination before Finish.");
+                    Require(test.Controller.LatestText=="Growing Outlook draft"&&test.Controller.LiveTranscription,"Outlook suppression stopped the live transcript.");
+                    var banner=Field<BannerWindow>(test.Controller,"banner");banner.Refresh();
+                    var status=Field<System.Windows.Controls.TextBlock>(banner,"detail").Text;
+                    Require(status.Contains("Outlook",StringComparison.Ordinal)&&status.Contains("Finish",StringComparison.Ordinal)&&!status.Contains("Review mode",StringComparison.Ordinal),"Outlook recording status hides its automatic final delivery.");
+                    Require(settings.InsertAtCursor&&test.Controller.Settings.InsertAtCursor&&Settings.Load().InsertAtCursor,"The Outlook policy changed the saved insertion preference.");
+                    test.Controller.Stop();
+                    Require(ReferenceEquals(Field<ITextDelivery>(run,"Delivery"),original),"Finish lost the original Outlook destination.");
+                    await test.Handle(run,"""{"type":"transcript.final","text":"The complete Outlook dictation."}""");
+                    Require(original.ApplyCount==0,"Outlook final text was inserted before successful session completion.");
+                    await test.Handle(run,"""{"type":"session.completed"}""");
+                    await test.Complete(run);
+                    Require(!exposedReview,"Successful Outlook completion exposed an unnecessary interactive Review.");
+                    Require(doc.InsertedAt!=null&&original.ApplyCount==1&&original.InsertedText=="The complete Outlook dictation."&&original.LastRestoreFocus,"Outlook completion did not insert the complete text once at its original destination.");
+                    await test.Controller.ApplyBannerReview();
+                    Require(original.ApplyCount==1&&Settings.Load().InsertAtCursor,"Repeated completion inserted again or changed the saved preference.");
+                    test.NoLargeWindow();
+                });
+
+                await Case("Classic Outlook verification differences wait for choices before one final insertion",async test=>
+                {
+                    var doc=Text("");doc.VerificationModel="verify/model";var original=new FakeDelivery();
+                    var run=test.Run(doc,original,new Settings{Live=true,InsertAtCursor=true,VerifyAfterRecording=true},primaryFinal:false,completed:false,processName:"OUTLOOK");
+                    Set(run,"Recording",true);Set(run,"Closing",false);
+                    await test.Handle(run,"""{"type":"transcript.updated","text":"The original text."}""");
+                    test.Controller.Stop();
+                    await test.Handle(run,"""{"type":"transcript.final","text":"The original text."}""");
+                    await test.Handle(run,"""{"type":"verification.started"}""");
+                    await test.Handle(run,"""{"type":"verification.completed","verification":"The revised wording.","pieces":[{"id":"prefix","primary":"The ","verification":"The ","different":false},{"id":"first","primary":"original","verification":"revised","different":true},{"id":"gap","primary":" ","verification":" ","different":false},{"id":"second","primary":"text","verification":"wording","different":true},{"id":"end","primary":".","verification":".","different":false}]}""");
+                    await test.Handle(run,"""{"type":"session.completed"}""");
+                    await test.Complete(run);
+                    Require(original.ApplyCount==0&&test.Controller.BannerReview==doc,"Outlook verification inserted or withdrew text before wording choices.");
+                    test.Controller.ChooseBannerPiece("verification");
+                    Require(original.ApplyCount==0&&test.Controller.SelectedReviewPieceId=="second","Outlook inserted before the last wording choice.");
+                    test.Controller.ChooseBannerPiece("primary");
+                    await Until(()=>doc.InsertedAt!=null&&!test.Controller.IsApplyingReview);
+                    Require(original.ApplyCount==1&&original.InsertedText=="The revised text."&&original.LastRestoreFocus,"Outlook choices did not insert the complete reviewed text once at the captured destination.");
+                    test.NoLargeWindow();
+                });
+
+                foreach(var failure in new[]{"verification.failed","verification.cancelled"})
+                await Case($"Outlook {failure} exposes its blocking reason before completion",async test=>
+                {
+                    var doc=Text("");doc.VerificationModel="verify/model";var original=new FakeDelivery();
+                    var run=test.Run(doc,original,new Settings{Live=true,InsertAtCursor=true,VerifyAfterRecording=true},primaryFinal:false,completed:false,processName:"olk");
+                    await test.Handle(run,"""{"type":"transcript.final","text":"The unverified Outlook dictation."}""");
+                    await test.Handle(run,"""{"type":"verification.started"}""");
+                    await test.Handle(run,JsonSerializer.Serialize(new{type=failure}));
+                    Require(test.Controller.IsBusy&&doc.Reason.Contains("did not finish",StringComparison.Ordinal),"The verification failure did not remain active with a blocking reason.");
+                    Require(test.Controller.DeliveryMessage==doc.Reason,"The Outlook insertion hint hides the active verification failure or cancellation reason.");
+                    Require(original.ApplyCount==0,"Failed Outlook verification inserted text.");
+                    await test.Handle(run,"""{"type":"session.completed"}""");
+                    await test.Complete(run);
+                    Require(doc.InsertedAt==null&&original.ApplyCount==0&&test.Controller.BannerReview==doc,"Failed or cancelled Outlook verification did not retain explicit Review.");
+                });
+
+                await Case("Other applications retain live cursor delivery after an Outlook session",async test=>
+                {
+                    var outlookDoc=Text("");var outlook=new FakeDelivery();
+                    var run=test.Run(outlookDoc,outlook,new Settings{Live=true,InsertAtCursor=true},primaryFinal:false,completed:false,processName:"olk");
+                    await test.Handle(run,"""{"type":"transcript.updated","text":"Outlook preview"}""");
+                    await test.Handle(run,"""{"type":"session.cancelled"}""");
+                    await test.Complete(run);
+                    Require(outlook.ApplyCount==0,"Cancelled Outlook text was inserted.");
+                    var otherDoc=Text("");var other=new FakeDelivery();
+                    var next=test.Run(otherDoc,other,new Settings{Live=true,InsertAtCursor=true},primaryFinal:false,completed:false,processName:"notepad");
+                    await test.Handle(next,"""{"type":"transcript.updated","text":"Live text in another application"}""");
+                    Require(other.ApplyCount==1&&other.InsertedText=="Live text in another application","Outlook's session policy leaked into the next application's live delivery.");
+                });
+
                 await Case("Preview verification agreement does not withdraw an empty draft or expose Review",async test=>
                 {
                     var doc=Text("Draft preview");doc.VerificationModel="verify/model";var fake=new FakeDelivery();
@@ -613,14 +695,21 @@ internal static class Program
             foreach(var name in new[]{"timer","reconnectTimer","resumeTimer"})Field<DispatcherTimer>(Controller,name).Stop();
         }
         public void Bind(ReviewDocument document,FakeDelivery delivery)=>Field<Dictionary<string,ITextDelivery>>(Controller,"destinations")[document.Id]=delivery;
-        public object Run(ReviewDocument document,FakeDelivery delivery,Settings settings,bool primaryFinal=true,bool completed=true)
+        public object Run(ReviewDocument document,FakeDelivery delivery,Settings settings,bool primaryFinal=true,bool completed=true,string? processName=null)
         {
             var run=Activator.CreateInstance(RunType,Members,null,[settings],null)!;runs.Add(run);
             Set(run,"Review",document);Set(run,"Text",document.Primary);Set(run,"Delivery",delivery);
             Set(run,"PrimaryFinal",primaryFinal);Set(run,"Completed",completed);Set(run,"NormalCompletion",completed);
             Set(run,"Recording",false);Set(run,"Closing",true);Set(run,"NeedsReview",true);
             Set(run,"DestinationChecked",true);
-            Bind(document,delivery);Set(Controller,"active",run);return run;
+            Bind(document,delivery);Set(Controller,"active",run);
+            if(processName!=null)
+            {
+                var configure=typeof(AppController).GetMethod("ConfigureDestination",Members);
+                Require(configure!=null,"Destination capture has no application delivery policy setup.");
+                configure!.Invoke(Controller,[run,delivery,processName]);
+            }
+            return run;
         }
         public async Task Handle(object run,string json)
         {
@@ -628,6 +717,7 @@ internal static class Program
             await (Task)typeof(AppController).GetMethod("Handle",Members)!.Invoke(Controller,[run,parsed.RootElement.Clone()])!;
         }
         public Task Complete(object run)=>(Task)typeof(AppController).GetMethod("CompleteRun",Members)!.Invoke(Controller,[run])!;
+        public Task Deliver(object run)=>(Task)typeof(AppController).GetMethod("Deliver",Members)!.Invoke(Controller,[run,true])!;
         public Task<ReviewInsertionResult> Accept(ReviewDocument doc)=>(Task<ReviewInsertionResult>)typeof(AppController).GetMethod("AcceptReview",Members)!.Invoke(Controller,[doc])!;
         public void NoLargeWindow()=>Require(Field<ReviewWindow?>(Controller,"reviewWindow")==null,"A large Review window opened unexpectedly.");
         public async ValueTask DisposeAsync()

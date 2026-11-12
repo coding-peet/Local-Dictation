@@ -81,6 +81,13 @@ punctuation, whitespace, and Unicode must be preserved.
   when live cursor insertion is off. In that case keep partial text in the
   banner and return the completed text automatically after successful completion
   and any required word choices.
+- In desktop Outlook, keep live transcription in the banner and insert the
+  complete final text once after Finish and any required verification choices.
+  Detect the destination application without reading message content or relying
+  on window titles. Keep the original validated caret and surrounding signature.
+  This session-specific delivery policy must not disable live recognition or
+  overwrite the user's live-insertion preference for other applications. Make
+  the Outlook completion behavior clear in the banner.
 - Only replace the app's owned draft in the validated original field. Preserve
   surrounding text. Switching focus pauses delivery; returning to the same
   unchanged field resumes it, including after a click within that field.

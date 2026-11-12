@@ -35,6 +35,18 @@ cases check that Finish retains the captured destination, a missing destination
 requires an explicit decision, and an older Review cannot change the UI during
 a new destination check.
 
+Outlook cases configure the captured in-memory destination with exact synthetic
+process names (`olk` and `OUTLOOK`); they do not enumerate or inspect native
+applications. Actual partial/final/completion events verify that live recognition
+continues in the banner, partial and resume delivery perform no writes, and
+successful completion inserts the whole text once at the original destination.
+The persisted insertion setting stays enabled. Verification differences wait for
+the final wording choice before the one insertion. A later non-Outlook session
+retains ordinary live delivery. Failed and cancelled verification must expose
+their blocking reason while the run is still active, rather than an automatic
+insertion hint. These policy checks do not establish native Outlook insertion
+compatibility.
+
 The clipboard-recovery cases hold empty, unchanged native transactions. They
 check that closing the idle banner hides it without releasing the backup or
 losing protected Review. A queued older recovery notification must not undo

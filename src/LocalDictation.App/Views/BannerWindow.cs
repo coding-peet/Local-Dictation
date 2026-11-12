@@ -202,7 +202,7 @@ public sealed class BannerWindow : Window
         SetReviewInteraction(reviewing&&!controller.IsRecording);
         var failed=controller.StateLabel=="Unavailable";state.Text=failed?"Recording interrupted":controller.StateLabel;
         timer.Text=controller.ElapsedLabel;
-        detail.Text=controller.IsRecording?(controller.AtCursor?(controller.LiveTranscription?"Live text · At your cursor":"After Finish · At your cursor"):"Review mode · Text stays here"):
+        detail.Text=controller.IsRecording?controller.RecordingDeliveryLabel:
             controller.IsBusy?"Recording stopped · Waiting for the model":failed?"Your microphone or connection needs attention":controller.StateLabel=="Stopped"?"No transcript was returned":"Your transcript is ready";
         microphone.Text="Mic · "+controller.MicrophoneLabel;
         model.Text=controller.ModelLabel.Contains("Turbo")?"KInIT Turbo · SK":controller.ModelLabel.Contains("Large")?"Large v3":controller.ModelLabel;

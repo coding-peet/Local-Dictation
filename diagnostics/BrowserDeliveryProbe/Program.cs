@@ -118,7 +118,7 @@ static class Program
         token.ThrowIfCancellationRequested();
         if(Identity(Scope(options,result))!=identity)throw new Refused("field-identity-raced");
         return (WindowsTextDelivery)Activator.CreateInstance(typeof(WindowsTextDelivery),BindingFlags.Instance|BindingFlags.NonPublic,null,
-            [options.Window,new TargetGuard(identity,state.Text,state.Caret),element],null)!;
+            [options.Window,new TargetGuard(identity,state.Text,state.Caret),element,null],null)!;
     }
     static async Task<int> Run(Options options)
     {

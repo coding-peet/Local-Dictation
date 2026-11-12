@@ -32,7 +32,7 @@ command; the fixture and product never synthesize Enter or a send shortcut.
 
 ## What is checked
 
-The 19 checks cover:
+The 23 checks cover:
 
 - Native clipboard memory, bitmap, palette and enhanced-metafile cloning,
   including refusing an unsupported owner-managed format without changing it.
@@ -57,6 +57,19 @@ The 19 checks cover:
 - A real native paste deferred for 1.6 seconds. Unconfirmed delivery keeps its
   own payload available and retains the previous clipboard for deliberate
   recovery; the late paste never consumes an automatically restored old value.
+- A genuinely acknowledged initial draft followed by correction, append,
+  revision, withdrawal and final insertion while the synthetic provider returns
+  no FindText result. Each update must preserve the full surrounding text, exact
+  caret, clipboard formats and unrelated fields.
+- Long Unicode revisions with repeated copies of the draft before and after the
+  insertion point, combining-accent corrections, an appended combining accent,
+  and appended/revised ZWJ emoji.
+- A provider that reports successful backward character movement without moving
+  its endpoint. The unchanged range must be rejected before replacement input
+  or a clipboard transaction is queued.
+- An expired pre-paste range whose Clone fails after the initial acknowledgement.
+  A correction changing the complete short draft must still receive exact native
+  acknowledgement through a fresh caret range, with FindText unavailable.
 
 The collapsed-selection case uses a synthetic TextBox provider. Selecting its
 collapsed UIA range deliberately removes provider selection and consumes Ctrl+V
@@ -64,6 +77,23 @@ without inserting. It exposes that mutation as a regression; it does not claim
 to reproduce every behavior of the installed Chromium or Outlook editor. Its
 cleanup restores a held clipboard only after the fixture has observed its own
 synchronous paste handler consume the command and verified the field unchanged.
+
+The owned-suffix cases reuse that synthetic provider with FindText suppression
+enabled only after the first paste receives exact text/caret acknowledgement.
+Each case owns a fresh AutomationWorker and temporary field. The two successful
+revision cases then require native replacement, append, withdrawal and final
+reinsertion without finding the owned tail by document text search. Their
+baseline regression failure is the original owned-range-unavailable message,
+with zero replacement input, an unchanged field/caret and no pending clipboard
+transaction. The invalid-movement case additionally requires that its dishonest
+endpoint operation was exercised. These cases model provider limitations; they
+do not establish Outlook compatibility.
+
+The stale-anchor case tracks the paste count when each synthetic range is
+created. Only ranges from before the first paste throw on Clone after the
+initial draft is acknowledged; fresh selection and document ranges remain
+available. The check requires the stale range failure to occur and the
+correction to succeed with one paste and a restored clipboard.
 
 Controller cases use isolated temporary protected storage. They disable the
 controller's timers and shortcuts; they do not start a microphone or connection.
