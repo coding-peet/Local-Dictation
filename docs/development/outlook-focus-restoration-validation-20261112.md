@@ -3,7 +3,8 @@
 Status: the 30-case native clipboard/focus baseline passed. The keyboard
 experiment failed its delivery comparison and is not approved for rollout.
 Clipboard remains the default. The experimental keyboard path is diagnostic-only
-and has not been deployed. Actual Outlook cause and acceptance remain unproven.
+and has not been enabled in the installed client. Actual Outlook cause and
+acceptance remain unproven.
 
 ## Actual application evidence
 
@@ -117,7 +118,7 @@ candidate. Actual Outlook acceptance remains separate.
 The requested alternative was evaluated as a private diagnostic transport
 selector. It emits Unicode UTF-16 down/up pairs without using the clipboard,
 modifier shortcuts or paste. The production selector still defaults to Clipboard.
-Neither experiment was deployed to the installed client.
+Neither experiment was enabled in the installed client.
 
 The first implementation grouped up to 256 UTF-16 units, preserving surrogate
 pairs, with exact progressive acknowledgment between groups. In exclusive.json:
@@ -166,8 +167,8 @@ the result is not support for replacing clipboard delivery across Windows apps.
 ## Documentation checks and evidence
 
 The earlier static Help checks passed: 20 unique IDs, 12 valid internal anchors,
-no scripts and a restrictive content security policy. No updated published
-F1/application-level check has been performed for this focus/keyboard candidate.
+no scripts and a restrictive content security policy. Updated Help passed the
+same static checks again. F1 routing and its visual-check limit are recorded below.
 This report update changes no product or Help files.
 
     C:\AI\build\Local-Dictation-focus-identity\red.json
@@ -183,14 +184,42 @@ This report update changes no product or Help files.
     C:\AI\build\Local-Dictation-keyboard-spike\exclusive.json
     C:\AI\build\Local-Dictation-keyboard-spike\scalar.json
 
+## Installed clipboard/focus candidate
+
+After the user exited the old client normally, source commit
+5eb991597f0bdaa84c719f22a29927f0b5ed44d4 was republished from the canonical
+checkout into C:\Git\Local-Dictation\focus-candidate. Assembly metadata verified
+that commit and SourceRoot=C:\Git\Local-Dictation\repo.
+
+All 14 original application files were backed up before replacement. All 14
+installed hashes then matched the candidate. The 761 protected user-data files
+present at the time retained their hashes across deployment. Models, runtime
+environments and API configuration were not part of the copy.
+
+    C:\AI\build\Local-Dictation-focus-final\deployment-backup
+
+The diagnostic launcher started installed PID 52496 with build
+0.1.0+5eb991597f0bdaa84c719f22a29927f0b5ed44d4. Its session marker verified the
+actual PID; normal Ctrl+Shift hotkeys were enabled, without --no-hotkey. Settings
+showed Ready and the candidate API reported ready=true, busy=false.
+
+F1 opened a new Chrome tab for the installed app/Help.html. The browser protocol
+policy rejected observing local file: page content, so visual page verification
+was not performed or bypassed. Static Help checks passed: 20 unique IDs, all 12
+internal anchors valid, zero scripts and a restrictive content security policy.
+
+The production selector remains ClipboardPaste. The private Unicode prototype
+has no settings, default or fallback activation path; shipping this source does
+not enable keyboard delivery.
+
 ## Remaining acceptance
 
-Final-source build checks passed. Deploy only the reviewed
-clipboard/focus correction through controlled handover. Run a fresh manual
+The clipboard/focus candidate is installed. Run a fresh manual
 Outlook trial with an attributable build/PID and capture-to-delivery association.
 Confirm visible complete text, preserved surroundings, durable insertion status,
-restored clipboard and no replay. Updated published Help also needs its F1 check.
+restored clipboard and no replay. Published Help still needs a visual check in
+an environment where local file observation is permitted.
 
 The installed Outlook cause and correction remain unproven. Synthetic native
 baseline success and pure checks are not actual Outlook acceptance. Keyboard
-transport remains an undeployed diagnostic experiment.
+transport remains a disabled diagnostic experiment.
