@@ -43,8 +43,6 @@ public sealed class AppController : IDisposable
     readonly HashSet<Task> recordingTasks=[];
     bool exiting,disposed,restoringClipboard;
     long clipboardRecoveryVersion,dismissedClipboardRecoveryVersion=-1;
-    Func<bool> confirmClipboardRestore=()=>MessageBox.Show("Inspect or stop the original destination first. It may still have a queued paste. Select OK only after it can no longer process that paste.\n\nRestore your previous clipboard now? Your saved dictation stays in Review.",
-        "Restore previous clipboard",MessageBoxButton.OKCancel,MessageBoxImage.Warning)==MessageBoxResult.OK;
     ReviewDocument? placementReview;
     CompactReviewProgress? bannerProgress;
     string? applyingBannerId;
@@ -123,7 +121,7 @@ public sealed class AppController : IDisposable
         menu.Items.Add("Settings",null,(_,_)=>ShowSettings());
         menu.Items.Add("Pending Review",null,(_,_)=>OpenLatestReview());
         menu.Items.Add("History",null,(_,_)=>ShowHistory());
-        clipboardRecoveryAction=(Forms.ToolStripMenuItem)menu.Items.Add("Restore previous clipboard…",null,async(_,_)=>await RestoreClipboardAfterInspection());
+        clipboardRecoveryAction=(Forms.ToolStripMenuItem)menu.Items.Add("Restore previous clipboard",null,async(_,_)=>await RestoreClipboardAfterInspection());
         clipboardRecoveryAction.Enabled=CanRestoreClipboard;
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Exit",null,(_,_)=>Exit());
@@ -184,7 +182,7 @@ public sealed class AppController : IDisposable
     {
         if(!CanRestoreClipboard)return;
         ShowClipboardRecovery();
-        if(!confirmClipboardRestore()||!CanRestoreClipboard)return;
+        if(!CanRestoreClipboard)return;
         restoringClipboard=true;clipboardRecoveryAction.Enabled=false;
         try
         {

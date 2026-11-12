@@ -53,14 +53,12 @@ losing protected Review. A queued older recovery notification must not undo
 that later dismissal. Deliberate Exit remains blocked and resurfaces recovery;
 a genuinely new recovery event can also resurface it.
 
-The primary-action case checks Restore clipboard… and invokes the real banner
-handler with a private confirmation callback replaced by a synthetic Cancel.
-It verifies that confirmation is required and cancellation retains the lease.
-The production callback always uses the inspection warning dialog. The fixture
-does not automate that real dialog or bypass it through application settings.
-The action stays disabled while recovery is running. A long compact Review
-keeps its existing panel without duplicating the transcript in the ordinary
-preview; recovery remains available as the primary action.
+The primary-action case invokes the real banner Restore clipboard handler.
+It checks that one action releases an empty recovery lease without a second
+confirmation and that protected Review remains available. Separate checks block
+restoration while recording or finishing. A long compact Review keeps its
+existing panel without duplicating the transcript in the ordinary preview;
+recovery remains available as the primary action.
 
 These transactions have no clipboard formats or payload; the cases do not
 read, replace or restore the user's clipboard content. Native queued-paste and

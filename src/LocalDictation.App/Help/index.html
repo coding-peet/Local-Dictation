@@ -398,7 +398,7 @@
         <details>
           <summary>Paste is unconfirmed, or the previous clipboard needs recovery</summary>
           <p>Open the destination and inspect whether text arrived. Do not retry blindly: a slow editor may still consume a queued paste. The app keeps the dictation paste available and retains your previous clipboard in memory.</p>
-          <p>After inspecting the destination and stopping any deferred paste, select <strong>Restore clipboard…</strong> in the idle banner, or <strong>Restore previous clipboard…</strong> from the notification-area menu. Confirm only after the destination can no longer consume the earlier paste. Recording and finishing must stop before restoration is available.</p>
+          <p>After inspecting the destination and stopping any deferred paste, select <strong>Restore clipboard</strong> in the idle banner, or <strong>Restore previous clipboard</strong> from the notification-area menu. Restoration starts immediately. If an earlier paste happens afterwards, it may insert the previous clipboard contents. Recording and finishing must stop before restoration is available.</p>
           <p>The banner's <strong>X</strong> hides the idle recovery message and keeps your saved text and clipboard backup. A new recovery event or an explicit Start/Exit attempt can show it again. New delivery and normal Exit still wait for recovery. A newer copy made in another app is preserved. Avoid force-closing the app while it holds the backup; a crash or forced termination loses that in-memory state.</p>
         </details>
         <details>

@@ -23,7 +23,7 @@ public sealed class ClipboardTransaction : IDisposable
     public bool RecoveryPending {get;internal set;}
     public string RecoveryMessage=>restoreFailed
         ?"The previous clipboard could not be fully restored. Its complete backup is held in memory. Keep Local Dictation open and use Restore previous clipboard."
-        :"Paste was not confirmed. Dictation remains on the clipboard, and its previous contents are held in memory. Check the destination and stop any delayed paste before using Restore previous clipboard. Keep Local Dictation open until recovery is complete.";
+        :"Paste was not confirmed. Check the destination and stop any delayed paste before restoring: it could insert your previous clipboard contents. Keep Local Dictation open until recovery is complete.";
     internal bool WasReplacedByAnotherOwner=>changed&&!finished&&GetClipboardOwner()!=owner;
 
     sealed class FormatCopy(uint format,nint handle,Action<nint> release) : IDisposable

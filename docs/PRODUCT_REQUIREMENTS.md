@@ -129,9 +129,12 @@ punctuation, whitespace, and Unicode must be preserved.
 - Idle recovery can be hidden with the banner X without discarding protected
   text, a clipboard lease or its backup. Old queued notifications must not undo
   dismissal; a new recovery event or explicit Start/Exit can resurface it.
-- Offer the existing inspected clipboard restoration in the idle banner. Keep
-  recording Finish first, block active/inserting restoration and recheck after
-  confirmation. Recovery must use one transcript surface in compact Review.
+- Offer clipboard restoration in the idle banner and tray. One explicit
+  Restore action starts recovery without a second confirmation. Warn in the
+  banner to inspect the destination and stop any delayed paste before restoring:
+  a delayed paste could otherwise insert the previous clipboard contents. Keep
+  recording Finish first, block active/inserting restoration and recheck
+  eligibility before starting. Use one transcript surface in compact Review.
 - Opt-in support journals record PID/build and fixed capture/readback stages,
   never transcript, field names/values/text, audio or clipboard contents. Ordinary
   operation and fixed-stage logging add no UIA queries. Only an opted-in

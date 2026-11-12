@@ -537,8 +537,9 @@ internal static class Program
                     finally{Require(ClipboardRecovery.RestoreAfterInspection().Succeeded,"The empty recovery lease did not release.");}
                 });
 
-                await Case("Idle recovery offers explicit restore and Cancel confirmation retains its backup",async test=>
+                await Case("One restore action releases idle recovery without a second confirmation",async test=>
                 {
+                    var doc=Text("Pending Review survives clipboard recovery");test.Controller.SaveReview(doc);test.Controller.OpenReview(doc);
                     using var transaction=(ClipboardTransaction)Activator.CreateInstance(typeof(ClipboardTransaction),true)!;
                     ClipboardRecovery.Hold(transaction);
                     try
@@ -546,18 +547,16 @@ internal static class Program
                         await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
                         var banner=Field<BannerWindow>(test.Controller,"banner");banner.Refresh();
                         var action=Field<System.Windows.Controls.Button>(banner,"action");
-                        Require((string)action.Content=="Restore clipboard…"&&action.IsEnabled,"Idle recovery does not offer its explicit Restore clipboard action.");
-                        Require(typeof(AppController).GetMethod("RestoreClipboardAfterInspection",BindingFlags.Instance|BindingFlags.Public)!=null,"The banner cannot invoke the controlled public recovery action.");
-                        var confirmations=0;
-                        Set(test.Controller,"confirmClipboardRestore",(Func<bool>)(()=>{confirmations++;return false;}));
-                        typeof(BannerWindow).GetMethod("MainAction",Members)!.Invoke(banner,null);
-                        Require(confirmations==1,"The real banner action did not request explicit recovery confirmation.");
-                        Require(ClipboardRecovery.HasPending&&ClipboardRecovery.HasUnsettledTransaction&&!transaction.WasRestored,"Cancelling confirmation released or restored the backup.");
+                        Require(action.IsEnabled,"Idle recovery does not offer its Restore action.");
                         Set(test.Controller,"restoringClipboard",true);banner.Refresh();
                         Require(!action.IsEnabled,"Restore remained enabled while recovery was running.");
-                        Set(test.Controller,"restoringClipboard",false);
+                        Set(test.Controller,"restoringClipboard",false);banner.Refresh();
+                        typeof(BannerWindow).GetMethod("MainAction",Members)!.Invoke(banner,null);
+                        for(var attempt=0;attempt<100&&ClipboardRecovery.HasPending;attempt++)await Task.Delay(20);
+                        Require(!ClipboardRecovery.HasPending&&!ClipboardRecovery.HasUnsettledTransaction,"One Restore action did not complete recovery.");
+                        Require(test.Controller.Pending.Single().Id==doc.Id,"Restoring the clipboard discarded the protected Review.");
                     }
-                    finally{Set(test.Controller,"restoringClipboard",false);Require(ClipboardRecovery.RestoreAfterInspection().Succeeded,"The empty recovery lease did not release.");}
+                    finally{if(ClipboardRecovery.HasPending)Require(ClipboardRecovery.RestoreAfterInspection().Succeeded,"The empty recovery lease did not release.");}
                 });
 
                 await Case("Clipboard recovery keeps a long compact Review visible without duplicating its transcript",async test=>
@@ -573,7 +572,7 @@ internal static class Program
                         Require(Field<System.Windows.Controls.Border>(banner,"preview").Visibility==Visibility.Collapsed,"Recovery duplicated the full compact Review in the ordinary preview.");
                         Require(Field<CompactReviewPanel>(banner,"reviewPanel").Visibility==Visibility.Visible,"Recovery hid the existing compact Review.");
                         var action=Field<System.Windows.Controls.Button>(banner,"action");
-                        Require((string)action.Content=="Restore clipboard…"&&action.IsEnabled,"Compact Review displaced explicit clipboard recovery.");
+                        Require((string)action.Content=="Restore clipboard"&&action.IsEnabled,"Compact Review displaced explicit clipboard recovery.");
                         Require(test.Controller.BannerReview?.OutputText==text&&test.Controller.Pending.Single().OutputText==text,"Recovery changed the long pending draft.");
                         Require(new ReviewStore(Path.Combine(test.Home,"data","review")).Load().Single().OutputText==text,"Recovery changed the protected saved draft.");
                     }
@@ -586,23 +585,19 @@ internal static class Program
                     ClipboardRecovery.Hold(transaction);
                     try
                     {
-                        var confirmations=0;
-                        var confirmation=typeof(AppController).GetField("confirmClipboardRestore",Members);
-                        Require(confirmation!=null,"The controlled confirmation callback is unavailable.");
-                        confirmation!.SetValue(test.Controller,(Func<bool>)(()=>{confirmations++;return false;}));
                         var run=test.Run(Text("Synthetic unfinished recording"),new FakeDelivery(),new Settings(),completed:false);
                         Set(run,"Recording",true);
                         var banner=Field<BannerWindow>(test.Controller,"banner");banner.Refresh();
                         var action=Field<System.Windows.Controls.Button>(banner,"action");
                         Require((string)action.Content=="■  Finish"&&action.IsEnabled,"Recovery displaced the active recording's Finish action.");
                         typeof(BannerWindow).GetMethod("MainAction",Members)!.Invoke(banner,null);
-                        Require(!test.Controller.IsRecording&&confirmations==0,"Finish requested clipboard restoration instead of stopping the synthetic recording.");
+                        Require(!test.Controller.IsRecording&&ClipboardRecovery.HasPending,"Finish restored the clipboard instead of stopping the synthetic recording.");
                         banner.Refresh();
                         Require(!action.IsEnabled,"Recovery enabled its primary action while the run was still finishing.");
                         var restore=typeof(AppController).GetMethod("RestoreClipboardAfterInspection",BindingFlags.Instance|BindingFlags.Public);
                         Require(restore!=null,"The controlled recovery action is unavailable.");
                         await (Task)restore!.Invoke(test.Controller,null)!;
-                        Require(confirmations==0&&ClipboardRecovery.HasPending,"The public recovery action ignored an active unsettled run.");
+                        Require(ClipboardRecovery.HasPending,"The public recovery action ignored an active unsettled run.");
                     }
                     finally{Require(ClipboardRecovery.RestoreAfterInspection().Succeeded,"The empty recovery lease did not release.");}
                 });

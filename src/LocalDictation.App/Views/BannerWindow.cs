@@ -247,7 +247,7 @@ public sealed class BannerWindow : Window
         if(!controller.IsBusy&&ClipboardRecovery.HasPending)
         {
             state.Text="Clipboard recovery";detail.Text="Inspect the destination before restoring your clipboard";
-            action.Content="Restore clipboard…";action.IsEnabled=controller.CanRestoreClipboard;
+            action.Content="Restore clipboard";action.IsEnabled=controller.CanRestoreClipboard;
             System.Windows.Automation.AutomationProperties.SetName(action,"Restore previous clipboard after inspection");
             preview.Visibility=reviewing?Visibility.Collapsed:Visibility.Visible;previewTitle.Text="CLIPBOARD RECOVERY";
         }
