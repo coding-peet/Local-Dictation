@@ -32,7 +32,7 @@ command; the fixture and product never synthesize Enter or a send shortcut.
 
 ## What is checked
 
-The 23 checks cover:
+The 26 checks cover:
 
 - Native clipboard memory, bitmap, palette and enhanced-metafile cloning,
   including refusing an unsupported owner-managed format without changing it.
@@ -95,10 +95,39 @@ initial draft is acknowledged; fresh selection and document ranges remain
 available. The check requires the stale range failure to occur and the
 correction to succeed with one paste and a restored clipboard.
 
+The initial-paragraph cases use a synthetic TextBox whose Ctrl+V handler first
+calls the ordinary native paste synchronously and records the complete inserted
+text and caret. It then removes one of the original two leading LF characters
+beyond the payload. Only the captured fixture delivery's private application
+context is set to `olk`; no external Outlook document is captured or changed.
+The successful final case must adopt the exact observed baseline, preserve the
+payload/caret/signature, restore every original clipboard format, and acknowledge
+a repeated identical request without another paste. Raw ExactText must remain
+false while the separate OutlookParagraphProjection acknowledgement is true.
+
+Two negative cases use an ordinary process context or additionally change a
+non-LF signature character. They must remain unconfirmed, retain the payload
+and clipboard backup, and refuse a retry without replay. Cleanup closes the
+exact synthetic target before deliberate clipboard restoration. The JSON report
+includes the synthetic full-paste and observed text, native paste/coalescing
+counts, first-paste diagnostic, caret, result and whether cleanup closed the
+target before recovery. The negative cases must never set the separate
+OutlookParagraphProjection acknowledgement.
+These cases model the observed paragraph projection; they do not establish
+compatibility with an installed Outlook version.
+
 Controller cases use isolated temporary protected storage. They disable the
 controller's timers and shortcuts; they do not start a microphone or connection.
 The JSON report includes only synthetic fixture text and operational metadata.
 Original clipboard values and their in-memory comparison hashes are not logged.
+
+The report's InputTrace records step and capture boundaries plus observer event
+timestamps, fixed reasons, focus flags, numeric window handles, capture IDs,
+operation state and whether the fixture called Suspend. An unexpected external
+window can contribute its numeric handle; titles, field text, key identities and
+clipboard contents are not collected by this trace. It distinguishes events
+during capture from events that interrupt an active delivery. It does not ignore,
+retry or otherwise change a production guard decision.
 
 The long-input case waits for its operation to finish after cancellation before
 moving on to another controlled field. It uses a fresh worker so an unavailable
@@ -117,6 +146,17 @@ C:\Git\Local-Dictation\delivery-fix-probe\candidate\DeliveryProbe.exe `
 ~~~
 
 A pass proves resource cloning, not application-level paste acceptance.
+
+The synthetic bitmap checks cover CF_BITMAP and CF_DSPBITMAP. Each clone must
+have a distinct handle, expose a BITMAP rather than a DIBSECTION description,
+and retain every pixel after its source is deleted. This requires a transferable
+device-dependent bitmap; Microsoft documents that a DIB section cannot be pasted
+between applications. This check publishes no synthetic data to the clipboard.
+It proves the representation rule, not the cause of an earlier clipboard failure.
+
+Fingerprint failures retain strict format verification and report only the
+numeric format ID, handle availability and native API failure metadata. They do
+not log pixel data or bypass an unavailable clipboard format.
 
 ## Diagnostic journal checks without a UI
 

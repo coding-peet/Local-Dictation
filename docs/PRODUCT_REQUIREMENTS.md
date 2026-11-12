@@ -95,6 +95,19 @@ punctuation, whitespace, and Unicode must be preserved.
   exact destination acknowledgement. Preserve supported previous clipboard
   formats and exclude temporary dictation from Windows clipboard history/cloud.
   Refuse unsupported clipboard formats before replacing them.
+- Accept a specific initial-paragraph readback projection only for desktop
+  Outlook processes named exactly `olk` or `OUTLOOK` (case-insensitive). Require
+  final delivery, a first insertion at document offset zero with no owned text,
+  a nonempty payload without control characters, and an exact caret at the end
+  of that payload. The original full document must begin with exactly two LF
+  characters followed by a character other than CR or LF. The observed document
+  must equal the complete payload plus the original document with only its first
+  LF removed, using ordinal equality. Every other character must remain exact.
+- Keep this Outlook projection separate from raw exact-text diagnostics:
+  `ExactText` remains false and `OutlookParagraphProjection` records the accepted
+  case. Adopt the actual observed full document as the ownership baseline and
+  acknowledge the existing paste without replay. Do not trim/normalize text,
+  accept other CRLF/NBSP changes or additional edits, or change the payload.
 - When appending at an already validated correct caret, avoid reselecting its
   collapsed UIA range. Select a real owned suffix for replacement and retain
   explicit caret restoration when needed. Keep all exact acknowledgment guards.

@@ -207,7 +207,9 @@ public sealed class ClipboardTransaction : IDisposable
             throw new InvalidOperationException("The clipboard contains an owner-managed format that cannot be preserved safely. The clipboard and destination were left untouched.");
         if(format is 2 or 0x82)
         {
-            var copy=CopyImage(handle,0,0,0,0x2000);
+            // CF_BITMAP must be an independent device-dependent bitmap for
+            // transfer to other applications; a DIB section is process-local.
+            var copy=CopyImage(handle,0,0,0,0);
             if(copy==0)throw new Win32Exception("The clipboard bitmap could not be preserved.");
             return new(format,copy,h=>DeleteObject(h));
         }

@@ -15,6 +15,7 @@ public sealed class WindowsTextDelivery : ITextDelivery
     readonly AutomationElement original;
     readonly TextPatternRange? beforeOriginalCaret;
     readonly string provider;
+    readonly string? destinationProcessName;
     int invalid,operating,generation;
     public nint Window=>window;
     public bool IsConflict=>Volatile.Read(ref invalid)!=0;
@@ -24,7 +25,7 @@ public sealed class WindowsTextDelivery : ITextDelivery
     public DeliveryDiagnostic? LastDiagnostic {get;private set;}
 
     WindowsTextDelivery(nint window,TargetGuard guard,AutomationElement original,TextPatternRange? beforeOriginalCaret)
-    {this.window=window;this.guard=guard;this.original=original;this.beforeOriginalCaret=beforeOriginalCaret;provider=ProviderMetadata(original);}
+    {this.window=window;this.guard=guard;this.original=original;this.beforeOriginalCaret=beforeOriginalCaret;provider=ProviderMetadata(original);destinationProcessName=WindowsDestinationApplication.ProcessName(window);}
     public void Invalidate() => Interlocked.Exchange(ref invalid, 1);
     public void Suspend()=>Interlocked.Increment(ref generation);
     public bool OwnsProgrammaticFocus(nint root)=>root==window&&Volatile.Read(ref operating)>0;
@@ -141,26 +142,37 @@ public sealed class WindowsTextDelivery : ITextDelivery
         var watch=Stopwatch.StartNew();
         var phase="validate";
         var beforeText=guard.ExpectedText;
+        var beforeOwnedText=guard.OwnedText;
         string? expected=null;
         int? observedLength=null,observedCaret=null;
         DeliveryTextMismatch? textMismatch=null;
         bool? textMatches=null,caretMatches=null,unchanged=null,lineEndingsEquivalent=null,terminalParagraphEquivalent=null,nbspEquivalent=null;
         ClipboardTransaction? clipboard=null;
-        bool confirmed=false;
+        bool confirmed=false,outlookParagraphProjection=false;
         string? failureType=null;int? failureCode=null;
         var readbackRetries=0;
         string? inspectionStage=null,lastReadbackStage=null,lastReadbackFailureType=null;
         string? lastInterruptionStage=null;
         int? lastReadbackFailureCode=null;
         Action<string> observeInspection=stage=>inspectionStage=stage;
+        void RecordObservation(string text,int caret)
+        {
+            observedLength=text.Length;observedCaret=caret;
+            textMatches=text==expected;caretMatches=caret==guard.Start+next.Length;unchanged=text==beforeText;
+            if(expected==null)return;
+            if(DiagnosticJournal.Enabled)textMismatch=DeliveryDiagnostic.DescribeTextMismatch(expected,text,guard.Start+next.Length);
+            lineEndingsEquivalent=text.Replace("\r\n","\n")==expected.Replace("\r\n","\n");
+            terminalParagraphEquivalent=text.TrimEnd('\r','\n')==expected.TrimEnd('\r','\n');
+            nbspEquivalent=text.Replace('\u00a0',' ')==expected.Replace('\u00a0',' ');
+        }
         bool Reconcile()
         {
             if(expected==null)return false;
-            int caret;
+            int caret;string actualText;bool projected;
             try
             {
                 Check(token,version);
-                if(!TryConfirmLate(next,expected,out caret))return false;
+                if(!TryConfirmLate(next,expected,beforeText,beforeOwnedText,restoreFocus,out actualText,out caret,out projected))return false;
                 Check(token,version);
             }
             catch(Exception error) when(error is Interrupted or OperationCanceledException or InvalidOperationException or ElementNotAvailableException or COMException or Win32Exception)
@@ -168,11 +180,9 @@ public sealed class WindowsTextDelivery : ITextDelivery
                 if(error is Interrupted interruption)lastInterruptionStage=interruption.Stage;
                 return false;
             }
-            guard.Applied(next,expected,caret);
-            confirmed=true;clipboard?.Acknowledge();
-            phase="late confirm";observedLength=expected.Length;observedCaret=guard.Start+next.Length;
-            textMatches=caretMatches=lineEndingsEquivalent=terminalParagraphEquivalent=nbspEquivalent=true;
-            unchanged=expected==beforeText;return true;
+            RecordObservation(actualText,caret);outlookParagraphProjection=projected;
+            guard.Applied(next,actualText,caret);
+            confirmed=true;clipboard?.Acknowledge();phase="late confirm";return true;
         }
         Interlocked.Increment(ref operating);
         try
@@ -254,16 +264,15 @@ public sealed class WindowsTextDelivery : ITextDelivery
                     var after=Inspect(afterElement,observeInspection);
                     inspectionStage="focus-after-read";Check(token,version);
                     if(Identity(afterElement)!=guard.Identity)return Stop("The destination changed during insertion.");
-                    observedLength=after.Text.Length;observedCaret=after.Caret;
-                    textMatches=after.Text==expected;caretMatches=after.Caret==guard.Start+next.Length;unchanged=after.Text==beforeText;
-                    if(DiagnosticJournal.Enabled)textMismatch=DeliveryDiagnostic.DescribeTextMismatch(expected,after.Text,guard.Start+next.Length);
-                    lineEndingsEquivalent=after.Text.Replace("\r\n","\n")==expected.Replace("\r\n","\n");
-                    terminalParagraphEquivalent=after.Text.TrimEnd('\r','\n')==expected.TrimEnd('\r','\n');
-                    nbspEquivalent=after.Text.Replace('\u00a0',' ')==expected.Replace('\u00a0',' ');
-                    if(textMatches==true&&caretMatches==true)
+                    RecordObservation(after.Text,after.Caret);
+                    outlookParagraphProjection=textMatches!=true&&OutlookPasteAcknowledgement.IsKnownFinalPasteProjection(
+                        destinationProcessName,beforeText,guard.Start,beforeOwnedText,next,after.Text,after.Caret,restoreFocus);
+                    if(caretMatches==true&&(textMatches==true||outlookParagraphProjection))
                     {
                         confirmed=true;clipboard?.Acknowledge();
-                        guard.Applied(next,expected,after.Caret);return true;
+                        // Preserve the exact observed baseline when Outlook coalesces
+                        // its initial empty paragraph; never replay the accepted paste.
+                        guard.Applied(next,after.Text,after.Caret);return true;
                     }
                 }
                 catch(Exception error) when(error is InvalidOperationException or ElementNotAvailableException or COMException or Win32Exception)
@@ -310,22 +319,26 @@ public sealed class WindowsTextDelivery : ITextDelivery
             LastDiagnostic=new(phase,restoreFocus,queued,watch.Elapsed.TotalMilliseconds,beforeText.Length,next.Length,expected?.Length,
                 observedLength,observedCaret,textMatches,caretMatches,unchanged,lineEndingsEquivalent,terminalParagraphEquivalent,nbspEquivalent,
                 provider,clipboard?.SavedFormatCount,clipboard?.WasRestored,clipboard?.WasSuperseded,IsConflict,failureType,failureCode,ClipboardRecovery.HasPending,
-                readbackRetries,lastReadbackStage,lastReadbackFailureType,lastReadbackFailureCode,lastInterruptionStage,textMismatch);
+                readbackRetries,lastReadbackStage,lastReadbackFailureType,lastReadbackFailureCode,lastInterruptionStage,textMismatch,outlookParagraphProjection);
             LastDiagnostic.WriteIfEnabled();
             Interlocked.Decrement(ref operating);
         }
     }
 
-    bool TryConfirmLate(string next,string expected,out int caret)
+    bool TryConfirmLate(string next,string expected,string beforeText,string beforeOwnedText,bool finalDelivery,
+        out string actualText,out int caret,out bool projected)
     {
-        caret=0;
+        actualText="";caret=0;projected=false;
         // Read only the originally captured element. A late exact acknowledgement must not cause a second paste.
         try
         {
             if(!IsWindow(window)||Identity(original)!=guard.Identity)return false;
             var after=Inspect(original);
-            if(after.Text!=expected||after.Caret!=guard.Start+next.Length)return false;
-            caret=after.Caret;return true;
+            if(after.Caret!=guard.Start+next.Length)return false;
+            projected=after.Text!=expected&&OutlookPasteAcknowledgement.IsKnownFinalPasteProjection(
+                destinationProcessName,beforeText,guard.Start,beforeOwnedText,next,after.Text,after.Caret,finalDelivery);
+            if(after.Text!=expected&&!projected)return false;
+            actualText=after.Text;caret=after.Caret;return true;
         }
         catch(Exception error) when(error is InvalidOperationException or ElementNotAvailableException or COMException or Win32Exception){return false;}
     }

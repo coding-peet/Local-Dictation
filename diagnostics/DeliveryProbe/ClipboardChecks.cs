@@ -58,15 +58,26 @@ static class ClipboardChecks
             finally{copied.Copy.Dispose();}
         }
         finally{if(palette!=0)DeleteObject(palette);Marshal.FreeHGlobal(paletteDescription);}
-        var bitmap=CreateBitmap(2,2,1,32,new byte[]{255,0,0,0,0,255,0,0,0,0,255,0,255,255,255,0});
-        Require(bitmap!=0,"Fixture bitmap allocation failed.");
-        try
+        foreach(var format in new[]{2u,0x82u})
         {
-            var expected=BitmapBytes(bitmap);var copied=Clone(2,bitmap);
-            try{DeleteObject(bitmap);bitmap=0;Require(BitmapBytes(copied.Handle).SequenceEqual(expected),"The bitmap clone lost pixels or depended on its source.");}
-            finally{copied.Copy.Dispose();}
+            var bitmap=CreateBitmap(2,2,1,32,new byte[]{255,0,0,0,0,255,0,0,0,0,255,0,255,255,255,0});
+            Require(bitmap!=0,"Fixture bitmap allocation failed.");
+            try
+            {
+                var expected=BitmapBytes(bitmap,format);var copied=Clone(format,bitmap);
+                try
+                {
+                    Require(copied.Handle!=bitmap,"The bitmap clone reused its source handle.");
+                    var descriptionBytes=BitmapDescriptionBytes(copied.Handle);
+                    Require(descriptionBytes==Marshal.SizeOf<Bitmap>(),
+                        $"Clipboard bitmap clone format={format} must be a transferable device-dependent bitmap (BITMAP {Marshal.SizeOf<Bitmap>()} bytes); GetObject returned {descriptionBytes} bytes, indicating a process-local DIB section.");
+                    DeleteObject(bitmap);bitmap=0;
+                    Require(BitmapBytes(copied.Handle,format).SequenceEqual(expected),"The bitmap clone lost pixels or depended on its source.");
+                }
+                finally{copied.Copy.Dispose();}
+            }
+            finally{if(bitmap!=0)DeleteObject(bitmap);}
         }
-        finally{if(bitmap!=0)DeleteObject(bitmap);}
         var dc=CreateEnhMetaFile(0,null,0,"LocalDictationProbe\0Synthetic\0\0");
         Require(dc!=0,"Fixture metafile allocation failed.");Rectangle(dc,0,0,8,8);var enhanced=CloseEnhMetaFile(dc);
         try
@@ -131,8 +142,9 @@ static class ClipboardChecks
             uint format=0;
             while((format=EnumClipboardFormats(format))!=0)
             {
-                var handle=GetClipboardData(format);byte[] bytes;
-                if(format is 2 or 0x82)bytes=BitmapBytes(handle);
+                var handle=GetClipboardData(format);var dataError=Marshal.GetLastWin32Error();byte[] bytes;
+                Require(handle!=0,$"Clipboard format={format} is unavailable; HandlePresent=false; GetClipboardDataError={dataError}.");
+                if(format is 2 or 0x82)bytes=BitmapBytes(handle,format);
                 else if(format is 14 or 0x8e)bytes=EnhBytes(handle);
                 else if(format==9)
                 {
@@ -160,9 +172,16 @@ static class ClipboardChecks
         Require(before.All(item=>after.TryGetValue(item.Key,out var value)&&value==item.Value),"Delivery changed or lost an original clipboard format.");
     }
     static byte[] EnhBytes(nint value){var count=GetEnhMetaFileBits(value,0,null);Require(count>0,"Metafile data is unavailable.");var bytes=new byte[count];GetEnhMetaFileBits(value,count,bytes);return bytes;}
-    static byte[] BitmapBytes(nint value)
+    static int BitmapDescriptionBytes(nint value)
     {
-        Require(GetObject(value,Marshal.SizeOf<Bitmap>(),out var bitmap)>0,"Bitmap data is unavailable.");
+        var description=Marshal.AllocHGlobal(256);
+        try{return GetObjectDescription(value,256,description);}
+        finally{Marshal.FreeHGlobal(description);}
+    }
+    static byte[] BitmapBytes(nint value,uint? format=null)
+    {
+        var returned=GetObject(value,Marshal.SizeOf<Bitmap>(),out var bitmap);var rawError=Marshal.GetLastWin32Error();
+        if(returned<=0)throw new InvalidOperationException($"Bitmap data is unavailable; FormatId={format}; HandlePresent={value!=0}; GetObjectBytes={returned}; RawGetObjectLastError={rawError}; GdiObjectType={GetObjectType(value)}.");
         var bytes=new byte[checked(bitmap.WidthBytes*bitmap.Height)];Require(GetBitmapBits(value,bytes.Length,bytes)==bytes.Length,"Bitmap pixels are unavailable.");return bytes;
     }
     [StructLayout(LayoutKind.Sequential)] struct Bitmap{public int Type,Width,Height,WidthBytes;public ushort Planes,BitsPixel;public nint Bits;}
@@ -170,7 +189,7 @@ static class ClipboardChecks
     [DllImport("user32.dll")] static extern bool OpenClipboard(nint owner);
     [DllImport("user32.dll")] static extern bool CloseClipboard();
     [DllImport("user32.dll")] static extern uint EnumClipboardFormats(uint format);
-    [DllImport("user32.dll")] static extern nint GetClipboardData(uint format);
+    [DllImport("user32.dll",SetLastError=true)] static extern nint GetClipboardData(uint format);
     [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern uint RegisterClipboardFormat(string name);
     [DllImport("kernel32.dll")] static extern nint GlobalAlloc(uint flags,nuint size);
     [DllImport("kernel32.dll")] static extern nint GlobalLock(nint value);
@@ -180,7 +199,9 @@ static class ClipboardChecks
     [DllImport("gdi32.dll")] static extern nint CreatePalette(nint palette);
     [DllImport("gdi32.dll")] static extern uint GetPaletteEntries(nint palette,uint start,uint count,nint entries);
     [DllImport("gdi32.dll")] static extern nint CreateBitmap(int width,int height,uint planes,uint bitCount,byte[] bits);
-    [DllImport("gdi32.dll")] static extern int GetObject(nint value,int size,out Bitmap bitmap);
+    [DllImport("gdi32.dll",EntryPoint="GetObjectW",SetLastError=true)] static extern int GetObject(nint value,int size,out Bitmap bitmap);
+    [DllImport("gdi32.dll",EntryPoint="GetObjectW",SetLastError=true)] static extern int GetObjectDescription(nint value,int size,nint description);
+    [DllImport("gdi32.dll")] static extern uint GetObjectType(nint value);
     [DllImport("gdi32.dll")] static extern int GetBitmapBits(nint bitmap,int count,byte[] bits);
     [DllImport("gdi32.dll")] static extern bool DeleteObject(nint value);
     [DllImport("gdi32.dll",CharSet=CharSet.Unicode)] static extern nint CreateEnhMetaFile(nint dc,string? file,nint rectangle,string description);

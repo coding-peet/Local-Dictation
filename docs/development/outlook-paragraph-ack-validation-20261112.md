@@ -1,0 +1,142 @@
+# Outlook paragraph acknowledgment validation - 12 November 2026
+
+Status: candidate correction and controlled native regression passed. Installed
+Outlook acceptance remains pending.
+
+## Actual Outlook evidence before this correction
+
+The user confirmed that the final-only attempt inserted the complete result in
+one paste and left the existing signature unchanged. The attributable client
+was PID 48968, build ae963cb. It still entered unconfirmed-paste recovery.
+
+The same attempt recorded these content-free measurements:
+
+- BeforeLength=241; RequestedLength=48.
+- ExpectedLength=289; ObservedLength=288.
+- ObservedCaret=48; ExactCaret=true; ExactText=false.
+- The full comparison identified one missing LF at owned boundary 48. The first
+  mismatch was offset 49 because either of two identical initial LFs explains
+  the same observed string. Every other character matched exactly.
+
+This localizes the acknowledgment failure to the accessible document readback.
+It does not establish Outlook's internal document/paragraph implementation. No
+real transcript, signature text, recipient or message content is stored here.
+
+## Narrow acknowledgment rule
+
+Desktop Outlook still keeps live wording in the banner and inserts the complete
+final result once after Finish and any required verification choices.
+
+The new rule accepts a readback projection only when all of these hold:
+
+1. The captured process name is exactly `olk` or `OUTLOOK`, case-insensitively.
+2. This is final delivery, with no previously owned text and insertion at
+   document offset zero.
+3. The payload is nonempty and contains no `char.IsControl` characters.
+4. The original document starts with exactly two LF characters, followed by a
+   character other than CR or LF.
+5. The observed caret equals the complete payload length.
+6. The full observed document equals the exact payload followed by the original
+   document with only its first LF removed, using ordinal equality.
+
+There is no whitespace normalization or payload alteration. Missing payload
+characters, signature changes, CRLF/NBSP substitutions, unknown applications,
+live updates, existing owned text and other insertion offsets remain rejected.
+Later signature formatting is allowed only when it remains exactly unchanged.
+
+Raw `ExactText` remains false for this case. The separate
+`OutlookParagraphProjection` flag identifies the accepted projection. Delivery
+adopts the actual observed document as its ownership baseline, acknowledges the
+existing paste and restores the previous clipboard. It never pastes again to
+obtain acknowledgment; repeating the same accepted final request is a no-op.
+
+## Verification
+
+All source work used C:\Git\Local-Dictation\repo on feature/native-windows,
+with generated output outside the checkout. No new worktree was created.
+
+- Core: 201/201 passed, including 76 new pure predicate cases. The test-first
+  run produced nine expected positive-case failures against a false stub;
+  implementation then passed the full suite. The fixed synthetic fixture
+  matches the 241/48/289/288 structural lengths above.
+- Pure diagnostic checks: 9/9 passed. These perform synthetic/file-IO checks;
+  they do not exercise an external destination.
+- Final native DeliveryProbe: 26/26 passed on 12 November, 18:47:58-18:48:15 CET.
+  ClipboardRecoveryPending=false and ClipboardTransactionUnsettled=false.
+- All three paragraph cases passed in the final run. The known Outlook
+  projection was acknowledged after one complete native paste, preserving the
+  exact payload, caret and signature, adopting the observed baseline and
+  restoring the clipboard. Repeating the accepted request did not paste again.
+  An ordinary process and an additional signature edit remained unconfirmed,
+  retained recovery until deliberate fixture cleanup, and refused replay.
+- The final run also passed the existing invalid endpoint and failed clipboard
+  restoration checks that did not complete in the earlier attempts below.
+- Static Help checks passed: 20 unique IDs, 12 valid internal links, no scripts,
+  and the existing restrictive content security policy. All three edited
+  documents passed UTF-8/content/trailing-whitespace checks; the tracked Help
+  and requirements changes passed `git diff --check`. Help was not opened or
+  rendered for this documentation update.
+
+The native paragraph provider first performs an ordinary synchronous native
+paste, then models the single-LF projection. It is a controlled synthetic
+provider, not installed-Outlook acceptance.
+
+## Earlier native attempts and bitmap representation correction
+
+The two earlier native runs failed at different stages:
+
+1. `green.json` completed 25/26 checks, including all three new paragraph cases.
+   "Invalid provider endpoint movement cannot queue replacement input" was
+   interrupted during its initial draft by the input-generation guard in
+   clipboard backup. QueuedInputEvents=0, ClipboardRestored=true, and both final
+   clipboard recovery/unsettled flags were false. It never reached the invalid
+   endpoint assertion. This was an interrupted initial insertion, not evidence
+   that replacement input bypassed the endpoint guard.
+2. `green-repeat.json` stopped after two recorded checks. "Failed native
+   clipboard restoration retains every original backup format" failed while
+   `Fingerprint` called `BitmapBytes`, reporting "Bitmap data is unavailable".
+   This occurred before a transaction started and before any destination
+   observation; Diagnostic=null. Both final recovery/unsettled flags were false.
+   This is separate from the first run's input-generation interruption.
+
+A strict synthetic bitmap regression then exposed a representation defect in
+`ClipboardTransaction.Clone`: `CopyImage` used `LR_CREATEDIBSECTION`. For
+CF_BITMAP, the RED run received a 104-byte DIBSECTION description where the
+32-byte BITMAP representation was required on this x64 machine.
+
+Microsoft documents that a DIB section cannot be pasted between applications.
+[CreateDIBSection documentation](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-createdibsection)
+
+The correction uses `CopyImage` with flags zero. Omitting
+`LR_CREATEDIBSECTION` creates a device-dependent bitmap; omitting
+`LR_COPYRETURNORG` requires a new object rather than returning the source.
+[CopyImage documentation](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-copyimage)
+
+The GREEN synthetic check passed for CF_BITMAP and CF_DSPBITMAP: independent
+handles, BITMAP representation and preserved pixels after source deletion.
+It published no synthetic data to the clipboard and reported
+UserClipboardUnchanged=true. This proves the corrected cloning representation;
+it does not independently prove the cause of the earlier fingerprint failure.
+The final 26/26 native run passed afterward with strict format checks retained.
+
+## Evidence
+
+    C:\AI\build\Local-Dictation-outlook-lf-ack\dotnet
+    C:\AI\build\Local-Dictation-outlook-lf-native\diagnostic-final.json
+    C:\AI\build\Local-Dictation-outlook-lf-native\green.json
+    C:\AI\build\Local-Dictation-outlook-lf-native\green-repeat.json
+    C:\Git\Local-Dictation\outlook-lf-native-probe\bitmap-red.json
+    C:\AI\build\Local-Dictation-outlook-lf-native\bitmap-green.json
+    C:\AI\build\Local-Dictation-outlook-lf-native\green-final.json
+
+## Remaining acceptance
+
+Deployment of this correction to the app folder and manual Outlook acceptance
+remain pending. Use a fresh attributable candidate for the user's actual Outlook
+test, confirming the complete visible result, preserved signature, durable
+insertion status, restored clipboard and absence of replay. Review-approved return and focus-switch
+resumption remain distinct acceptance checks.
+
+The corrected installed Outlook flow has not yet passed a manual test. A build,
+Core tests, diagnostic checks or synthetic native field does not establish that
+result. Updated Help still needs its published F1/application-level check.

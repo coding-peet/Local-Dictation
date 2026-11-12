@@ -42,7 +42,15 @@ static class Program
     }
 }
 
-sealed record StepResult(string Name,bool Passed,double Milliseconds,string Detail,string Target,string Other,bool? Conflict,DeliveryDiagnostic? Diagnostic);
+sealed record ProbeInputTrace(DateTimeOffset TimeUtc,double ElapsedMilliseconds,string Check,string Event,
+    int CaptureAttempt,bool CaptureInProgress,long CaptureWindow,int? CurrentCapture,long? CurrentWindow,
+    string? Reason,bool? FocusOnly,long? RootWindow,bool? OperationActive,bool? OwnsProgrammaticFocus,bool Suspended);
+
+sealed record ParagraphProjectionResult(string ProcessContext,int PasteCommands,int CompleteNativePastes,int CoalescedLineFeeds,
+    string Before,string FullyPasted,string Observed,int FullPasteCaret,int Caret,bool? Applied,bool ClosedBeforeRecovery,DeliveryDiagnostic? FirstPasteDiagnostic);
+
+sealed record StepResult(string Name,bool Passed,double Milliseconds,string Detail,string Target,string Other,bool? Conflict,DeliveryDiagnostic? Diagnostic,
+    ParagraphProjectionResult? ParagraphProjection=null);
 
 sealed class ProbeWindow : Window
 {
@@ -60,6 +68,27 @@ sealed class ProbeWindow : Window
     GlobalInput? observer;
     Window? reviewSurface,temporaryTarget;
     int observedInputs,ignoredProgrammaticFocus;
+    ParagraphProjectionResult? paragraphProjection;
+    readonly List<ProbeInputTrace> inputTrace=[];
+    readonly Dictionary<WindowsTextDelivery,int> captureIds=[];
+    readonly Stopwatch inputTraceClock=new();
+    string activeCheck="";
+    int captureAttempt;
+    bool captureInProgress;
+    long captureWindow;
+
+    // GlobalInput hooks and these capture/step continuations run on this UI
+    // thread. This trace reads only numeric window handles and the delivery's atomic
+    // operation flag; it does not query a provider or change delivery guards.
+    void TraceInput(string kind,DestinationInput? input=null,bool? operationActive=null,bool? ownsFocus=null,bool suspended=false)
+    {
+        var owned=current;
+        int? id=owned!=null&&captureIds.TryGetValue(owned,out var capturedId)?capturedId:null;
+        inputTrace.Add(new(DateTimeOffset.UtcNow,inputTraceClock.Elapsed.TotalMilliseconds,activeCheck,kind,
+            captureAttempt,captureInProgress,captureWindow,id,owned==null?null:(long)owned.Window,
+            input?.Reason,input?.FocusOnly,input==null?null:(long)input.Value.RootWindow,
+            operationActive??(owned==null?null:owned.OwnsProgrammaticFocus(owned.Window)),ownsFocus,suspended));
+    }
 
     public ProbeWindow(string reportPath)
     {
@@ -93,10 +122,23 @@ sealed class ProbeWindow : Window
     async Task<WindowsTextDelivery> CaptureOwn(AutomationWorker worker,Window owner)
     {
         var expected=new WindowInteropHelper(owner).Handle;
-        var captured=await worker.Run(token=>WindowsTextDelivery.Capture(token,allowOwnProcess:true));
-        if(captured.Window!=expected)
-        {captured.Invalidate();throw new InvalidOperationException("Capture escaped the fixture window; no insertion was attempted.");}
-        return captured;
+        var attempt=++captureAttempt;captureWindow=(long)expected;captureInProgress=true;var succeeded=false;
+        TraceInput("capture-start");
+        try
+        {
+            var captured=await worker.Run(token=>WindowsTextDelivery.Capture(token,allowOwnProcess:true));
+            if(captured.Window!=expected)
+            {captured.Invalidate();throw new InvalidOperationException("Capture escaped the fixture window; no insertion was attempted.");}
+            captureIds[captured]=attempt;succeeded=true;
+            return captured;
+        }
+        finally
+        {
+            captureInProgress=false;
+            // The caller publishes current after awaiting CaptureOwn. If an old
+            // event arrives first, its trace retains the old CurrentCapture ID.
+            TraceInput(succeeded?"capture-complete":"capture-failed");
+        }
     }
     async Task ShowReviewSurface()
     {
@@ -109,17 +151,18 @@ sealed class ProbeWindow : Window
     }
     async Task Step(string name,Func<Task> check,bool continueAfterFailure=false)
     {
-        status.Text="Running: "+name;var watch=Stopwatch.StartNew();
+        status.Text="Running: "+name;activeCheck=name;paragraphProjection=null;var watch=Stopwatch.StartNew();TraceInput("step-start");
         try
         {
-            await check();results.Add(new(name,true,watch.Elapsed.TotalMilliseconds,"Passed",target.Text,other.Text,current?.IsConflict,current?.LastDiagnostic));
+            await check();results.Add(new(name,true,watch.Elapsed.TotalMilliseconds,"Passed",target.Text,other.Text,current?.IsConflict,current?.LastDiagnostic,paragraphProjection));
             log.Text+=$"PASS  {name} ({watch.Elapsed.TotalMilliseconds:F0} ms)\n";
         }
         catch(Exception exception)
         {
-            results.Add(new(name,false,watch.Elapsed.TotalMilliseconds,exception.ToString(),target.Text,other.Text,current?.IsConflict,current?.LastDiagnostic));
+            results.Add(new(name,false,watch.Elapsed.TotalMilliseconds,exception.ToString(),target.Text,other.Text,current?.IsConflict,current?.LastDiagnostic,paragraphProjection));
             log.Text+=$"FAIL  {name}\n{exception}\n";if(!continueAfterFailure)throw;
         }
+        finally{TraceInput("step-finished");}
     }
 
     static T Field<T>(object instance,string name)=>(T)instance.GetType().GetField(name,Members)!.GetValue(instance)!;
@@ -379,9 +422,114 @@ sealed class ProbeWindow : Window
         }
     }
 
+    async Task InitialParagraphProjection(string processContext,bool mutateSignature=false)
+    {
+        const string before="\n\nSIGNATURE | č. 42 😀 | End";
+        const string payload="Úplný syntetický diktát č. 42 😀 — cafe\u0301";
+        var expected=payload+before[1..]+(mutateSignature?"!":"");
+        var field=new ParagraphProjectionTextBox{Text=before,MutateSignature=mutateSignature,AcceptsReturn=true,Margin=new(16),FontSize=16};
+        var fixture=new Window{Title="Delivery probe — initial paragraph projection",Width=780,Height=210,
+            Owner=this,Content=field,WindowStartupLocation=WindowStartupLocation.CenterOwner};
+        temporaryTarget=fixture;
+        var mainBefore=target.Text;var otherBefore=other.Text;
+        var clipboardBefore=ClipboardChecks.Fingerprint();
+        bool? applied=null;var closedBeforeRecovery=false;DeliveryDiagnostic? firstPasteDiagnostic=null;
+        using var projectionWorker=new AutomationWorker();
+        try
+        {
+            Require(!ClipboardRecovery.HasPending&&!ClipboardRecovery.HasUnsettledTransaction,
+                "The paragraph-projection fixture requires a settled clipboard.");
+            fixture.Show();fixture.Activate();field.Focus();field.Select(0,0);await Settle();
+            var owned=await CaptureOwn(projectionWorker,fixture);current=owned;
+            var guard=Field<TargetGuard>(owned,"guard");
+            Require(guard.Start==0&&guard.Caret==0&&guard.OwnedText==""&&guard.ExpectedText==before,
+                "The fixture did not capture exactly two leading LF characters at the empty document-start caret.");
+            // Only this known fixture-owned delivery receives synthetic application
+            // context. The absent field permits publishing the failing old baseline;
+            // success below still requires the captured production context to exist.
+            var processField=typeof(WindowsTextDelivery).GetField("destinationProcessName",Members);
+            processField?.SetValue(owned,processContext);
+            var finished=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            try
+            {
+                applied=await projectionWorker.Run(token=>
+                {
+                    try{return owned.Apply(payload,token,restoreFocus:true);}
+                    finally{finished.TrySetResult();}
+                },TimeSpan.FromSeconds(5));
+            }
+            finally
+            {
+                await finished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            firstPasteDiagnostic=owned.LastDiagnostic;
+            Require(field.PasteCommands==1&&field.CompleteNativePastes==1&&field.CoalescedLineFeeds==1,
+                "The fixture did not consume exactly one complete native paste before its single-LF projection change.");
+            Require(field.FullPasteText==payload+before&&field.FullPasteCaret==payload.Length,
+                "The ordinary first native paste did not insert the complete visible payload before paragraph coalescing.");
+            Require(field.Text==expected&&field.SelectionLength==0&&field.SelectionStart==payload.Length,
+                "The fixture did not preserve the full payload, exact caret and all expected signature text.");
+            Require(owned.LastDiagnostic is {Final:true,QueuedInputEvents:4,ExactCaret:true},
+                "The final paragraph-projection case did not use one four-event native paste at the exact caret.");
+            Require(target.Text==mainBefore&&other.Text==otherBefore&&other.Text==OtherText,
+                "The paragraph-projection case changed an unrelated field.");
+            if(processContext=="olk"&&!mutateSignature)
+            {
+                Require(applied==true,"The complete first native paste was left unconfirmed after only the known initial LF projection: "+owned.Reason);
+                Require(firstPasteDiagnostic is {ExactText:false,ExactCaret:true,OutlookParagraphProjection:true},
+                    "Known paragraph projection was not reported separately from the raw text mismatch.");
+                Require(processField!=null,"The successful fixture did not exercise captured production application context.");
+                Require(owned.InsertedText==payload&&!owned.IsConflict&&guard.ExpectedText==expected&&guard.Caret==payload.Length,
+                    "Known paragraph projection did not adopt the exact observed baseline and owned payload.");
+                Require(!ClipboardRecovery.HasPending&&!ClipboardRecovery.HasUnsettledTransaction&&owned.LastDiagnostic?.ClipboardRestored==true,
+                    "Known paragraph projection did not restore the original clipboard formats.");
+                ClipboardChecks.RequireSame(clipboardBefore,ClipboardChecks.Fingerprint());
+                Require(await projectionWorker.Run(token=>owned.Apply(payload,token,restoreFocus:true)),
+                    "Repeating the acknowledged final text did not preserve the adopted observed baseline.");
+                Require(field.PasteCommands==1&&field.Text==expected,"An acknowledged paragraph projection replayed the paste.");
+            }
+            else
+            {
+                Require(firstPasteDiagnostic is {ExactText:false,OutlookParagraphProjection:false},
+                    "An unknown native result was reported as the known Outlook paragraph projection.");
+                Require(applied==false&&owned.IsConflict&&owned.InsertedText==""&&guard.ExpectedText==before,
+                    "An ordinary process or additional signature mutation was acknowledged as a known paragraph projection.");
+                Require(ClipboardRecovery.HasPending&&ClipboardRecovery.HasUnsettledTransaction,
+                    "An unknown native result discarded its protected clipboard lease.");
+                Require(System.Windows.Clipboard.GetText()==payload,"An unknown native result exposed the old clipboard to a queued paste.");
+                Require(!await projectionWorker.Run(token=>owned.Apply(payload,token,restoreFocus:true)),
+                    "An unknown native result was automatically retried.");
+                Require(field.PasteCommands==1&&field.Text==expected,"Refusing an unknown native result replayed the paste.");
+            }
+        }
+        finally
+        {
+            // This field synchronously consumed Ctrl+V; its full paste and observed
+            // result are available above. Close that exact owned target before
+            // restoring any held clipboard, including a failing RED baseline.
+            fixture.Close();if(ReferenceEquals(temporaryTarget,fixture))temporaryTarget=null;await Settle();
+            if(ClipboardRecovery.HasPending)
+            {
+                closedBeforeRecovery=true;
+                Require(field.PasteCommands==1&&field.CompleteNativePastes==1&&field.Text==expected,
+                    "The fixture cannot prove consumption of its only paste; keep the protected clipboard backup.");
+                var recovery=ClipboardRecovery.RestoreAfterInspection();
+                Require(recovery.Succeeded,"Paragraph-projection cleanup failed: "+recovery.Message);
+            }
+            paragraphProjection=new(processContext,field.PasteCommands,field.CompleteNativePastes,field.CoalescedLineFeeds,
+                before,field.FullPasteText,field.Text,field.FullPasteCaret,field.SelectionStart,applied,closedBeforeRecovery,firstPasteDiagnostic);
+            Require(target.Text==mainBefore&&other.Text==otherBefore,"Paragraph-projection cleanup changed an unrelated field.");
+            ClipboardChecks.RequireSame(clipboardBefore,ClipboardChecks.Fingerprint());
+            Require(!ClipboardRecovery.HasPending&&!ClipboardRecovery.HasUnsettledTransaction,
+                "Paragraph-projection cleanup left a protected clipboard transaction unsettled.");
+        }
+    }
+
     async Task RunChecks()
     {
-        run.IsEnabled=false;results.Clear();log.Text="";ResetText();observedInputs=ignoredProgrammaticFocus=0;
+        run.IsEnabled=false;results.Clear();inputTrace.Clear();captureIds.Clear();inputTraceClock.Restart();
+        activeCheck="";captureAttempt=0;captureInProgress=false;captureWindow=0;
+        log.Text="";ResetText();observedInputs=ignoredProgrammaticFocus=0;
         var started=DateTimeOffset.UtcNow;
         using var worker=new AutomationWorker();
         try
@@ -391,10 +539,17 @@ sealed class ProbeWindow : Window
             observer=new GlobalInput{ShortcutEnabled=false,SessionActive=false};
             observer.UserEdited+=input=>
             {
-                var owned=current;if(owned==null)return;
-                observedInputs++;
-                if(input.FocusOnly&&owned.OwnsProgrammaticFocus(input.RootWindow)){ignoredProgrammaticFocus++;return;}
-                owned.Suspend();
+                var owned=current;
+                var operationActive=owned==null?(bool?)null:owned.OwnsProgrammaticFocus(owned.Window);
+                var ownsFocus=owned==null?(bool?)null:owned.OwnsProgrammaticFocus(input.RootWindow);
+                var suspended=false;
+                if(owned!=null)
+                {
+                    observedInputs++;
+                    if(input.FocusOnly&&ownsFocus==true)ignoredProgrammaticFocus++;
+                    else{owned.Suspend();suspended=true;}
+                }
+                TraceInput("input",input,operationActive,ownsFocus,suspended);
             };
             await Step("Capture and insert live draft",async()=>
             {
@@ -550,6 +705,9 @@ sealed class ProbeWindow : Window
             await Step("Repeated surroundings and long Unicode revisions survive unavailable FindText",()=>OwnedSuffixWithoutFindText(unicode:true),continueAfterFailure:true);
             await Step("Invalid provider endpoint movement cannot queue replacement input",()=>OwnedSuffixWithoutFindText(unicode:false,badMovement:true),continueAfterFailure:true);
             await Step("Expired pre-paste anchor falls back to a fresh exact caret range",()=>OwnedSuffixWithoutFindText(unicode:false,staleAnchor:true),continueAfterFailure:true);
+            await Step("Known Outlook initial LF projection confirms the first full final paste without replay",()=>InitialParagraphProjection("olk"),continueAfterFailure:true);
+            await Step("Ordinary process initial LF mutation retains clipboard recovery without replay",()=>InitialParagraphProjection("ordinary-fixture"),continueAfterFailure:true);
+            await Step("Additional signature mutation in Outlook retains clipboard recovery without replay",()=>InitialParagraphProjection("olk",mutateSignature:true),continueAfterFailure:true);
             var passed=results.All(r=>r.Passed);status.Text=$"{(passed?"PASS":"FAIL")} — {results.Count(r=>r.Passed)}/{results.Count} native delivery checks";status.Foreground=passed?Brushes.DarkGreen:Brushes.DarkRed;
         }
         catch(Exception exception)
@@ -565,8 +723,8 @@ sealed class ProbeWindow : Window
         {
             current=null;observer?.Dispose();observer=null;reviewSurface?.Hide();temporaryTarget?.Close();temporaryTarget=null;
             var report=new{StartedUtc=started,CompletedUtc=DateTimeOffset.UtcNow,Fixture="Local Dictation DeliveryProbe",NativeProductCode=true,
-                SyntheticFieldsOnly=true,ClipboardRecoveryPending=ClipboardRecovery.HasPending,ClipboardTransactionUnsettled=ClipboardRecovery.HasUnsettledTransaction,Passed=results.Count==23&&results.All(r=>r.Passed),ObservedInputs=observedInputs,
-                IgnoredProgrammaticFocus=ignoredProgrammaticFocus,Results=results};
+                SyntheticFieldsOnly=true,ClipboardRecoveryPending=ClipboardRecovery.HasPending,ClipboardTransactionUnsettled=ClipboardRecovery.HasUnsettledTransaction,Passed=results.Count==26&&results.All(r=>r.Passed),ObservedInputs=observedInputs,
+                IgnoredProgrammaticFocus=ignoredProgrammaticFocus,InputTrace=inputTrace,Results=results};
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(reportPath)!);

@@ -15,7 +15,7 @@ public sealed record DeliveryDiagnostic(string Phase,bool Final,int QueuedInputE
     bool? ExactText,bool? ExactCaret,bool? Unchanged,bool? LineEndingsEquivalent,bool? TerminalParagraphEquivalent,bool? NbspEquivalent,
     string Provider,int? ClipboardFormatCount,bool? ClipboardRestored,bool? ClipboardSuperseded,bool Conflict,string? FailureType=null,int? FailureCode=null,bool ClipboardRecoveryPending=false,
     int ReadbackRetries=0,string? LastReadbackStage=null,string? LastReadbackFailureType=null,int? LastReadbackFailureCode=null,
-    string? LastInterruptionStage=null,DeliveryTextMismatch? TextMismatch=null)
+    string? LastInterruptionStage=null,DeliveryTextMismatch? TextMismatch=null,bool OutlookParagraphProjection=false)
 {
     public static DeliveryTextMismatch DescribeTextMismatch(string expected,string observed,int ownedBoundary)
     {
