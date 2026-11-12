@@ -26,13 +26,78 @@ C:\Git\Local-Dictation\delivery-fix-probe\candidate\DeliveryProbe.exe `
 ~~~
 
 The fixture manages its own fields and temporary Review window. Actual product
-code performs bounded native input. Do not interact with other applications
-until the PASS or FAIL result appears. Every nonempty live or final update uses one ordinary paste
-command; the fixture and product never synthesize Enter or a send shortcut.
+code performs bounded native input. Reserve the PC for at least 45 seconds and
+keep the keyboard and mouse idle until PASS or FAIL appears. Switching to another
+application during the run interrupts delivery and can retain a clipboard backup.
+Ordinary production delivery uses one paste command for each nonempty update;
+the transport prototype also tests Unicode key events. Neither path synthesizes
+Enter or an application send shortcut.
+
+## Typing-only transport comparison
+
+To run only the five transport prototype checks, use the same published fixture:
+
+~~~powershell
+C:\Git\Local-Dictation\delivery-fix-probe\candidate\DeliveryProbe.exe `
+    --typing-only `
+    --report C:\Git\Local-Dictation\delivery-fix-probe\typing-only.json
+~~~
+
+This skips all 30 base checks, including native clipboard cloning and forced
+recovery checks. It still uses real guarded native input against its own fields.
+Reserve the PC for at least 45 seconds and leave the keyboard/mouse idle until
+the result appears. All existing recovery and closing protections still apply.
+
+SelectedSuite is typing-only with ExpectedChecks=5, baseline-only with 30, or
+all with 35.
+A five-check run never claims to have rerun the 30 base checks. WorkerBudgetMs
+records the per-operation worker allowance. Only the long Unicode benchmark has
+a 30,000 ms diagnostic allowance; the clipboard comparison and all short,
+rich-text and focus-negative cases retain 2,000 ms. This does not change any
+AppController or installed application deadline.
+
+## Baseline-only native checks
+
+To verify the 30 base checks without rerunning the five transport prototypes:
+
+~~~powershell
+C:\Git\Local-Dictation\delivery-fix-probe\candidate\DeliveryProbe.exe `
+    --baseline-only `
+    --report C:\Git\Local-Dictation\delivery-fix-probe\baseline-only.json
+~~~
+
+The report uses SelectedSuite=baseline-only and ExpectedChecks=30. The mode
+includes native clipboard cloning/recovery, focus, ownership and window-scope
+checks. It does not run or declare results for the experimental Unicode cases.
+The two suite flags are mutually exclusive; omitting both runs all 35 checks.
+
+## Interrupted run and clipboard recovery
+
+If a failed check leaves a pending or active clipboard transaction, the fixture
+stops immediately. Later checks do not run, even if an ordinary isolated failure
+would permit continuation. StoppedForClipboardRecovery identifies this condition
+in the JSON report. An interrupted run is not a result for unrun transport cases.
+
+The visible Restore previous clipboard… button is enabled only while the fixture
+is idle and retains a pending backup. Before confirming restoration:
+
+1. Inspect the original destination and stop any delayed paste.
+2. If focus moved to another application, inspect that application too and make
+   sure it can no longer process a queued paste.
+3. Click Restore previous clipboard… and confirm only after that inspection.
+
+An uncertain result after external focus loss does not trigger automatic
+restoration or clipboard clearing. The complete backup stays in memory until
+restoration succeeds or a newer user clipboard copy supersedes the lease.
+
+Run checks remains disabled while a clipboard transaction is pending or still
+finishing. Closing the fixture is blocked during a run, restoration, or retained
+transaction. Keep the process open until recovery is resolved; terminating it
+forcibly cannot preserve its in-memory backup.
 
 ## What is checked
 
-The 26 checks cover:
+The 35 checks cover:
 
 - Native clipboard memory, bitmap, palette and enhanced-metafile cloning,
   including refusing an unsupported owner-managed format without changing it.
@@ -115,6 +180,63 @@ target before recovery. The negative cases must never set the separate
 OutlookParagraphProjection acknowledgement.
 These cases model the observed paragraph projection; they do not establish
 compatibility with an installed Outlook version.
+
+Three native-focus cases use a second synthetic TextBox provider. Each capture
+must belong to the fixture process and its unique target AutomationId; later
+focus checks compare the exact original runtime identity. An already focused
+target diverts focus to a decoy if redundant provider SetFocus is invoked, so a
+successful final paste must preserve the existing focus without that call.
+
+The deferred case first focuses a decoy and opens synthetic Review. Window
+activation restores the decoy; the original provider returns from SetFocus
+immediately and focuses its exact target 200 ms later. One final paste must wait
+for that exact target. A third provider never completes focus: the decoy and
+original field must stay unchanged, with no input or clipboard transaction.
+Reports include focus-request/completion timestamps, native paste counts and
+the exact-identity result. These controlled behaviors test restoration rules;
+they do not establish the cause of a failure in an external application.
+
+The native-window scope case captures a WPF TextBox with NativeWindowHandle=0
+and requires the resolver to ascend to its own native host. Resolving that same
+field against a second window must return Mismatched at the first native host.
+Both windows contain identical text and caret positions. A delivery deliberately
+constructed with the first field and second window must stop in window scope,
+before provider SetFocus, native input or a clipboard transaction. Neither field
+may change or gain owned text. The report retains only the synthetic resolver
+status and numeric operational handles/counters for this check.
+
+Five transport prototype checks compare ClipboardPaste and UnicodeKeyboard
+through a private selector on fixture-owned deliveries. The production default
+remains ClipboardPaste. Three paired cases use fresh fields and workers for each
+transport: short Slovak/combining/ZWJ corrections, append and withdrawal; the
+existing 3,360-UTF-16-unit long draft; and rich text with bold/italic surroundings.
+Rich-text checks compare the exact original prefix and suffix spans and their
+bold/italic properties. Plain-text insertion may extend the adjacent italic Run;
+its container length is not the original suffix length. Span locations are
+resolved from the current document text because repeated typing may split or
+merge Run objects. The report records exact span text and style values plus
+original Run text for comparison. Full document text, caret, ownership,
+formatting spans and clipboard checks remain exact.
+The ordinary two-second fixture deadline is retained except for the explicitly
+labelled 30-second long Unicode diagnostic benchmark.
+
+TransportComparison reports each operation's requested/replacement UTF-16
+length, native event/chunk/paste counts, Apply and wall time, exact text/caret,
+positional UTF-16 error count, and clipboard/lease state. Clipboard comparison
+hashes remain in memory. Unicode must issue no paste command or clipboard
+transaction. One comparison run establishes only these controlled results.
+
+Each positive transport field must have the exact empty insertion baseline at
+capture. An operator edit before capture invalidates that fixture setup; it is
+reported before a transport trial starts, rather than accepted as a new expected
+result. Keep the keyboard and mouse idle for the complete selected run.
+
+The Unicode negative cases require zero input when original focus never returns
+and divert native focus after exactly four ASCII characters during typing. The
+second case must stop before a fifth single-Rune chunk and refuse replay, while
+leaving the decoy field untouched. Synthetic failure text and diversion position are retained in its
+report. A failure here is evidence against enabling the transport universally;
+the test keeps its four-character diversion point and does not waive leaked text.
 
 Controller cases use isolated temporary protected storage. They disable the
 controller's timers and shortcuts; they do not start a microphone or connection.

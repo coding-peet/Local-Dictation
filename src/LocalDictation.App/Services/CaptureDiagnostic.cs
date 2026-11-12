@@ -6,7 +6,7 @@ public enum CaptureStage
 {
     Foreground,FocusedElement,OwnProcess,Integrity,Availability,TextPattern,ReadOnly,
     SelectionCount,SelectionCollapse,DocumentText,CaretPrefix,PrefixCoherence,
-    Cancellation,CaretAnchor,PostcheckWindow,PostcheckFocusIdentity,ConstructIdentity,ProviderMetadata,Unknown
+    Cancellation,CaretAnchor,PostcheckWindow,PostcheckFocusIdentity,ConstructIdentity,ProviderMetadata,Unknown,WindowScope
 }
 
 public sealed record CaptureProviderMetadata(string FrameworkId,string ClassName,int ControlTypeId,int TargetProcessId,
@@ -35,6 +35,19 @@ public sealed class CaptureDiagnostic
     public void Fail(Exception error)
     {
         if(watch!=null)Write(current.HasValue?Name(current.Value):"begin",false,error);
+    }
+    internal void Scope(nint expectedWindow,AutomationWindowScope.Scope scope)
+    {
+        if(watch==null||!DiagnosticJournal.Enabled)return;
+        var status=scope.Status switch
+        {
+            AutomationWindowScope.ScopeStatus.Matched=>"matched",
+            AutomationWindowScope.ScopeStatus.Mismatched=>"mismatched",_=>"unresolved"
+        };
+        DiagnosticJournal.Append("capture-metadata.jsonl",new{Time=DateTimeOffset.UtcNow,ProcessId=Environment.ProcessId,
+            Stage="window-scope-proof",Milliseconds=watch.Elapsed.TotalMilliseconds,Status=status,
+            ExpectedWindow=expectedWindow.ToInt64(),NativeHost=scope.NativeHost.ToInt64(),Root=scope.Root.ToInt64(),
+            Matched=scope.Status==AutomationWindowScope.ScopeStatus.Matched});
     }
     public void FailedProvider(Func<CaptureProviderMetadata> read)
     {
@@ -66,6 +79,6 @@ public sealed class CaptureDiagnostic
         CaptureStage.CaretPrefix=>"caret-prefix",CaptureStage.PrefixCoherence=>"prefix-coherence",
         CaptureStage.CaretAnchor=>"caret-anchor",CaptureStage.Cancellation=>"cancellation",CaptureStage.PostcheckWindow=>"postcheck-window",
         CaptureStage.PostcheckFocusIdentity=>"postcheck-focus-identity",CaptureStage.ConstructIdentity=>"construct-identity",
-        CaptureStage.ProviderMetadata=>"provider-metadata",_=>"unknown"
+        CaptureStage.ProviderMetadata=>"provider-metadata",CaptureStage.WindowScope=>"window-scope",_=>"unknown"
     };
 }

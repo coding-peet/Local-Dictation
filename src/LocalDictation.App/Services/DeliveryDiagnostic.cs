@@ -1,4 +1,7 @@
+using System.Globalization;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json.Serialization;
 
 namespace LocalDictation.App.Services;
@@ -9,14 +12,38 @@ public enum MissingCharacterKind {CR,LF,Space,Nbsp,ZeroWidthSpace,WordJoiner,BOM
 public sealed record DeliveryTextMismatch(int? FirstMismatchOffset,int? SingleDeletedPosition,
     MissingCharacterKind? SingleDeletedKind,bool MissingAtOwnedBoundary);
 
+public sealed record DeliveryFocusMismatch(int? ExpectedProcessId,int? ObservedProcessId,
+    string? ExpectedIdentityHash,string? ObservedIdentityHash,long ExpectedWindow,long ObservedWindow);
+
 /// <summary>Opt-in operational evidence. It never contains text, UI names, paths, audio, or clipboard values.</summary>
 public sealed record DeliveryDiagnostic(string Phase,bool Final,int QueuedInputEvents,double Milliseconds,
     int BeforeLength,int RequestedLength,int? ExpectedLength,int? ObservedLength,int? ObservedCaret,
     bool? ExactText,bool? ExactCaret,bool? Unchanged,bool? LineEndingsEquivalent,bool? TerminalParagraphEquivalent,bool? NbspEquivalent,
     string Provider,int? ClipboardFormatCount,bool? ClipboardRestored,bool? ClipboardSuperseded,bool Conflict,string? FailureType=null,int? FailureCode=null,bool ClipboardRecoveryPending=false,
     int ReadbackRetries=0,string? LastReadbackStage=null,string? LastReadbackFailureType=null,int? LastReadbackFailureCode=null,
-    string? LastInterruptionStage=null,DeliveryTextMismatch? TextMismatch=null,bool OutlookParagraphProjection=false)
+    string? LastInterruptionStage=null,DeliveryTextMismatch? TextMismatch=null,bool OutlookParagraphProjection=false,
+    DeliveryFocusMismatch? FocusMismatch=null,int FocusRestoreChecks=0,bool? ProviderFocusRequested=null,string InputMethod="ClipboardPaste",int InputChunks=0)
 {
+    public static DeliveryFocusMismatch? DescribeFocusMismatch(string? expectedIdentity,string? observedIdentity,
+        nint expectedWindow,nint observedWindow)
+    {
+        if(!DiagnosticJournal.Enabled)return null;
+        try
+        {
+            static int? ProcessId(string? identity)
+            {
+                var separator=identity?.IndexOf(':')??-1;
+                return separator>0&&int.TryParse(identity.AsSpan(0,separator),NumberStyles.None,CultureInfo.InvariantCulture,out var processId)&&processId>0
+                    ?processId:null;
+            }
+            static string? IdentityHash(string? identity)=>identity==null?null:
+                Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)).AsSpan(0,8));
+            return new(ProcessId(expectedIdentity),ProcessId(observedIdentity),IdentityHash(expectedIdentity),IdentityHash(observedIdentity),
+                expectedWindow.ToInt64(),observedWindow.ToInt64());
+        }
+        catch(Exception){return null;}
+    }
+
     public static DeliveryTextMismatch DescribeTextMismatch(string expected,string observed,int ownedBoundary)
     {
         var shared=Math.Min(expected.Length,observed.Length);var first=0;

@@ -7,6 +7,8 @@ using LocalDictation.Core;
 
 namespace LocalDictation.App.Services;
 
+internal enum DeliveryInputMethod { ClipboardPaste,UnicodeKeyboard }
+
 /// <summary>Owns the original draft range. Focus restoration requires explicit Review acceptance.</summary>
 public sealed class WindowsTextDelivery : ITextDelivery
 {
@@ -16,6 +18,8 @@ public sealed class WindowsTextDelivery : ITextDelivery
     readonly TextPatternRange? beforeOriginalCaret;
     readonly string provider;
     readonly string? destinationProcessName;
+    nint scopeHost;
+    DeliveryInputMethod inputMethod=DeliveryInputMethod.ClipboardPaste;
     int invalid,operating,generation;
     public nint Window=>window;
     public bool IsConflict=>Volatile.Read(ref invalid)!=0;
@@ -25,7 +29,9 @@ public sealed class WindowsTextDelivery : ITextDelivery
     public DeliveryDiagnostic? LastDiagnostic {get;private set;}
 
     WindowsTextDelivery(nint window,TargetGuard guard,AutomationElement original,TextPatternRange? beforeOriginalCaret)
-    {this.window=window;this.guard=guard;this.original=original;this.beforeOriginalCaret=beforeOriginalCaret;provider=ProviderMetadata(original);destinationProcessName=WindowsDestinationApplication.ProcessName(window);}
+        :this(window,guard,original,beforeOriginalCaret,AutomationWindowScope.Resolve(original,window,CancellationToken.None).NativeHost){}
+    WindowsTextDelivery(nint window,TargetGuard guard,AutomationElement original,TextPatternRange? beforeOriginalCaret,nint nativeHost)
+    {this.window=window;this.guard=guard;this.original=original;this.beforeOriginalCaret=beforeOriginalCaret;scopeHost=nativeHost;provider=ProviderMetadata(original);destinationProcessName=WindowsDestinationApplication.ProcessName(window);}
     public void Invalidate() => Interlocked.Exchange(ref invalid, 1);
     public void Suspend()=>Interlocked.Increment(ref generation);
     public bool OwnsProgrammaticFocus(nint root)=>root==window&&Volatile.Read(ref operating)>0;
@@ -98,6 +104,11 @@ public sealed class WindowsTextDelivery : ITextDelivery
             diagnostic.Stage(CaptureStage.CaretAnchor);
             var beforeCaret=info.Caret==0?null:CaptureBeforeCaret(info.Pattern,info.Selection);
             token.ThrowIfCancellationRequested();
+            diagnostic.Stage(CaptureStage.WindowScope);
+            var scope=AutomationWindowScope.Resolve(element,window,token);
+            diagnostic.Scope(window,scope);
+            if(scope.Status!=AutomationWindowScope.ScopeStatus.Matched)
+                throw new InvalidOperationException("The selected field could not be linked to the active window. Click the destination and try again.");
             diagnostic.Stage(CaptureStage.PostcheckWindow);
             if (window == 0 || GetForegroundWindow() != window)
                 throw new InvalidOperationException("The destination changed during the cursor check.");
@@ -107,7 +118,7 @@ public sealed class WindowsTextDelivery : ITextDelivery
             diagnostic.Stage(CaptureStage.ConstructIdentity);
             var guard=new TargetGuard(Identity(element),info.Text,info.Caret);
             diagnostic.Stage(CaptureStage.ProviderMetadata);
-            var delivery=new WindowsTextDelivery(window,guard,element,beforeCaret);
+            var delivery=new WindowsTextDelivery(window,guard,element,beforeCaret,scope.NativeHost);
             diagnostic.Complete();
             return delivery;
         }
@@ -121,14 +132,23 @@ public sealed class WindowsTextDelivery : ITextDelivery
         }
     }
 
-    enum InterruptionStage { Invalidated,InputGeneration,ForegroundWindow,FocusedField,DeliveryKeysDown }
+    enum InterruptionStage { Invalidated,InputGeneration,ForegroundWindow,FocusedField,DeliveryKeysDown,WindowScope }
     sealed class Interrupted(InterruptionStage stage) : Exception
     {
+        public nint? ObservedForegroundWindow {get;private set;}
+        public string? ObservedIdentity {get;private set;}
+        public Interrupted AttachFocusObservation(nint observedForegroundWindow,string? observedIdentity)
+        {
+            // Attach only values already read by the existing guard; never query focus for diagnostics.
+            if(DiagnosticJournal.Enabled)
+            {ObservedForegroundWindow=observedForegroundWindow;ObservedIdentity=observedIdentity;}
+            return this;
+        }
         public string Stage=>stage switch
         {
             InterruptionStage.Invalidated=>"invalidated",InterruptionStage.InputGeneration=>"input-generation",
             InterruptionStage.ForegroundWindow=>"foreground-window",InterruptionStage.FocusedField=>"focused-field",
-            InterruptionStage.DeliveryKeysDown=>"delivery-keys-down",_=>"unknown"
+            InterruptionStage.DeliveryKeysDown=>"delivery-keys-down",InterruptionStage.WindowScope=>"window-scope",_=>"unknown"
         };
     }
     public bool Apply(string next,CancellationToken token,bool restoreFocus=false)
@@ -137,8 +157,13 @@ public sealed class WindowsTextDelivery : ITextDelivery
         Reason="";
         if(next.Any(char.IsControl))
             return Pause("Remove line breaks or control characters from the final draft before inserting. Your original field and Review are unchanged.");
+        if(inputMethod==DeliveryInputMethod.UnicodeKeyboard)
+        {
+            try{UnicodeTypingPlan.Create(next);}
+            catch(ArgumentException){return Pause("Remove paragraph separators or invalid Unicode from the final draft before inserting. Your Review is preserved.");}
+        }
         var version=Volatile.Read(ref generation);
-        var queued=0;
+        var queued=0;var inputChunks=0;
         var watch=Stopwatch.StartNew();
         var phase="validate";
         var beforeText=guard.ExpectedText;
@@ -146,15 +171,23 @@ public sealed class WindowsTextDelivery : ITextDelivery
         string? expected=null;
         int? observedLength=null,observedCaret=null;
         DeliveryTextMismatch? textMismatch=null;
+        DeliveryFocusMismatch? lastFocusMismatch=null;
         bool? textMatches=null,caretMatches=null,unchanged=null,lineEndingsEquivalent=null,terminalParagraphEquivalent=null,nbspEquivalent=null;
         ClipboardTransaction? clipboard=null;
         bool confirmed=false,outlookParagraphProjection=false;
+        int focusRestoreChecks=0;bool? providerFocusRequested=null;
         string? failureType=null;int? failureCode=null;
         var readbackRetries=0;
         string? inspectionStage=null,lastReadbackStage=null,lastReadbackFailureType=null;
         string? lastInterruptionStage=null;
         int? lastReadbackFailureCode=null;
         Action<string> observeInspection=stage=>inspectionStage=stage;
+        void RecordInterruption(Interrupted error)
+        {
+            lastInterruptionStage=error.Stage;
+            if(error.ObservedForegroundWindow is nint observedWindow)
+                lastFocusMismatch=DeliveryDiagnostic.DescribeFocusMismatch(guard.Identity,error.ObservedIdentity,window,observedWindow);
+        }
         void RecordObservation(string text,int caret)
         {
             observedLength=text.Length;observedCaret=caret;
@@ -164,6 +197,90 @@ public sealed class WindowsTextDelivery : ITextDelivery
             lineEndingsEquivalent=text.Replace("\r\n","\n")==expected.Replace("\r\n","\n");
             terminalParagraphEquivalent=text.TrimEnd('\r','\n')==expected.TrimEnd('\r','\n');
             nbspEquivalent=text.Replace('\u00a0',' ')==expected.Replace('\u00a0',' ');
+        }
+        bool originalWindowActivated=false;
+        bool WaitForOriginalFocus(int milliseconds,out Interrupted? lastMismatch)
+        {
+            var readiness=Stopwatch.StartNew();lastMismatch=null;
+            while(true)
+            {
+                focusRestoreChecks++;CheckLease(token,version);
+                if(!AutomationWindowScope.IsCurrent(scopeHost,window))throw new Interrupted(InterruptionStage.WindowScope);
+                var foreground=GetForegroundWindow();
+                if(foreground!=window)
+                {
+                    lastMismatch=new Interrupted(InterruptionStage.ForegroundWindow).AttachFocusObservation(foreground,null);
+                    // Activation can complete asynchronously. Once our window has
+                    // arrived, any subsequent foreground loss stops the operation.
+                    if(originalWindowActivated)throw lastMismatch;
+                }
+                else
+                {
+                    originalWindowActivated=true;
+                    try
+                    {
+                        var identity=Identity(AutomationElement.FocusedElement);
+                        if(identity==guard.Identity)return true;
+                        lastMismatch=new Interrupted(InterruptionStage.FocusedField).AttachFocusObservation(foreground,identity);
+                    }
+                    catch(Exception error) when(error is InvalidOperationException or ElementNotAvailableException or COMException)
+                    {lastMismatch=null;}
+                }
+                if(readiness.ElapsedMilliseconds>=milliseconds)return false;
+                Thread.Sleep(10);
+            }
+        }
+        bool TypeUnicode(string replacement,int common)
+        {
+            for(var offset=0;offset<replacement.Length;)
+            {
+                Check(token,version);
+                // A complete Unicode scalar is the largest unacknowledged unit.
+                // A receiver may move focus while consuming a native input burst.
+                var count=char.IsHighSurrogate(replacement[offset])?2:1;
+                var chunk=replacement.Substring(offset,count);
+                var strokes=UnicodeTypingPlan.Create(chunk);
+                phase="queue Unicode input";inputChunks++;
+                QueueInput(strokes.Select(stroke=>Key(stroke.Scan,stroke.KeyUp?2u:0u,true)).ToArray(),ref queued);
+                offset+=count;
+                var partialText=next[..common]+replacement[..offset];
+                var partialExpected=guard.ReplacedText(partialText);
+                var partialCaret=guard.Start+partialText.Length;
+                var acknowledgement=Stopwatch.StartNew();var acknowledged=false;
+                phase="confirm Unicode input";
+                while(acknowledgement.Elapsed<TimeSpan.FromSeconds(1))
+                {
+                    try
+                    {
+                        inspectionStage="Unicode focus-before-read";Check(token,version);
+                        var focused=AutomationElement.FocusedElement;
+                        var after=Inspect(focused,observeInspection);
+                        Check(token,version);
+                        if(Identity(focused)!=guard.Identity)return Stop("The destination changed during keyboard insertion. Check it before retrying.");
+                        RecordObservation(after.Text,after.Caret);
+                        if(after.Text==partialExpected&&after.Caret==partialCaret)
+                        {
+                            acknowledged=true;
+                            if(offset==replacement.Length)
+                            {
+                                confirmed=true;guard.Applied(next,after.Text,after.Caret);return true;
+                            }
+                            break;
+                        }
+                    }
+                    catch(Exception error) when(error is InvalidOperationException or ElementNotAvailableException or COMException or Win32Exception)
+                    {
+                        readbackRetries++;lastReadbackStage=inspectionStage;
+                        lastReadbackFailureType=error.GetType().Name;lastReadbackFailureCode=error.HResult;
+                        Check(token,version);
+                    }
+                    Thread.Sleep(10);
+                }
+                if(!acknowledged)return Stop("Keyboard insertion was not confirmed. Check the destination; the complete text remains in Review. No retry was sent.");
+                // A later chunk may be queued only after exact progressive text,
+                // caret, foreground and original-field acknowledgement above.
+            }
+            return false;
         }
         bool Reconcile()
         {
@@ -177,7 +294,7 @@ public sealed class WindowsTextDelivery : ITextDelivery
             }
             catch(Exception error) when(error is Interrupted or OperationCanceledException or InvalidOperationException or ElementNotAvailableException or COMException or Win32Exception)
             {
-                if(error is Interrupted interruption)lastInterruptionStage=interruption.Stage;
+                if(error is Interrupted interruption)RecordInterruption(interruption);
                 return false;
             }
             RecordObservation(actualText,caret);outlookParagraphProjection=projected;
@@ -187,8 +304,20 @@ public sealed class WindowsTextDelivery : ITextDelivery
         Interlocked.Increment(ref operating);
         try
         {
+            phase="window scope";
+            if(!IsWindow(window)||Identity(original)!=guard.Identity)
+                return Stop("The original destination is no longer available. Choose another destination.");
+            var scope=AutomationWindowScope.Resolve(original,window,token);
+            CheckLease(token,version);
+            if(scope.Status!=AutomationWindowScope.ScopeStatus.Matched||Identity(original)!=guard.Identity)
+            {
+                scopeHost=0;
+                return Pause("The original field could not be linked to its captured window. Choose the destination again.");
+            }
+            scopeHost=scope.NativeHost;
             if(restoreFocus)
             {
+                phase="restore focus";providerFocusRequested=false;
                 // Keep held acceptance keys in Review. Moving focus first can
                 // redirect their physical repeats to a destination's send action.
                 if(!WaitForKeyRelease(DeliveryKeysDown,()=>CheckLease(token,version),()=>Thread.Sleep(10)))
@@ -198,8 +327,18 @@ public sealed class WindowsTextDelivery : ITextDelivery
                 if(IsIconic(window))ShowWindow(window,9);
                 if(!SetForegroundWindow(window)&&GetForegroundWindow()!=window)
                     return Pause("Windows could not return to the original window. Click that field and try Accept again.");
-                original.SetFocus();
+                // Activation can restore the exact original caret itself. Avoid a
+                // redundant provider SetFocus, which can disturb an editable range.
+                if(!WaitForOriginalFocus(100,out var mismatch))
+                {
+                    CheckLease(token,version);
+                    if(!AutomationWindowScope.IsCurrent(scopeHost,window))throw new Interrupted(InterruptionStage.WindowScope);
+                    providerFocusRequested=true;original.SetFocus();
+                    if(!WaitForOriginalFocus(500,out mismatch))
+                        throw mismatch??new Interrupted(InterruptionStage.FocusedField);
+                }
             }
+            phase="validate";
             Check(token,version,false);
             // A modifier-only start/stop chord may still have one key held down.
             if(!WaitForKeyRelease(DeliveryKeysDown,()=>Check(token,version,false),()=>Thread.Sleep(10)))
@@ -221,6 +360,7 @@ public sealed class WindowsTextDelivery : ITextDelivery
             var oldTail = guard.OwnedText[common..];
             var replacement = next[common..];
             expected = guard.ReplacedText(next);
+            if(expected.Length>100000)return Pause("The completed document would exceed the safe text-check limit. Shorten the draft before inserting.");
             TextPatternRange selected = current.Selection;
             if (oldTail.Length != 0)
             {
@@ -229,7 +369,7 @@ public sealed class WindowsTextDelivery : ITextDelivery
                 if(owned==null)return Stop("The owned draft range is no longer available.");
                 selected=owned;
             }
-            if(replacement.Length>0)
+            if(replacement.Length>0&&inputMethod==DeliveryInputMethod.ClipboardPaste)
             {
                 phase="clipboard backup";
                 clipboard=ClipboardTransaction.Begin(replacement,()=>Check(token,version));
@@ -246,6 +386,8 @@ public sealed class WindowsTextDelivery : ITextDelivery
                 // Delete selection with a virtual Delete key; never issue Backspace guesses.
                 SendKey(0x2E, token,ref queued);
             }
+            else if(replacement.Length>0&&inputMethod==DeliveryInputMethod.UnicodeKeyboard)
+                return TypeUnicode(replacement,common);
             else if(clipboard!=null)
             {
                 phase="clipboard ownership";clipboard.EnsureCurrent();
@@ -265,7 +407,7 @@ public sealed class WindowsTextDelivery : ITextDelivery
                     inspectionStage="focus-after-read";Check(token,version);
                     if(Identity(afterElement)!=guard.Identity)return Stop("The destination changed during insertion.");
                     RecordObservation(after.Text,after.Caret);
-                    outlookParagraphProjection=textMatches!=true&&OutlookPasteAcknowledgement.IsKnownFinalPasteProjection(
+                    outlookParagraphProjection=inputMethod==DeliveryInputMethod.ClipboardPaste&&textMatches!=true&&OutlookPasteAcknowledgement.IsKnownFinalPasteProjection(
                         destinationProcessName,beforeText,guard.Start,beforeOwnedText,next,after.Text,after.Caret,restoreFocus);
                     if(caretMatches==true&&(textMatches==true||outlookParagraphProjection))
                     {
@@ -282,7 +424,8 @@ public sealed class WindowsTextDelivery : ITextDelivery
                     readbackRetries++;lastReadbackStage=inspectionStage;
                     lastReadbackFailureType=error.GetType().Name;lastReadbackFailureCode=error.HResult;
                     CheckLease(token,version);
-                    if(GetForegroundWindow()!=window)throw new Interrupted(InterruptionStage.ForegroundWindow);
+                    var observedForegroundWindow=GetForegroundWindow();
+                    if(observedForegroundWindow!=window)throw new Interrupted(InterruptionStage.ForegroundWindow).AttachFocusObservation(observedForegroundWindow,null);
                 }
                 Thread.Sleep(10);
             }
@@ -291,7 +434,7 @@ public sealed class WindowsTextDelivery : ITextDelivery
         }
         catch(Interrupted error)
         {
-            lastInterruptionStage=error.Stage;failureType=error.GetType().Name;failureCode=error.HResult;
+            RecordInterruption(error);failureType=error.GetType().Name;failureCode=error.HResult;
             return queued>0?(expected!=null&&Reconcile()||Stop("Insertion was interrupted. Check the destination before choosing where to insert the preserved Review.")):
             Pause("Cursor delivery is paused. Return to the original unchanged field to resume.");}
         catch(OperationCanceledException)
@@ -319,7 +462,7 @@ public sealed class WindowsTextDelivery : ITextDelivery
             LastDiagnostic=new(phase,restoreFocus,queued,watch.Elapsed.TotalMilliseconds,beforeText.Length,next.Length,expected?.Length,
                 observedLength,observedCaret,textMatches,caretMatches,unchanged,lineEndingsEquivalent,terminalParagraphEquivalent,nbspEquivalent,
                 provider,clipboard?.SavedFormatCount,clipboard?.WasRestored,clipboard?.WasSuperseded,IsConflict,failureType,failureCode,ClipboardRecovery.HasPending,
-                readbackRetries,lastReadbackStage,lastReadbackFailureType,lastReadbackFailureCode,lastInterruptionStage,textMismatch,outlookParagraphProjection);
+                readbackRetries,lastReadbackStage,lastReadbackFailureType,lastReadbackFailureCode,lastInterruptionStage,textMismatch,outlookParagraphProjection,lastFocusMismatch,focusRestoreChecks,providerFocusRequested,inputMethod.ToString(),inputChunks);
             LastDiagnostic.WriteIfEnabled();
             Interlocked.Decrement(ref operating);
         }
@@ -335,7 +478,7 @@ public sealed class WindowsTextDelivery : ITextDelivery
             if(!IsWindow(window)||Identity(original)!=guard.Identity)return false;
             var after=Inspect(original);
             if(after.Caret!=guard.Start+next.Length)return false;
-            projected=after.Text!=expected&&OutlookPasteAcknowledgement.IsKnownFinalPasteProjection(
+            projected=inputMethod==DeliveryInputMethod.ClipboardPaste&&after.Text!=expected&&OutlookPasteAcknowledgement.IsKnownFinalPasteProjection(
                 destinationProcessName,beforeText,guard.Start,beforeOwnedText,next,after.Text,after.Caret,finalDelivery);
             if(after.Text!=expected&&!projected)return false;
             actualText=after.Text;caret=after.Caret;return true;
@@ -474,8 +617,11 @@ public sealed class WindowsTextDelivery : ITextDelivery
     void Check(CancellationToken token,int version,bool modifiers=true)
     {
         CheckLease(token,version);
-        if(GetForegroundWindow()!=window)throw new Interrupted(InterruptionStage.ForegroundWindow);
-        if(Identity(AutomationElement.FocusedElement)!=guard.Identity)throw new Interrupted(InterruptionStage.FocusedField);
+        if(!AutomationWindowScope.IsCurrent(scopeHost,window))throw new Interrupted(InterruptionStage.WindowScope);
+        var observedForegroundWindow=GetForegroundWindow();
+        if(observedForegroundWindow!=window)throw new Interrupted(InterruptionStage.ForegroundWindow).AttachFocusObservation(observedForegroundWindow,null);
+        var observedIdentity=Identity(AutomationElement.FocusedElement);
+        if(observedIdentity!=guard.Identity)throw new Interrupted(InterruptionStage.FocusedField).AttachFocusObservation(observedForegroundWindow,observedIdentity);
         if(modifiers&&DeliveryKeysDown())throw new Interrupted(InterruptionStage.DeliveryKeysDown);
     }
 

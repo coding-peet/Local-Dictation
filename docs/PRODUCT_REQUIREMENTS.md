@@ -91,6 +91,18 @@ punctuation, whitespace, and Unicode must be preserved.
 - Only replace the app's owned draft in the validated original field. Preserve
   surrounding text. Switching focus pauses delivery; returning to the same
   unchanged field resumes it, including after a click within that field.
+- Before final insertion, restore only the captured original window and exact
+  field identity. Allow activation up to 100 ms to restore that identity itself;
+  if it is already ready, avoid a redundant provider SetFocus. Otherwise request
+  focus on the captured original field once and allow up to 500 ms for that exact
+  identity. Do not adopt another field or queue input/clipboard replacement while
+  waiting. Cancellation, invalidation, input generation and foreground changes
+  still stop the operation. Preserve acceptance-key release, full-text ownership,
+  exact caret and paste-acknowledgment checks.
+- Prove that a captured UI Automation field belongs to the captured native window:
+  use its nearest native host and require the same root window. Recheck that
+  association before activation and insertion. A matching PID or text in another
+  window is insufficient; an unavailable or foreign association pauses delivery.
 - Deliver nonempty live and final replacements as a guarded native paste, with
   exact destination acknowledgement. Preserve supported previous clipboard
   formats and exclude temporary dictation from Windows clipboard history/cloud.
@@ -127,6 +139,11 @@ punctuation, whitespace, and Unicode must be preserved.
   shape: framework/class, numeric control type, PID, focus flags and pattern IDs.
   This metadata must not read Name, Value, text range, AutomationId, siblings or
   ancestors, and must preserve the original failure if collection fails.
+- Opt-in focus-interruption diagnostics may use only foreground/identity values
+  already read by the ownership guard. Record numeric window handles, process
+  IDs parsed from the existing identities and bounded identity hashes. Never log
+  raw runtime identities, field text or UI names, or add UIA reads to attach this
+  metadata. Opt-out must retain no focus-diagnostic payload.
 - An explicit child-only diagnostic switch may expose the recording banner's
   taskbar entry for controlled tests. Preserve its nonactivating behavior and
   destination guards; this does not establish native tool visibility.

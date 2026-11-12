@@ -61,7 +61,7 @@ static class DiagnosticChecks
                 var stageType=constructor.GetParameters().Single().ParameterType;
                 Require(stageType.IsEnum,"Interruption stages accept free-form input.");
                 foreach(var (name,stage) in new[]{("Invalidated","invalidated"),("InputGeneration","input-generation"),
-                    ("ForegroundWindow","foreground-window"),("FocusedField","focused-field"),("DeliveryKeysDown","delivery-keys-down")})
+                    ("ForegroundWindow","foreground-window"),("FocusedField","focused-field"),("DeliveryKeysDown","delivery-keys-down"),("WindowScope","window-scope")})
                 {
                     var error=(Exception)constructor.Invoke([Enum.Parse(stageType,name)]);
                     error.Data["PRIVATE-SENTINEL"]="PRIVATE-SENTINEL";
@@ -74,6 +74,79 @@ static class DiagnosticChecks
                     Require(json.RootElement.GetProperty("Delivery").GetProperty("LastInterruptionStage").GetString()==stage,"Interruption stage did not round-trip.");
                     Require(!line.Contains("PRIVATE-SENTINEL",StringComparison.Ordinal),"Private interruption content leaked.");
                 }
+            });
+            Check("Focus mismatch metadata exposes only existing process IDs, window handles and bounded hashes",()=>
+            {
+                var method=typeof(DeliveryDiagnostic).GetMethod("DescribeFocusMismatch",BindingFlags.Public|BindingFlags.Static);
+                var property=typeof(DeliveryDiagnostic).GetProperty("FocusMismatch");
+                Require(method!=null&&property!=null,"Focus mismatch metadata is not implemented.");
+                const string expectedIdentity="4321:42.65.7.PRIVATE-FOCUS-EXPECTED";
+                const string observedIdentity="8765:42.65.8.PRIVATE-FOCUS-OBSERVED";
+                JsonElement Describe(string expected,string? observed,long expectedWindow,long observedWindow)
+                {
+                    var metadata=method!.Invoke(null,[expected,observed,(nint)expectedWindow,(nint)observedWindow]);
+                    Require(metadata!=null,"Enabled focus mismatch metadata was absent.");
+                    var sample=Sample();property!.SetValue(sample,metadata);sample.WriteIfEnabled();
+                    var line=File.ReadLines(Path.Combine(root,"logs","delivery-metadata.jsonl")).Last();
+                    Require(!line.Contains(expectedIdentity,StringComparison.Ordinal)&&!line.Contains(observedIdentity,StringComparison.Ordinal)&&
+                        !line.Contains("PRIVATE-FOCUS",StringComparison.Ordinal),"Raw focus identity leaked.");
+                    using var json=JsonDocument.Parse(line);var result=json.RootElement.GetProperty("Delivery").GetProperty("FocusMismatch");
+                    Require(result.EnumerateObject().Select(p=>p.Name).Order().SequenceEqual(new[]{
+                        "ExpectedProcessId","ObservedProcessId","ExpectedIdentityHash","ObservedIdentityHash","ExpectedWindow","ObservedWindow"}.Order()),
+                        "Focus mismatch diagnostic serialized an unexpected field.");
+                    return result.Clone();
+                }
+                var changedProcess=Describe(expectedIdentity,observedIdentity,0x1234,0x5678);
+                Require(changedProcess.GetProperty("ExpectedProcessId").GetInt32()==4321&&
+                    changedProcess.GetProperty("ObservedProcessId").GetInt32()==8765,"Focus PID was not parsed from the existing identity.");
+                Require(changedProcess.GetProperty("ExpectedWindow").GetInt64()==0x1234&&
+                    changedProcess.GetProperty("ObservedWindow").GetInt64()==0x5678,"Focus window handles changed.");
+                Require(changedProcess.GetProperty("ExpectedIdentityHash").GetString()=="E5B26BE4B3E10F28"&&
+                    changedProcess.GetProperty("ObservedIdentityHash").GetString()=="C0BA9F941F472F69","Focus identity hashes were not stable bounded tokens.");
+                var sameProcess=Describe(expectedIdentity,"4321:42.65.8",0x1234,0x1234);
+                Require(sameProcess.GetProperty("ObservedProcessId").GetInt32()==4321&&
+                    sameProcess.GetProperty("ExpectedIdentityHash").GetString()!=sameProcess.GetProperty("ObservedIdentityHash").GetString(),
+                    "Different fields in the same process lost their distinct identity tokens.");
+                var sameIdentity=Describe(expectedIdentity,expectedIdentity,0x1234,0x1234);
+                Require(sameIdentity.GetProperty("ExpectedIdentityHash").GetString()==sameIdentity.GetProperty("ObservedIdentityHash").GetString(),
+                    "Identical existing identities produced different tokens.");
+                var windowOnly=Describe(expectedIdentity,null,0x1234,0);
+                Require(windowOnly.GetProperty("ObservedProcessId").ValueKind==JsonValueKind.Null&&
+                    windowOnly.GetProperty("ObservedIdentityHash").ValueKind==JsonValueKind.Null,
+                    "A foreground-only mismatch invented focused-field metadata.");
+                foreach(var malformed in new[]{"PRIVATE-FOCUS-MISSING-COLON","-1:PRIVATE-FOCUS","2147483648:PRIVATE-FOCUS"," 4321:PRIVATE-FOCUS"})
+                {
+                    var invalid=Describe(malformed,malformed,0,0);
+                    Require(invalid.GetProperty("ExpectedProcessId").ValueKind==JsonValueKind.Null&&
+                        invalid.GetProperty("ObservedProcessId").ValueKind==JsonValueKind.Null,"Malformed existing identity invented a process ID.");
+                }
+                var interrupted=typeof(WindowsTextDelivery).GetNestedType("Interrupted",BindingFlags.NonPublic)!;
+                var constructor=interrupted.GetConstructors(BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Instance).Single();
+                var stageType=constructor.GetParameters().Single().ParameterType;
+                var attach=interrupted.GetMethod("AttachFocusObservation",BindingFlags.Public|BindingFlags.Instance);
+                Require(attach!=null,"Opt-in interrupted focus observation is not implemented.");
+                foreach(var disabled in new string?[]{null,"0","true"})
+                {
+                    Environment.SetEnvironmentVariable(Flag,disabled);
+                    try
+                    {
+                        var path=Path.Combine(root,"logs","delivery-metadata.jsonl");var before=File.ReadAllBytes(path);
+                        Require(method!.Invoke(null,[expectedIdentity,observedIdentity,(nint)0x1234,(nint)0x5678])==null,
+                            "Disabled diagnostics retained focus mismatch metadata.");
+                        var error=constructor.Invoke([Enum.Parse(stageType,"FocusedField")]);
+                        Require(ReferenceEquals(attach!.Invoke(error,[(nint)0x5678,observedIdentity]),error),"Focus observation replaced the interruption.");
+                        Require(interrupted.GetProperty("ObservedForegroundWindow")!.GetValue(error)==null&&
+                            interrupted.GetProperty("ObservedIdentity")!.GetValue(error)==null,"Disabled interruption retained raw focus observations.");
+                        Sample().WriteIfEnabled();
+                        Require(File.ReadAllBytes(path).SequenceEqual(before),"Disabled focus diagnostics changed the journal.");
+                    }
+                    finally{Environment.SetEnvironmentVariable(Flag,"1");}
+                }
+                var enabledError=constructor.Invoke([Enum.Parse(stageType,"FocusedField")]);
+                attach!.Invoke(enabledError,[(nint)0x5678,observedIdentity]);
+                Require((nint?)interrupted.GetProperty("ObservedForegroundWindow")!.GetValue(enabledError)==(nint)0x5678&&
+                    (string?)interrupted.GetProperty("ObservedIdentity")!.GetValue(enabledError)==observedIdentity,
+                    "Enabled interruption lost its already-read focus observation.");
             });
             Check("Single deleted-character diagnostics expose only offsets and fixed classes",()=>
             {
@@ -188,6 +261,58 @@ static class DiagnosticChecks
                 method.Invoke(failed,[failedQuery]);
                 var last=File.ReadLines(Path.Combine(root,"logs","capture-metadata.jsonl")).Last();
                 Require(last==line,"Provider failure changed the existing diagnostic evidence.");
+            });
+            Check("Capture window scope proof records only fixed status and numeric handles",()=>
+            {
+                var captureType=typeof(CaptureDiagnostic);
+                var method=captureType.GetMethod("Scope",BindingFlags.NonPublic|BindingFlags.Instance);
+                Require(method!=null,"Capture window scope proof is not implemented.");
+                var scopeType=typeof(DeliveryDiagnostic).Assembly.GetType("LocalDictation.App.Services.AutomationWindowScope+Scope")!;
+                var statusType=typeof(DeliveryDiagnostic).Assembly.GetType("LocalDictation.App.Services.AutomationWindowScope+ScopeStatus")!;
+                object Scope(string status,nint host,nint nativeRoot)=>Activator.CreateInstance(scopeType,
+                    BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Instance,null,[Enum.Parse(statusType,status),host,nativeRoot],null)!;
+                var proofRoot=Path.Combine(root,"scope-proof");
+                Environment.SetEnvironmentVariable(Home,proofRoot);
+                try
+                {
+                    var sample=Scope("Matched",(nint)0x2345,(nint)0x1234);
+                    foreach(var disabled in new string?[]{null,"0","true"})
+                    {
+                        Environment.SetEnvironmentVariable(Flag,disabled);
+                        var optedOut=NewCapture();method!.Invoke(optedOut,[(nint)0x1234,sample]);
+                        Require(!Directory.Exists(proofRoot),"Disabled scope proof created diagnostic files.");
+                        Environment.SetEnvironmentVariable(Flag,"1");method.Invoke(optedOut,[(nint)0x1234,sample]);
+                        Require(!Directory.Exists(proofRoot),"A capture begun opted out later retained scope proof.");
+                    }
+                    var enabled=NewCapture();Environment.SetEnvironmentVariable(Flag,"0");
+                    method!.Invoke(enabled,[(nint)0x1234,sample]);
+                    Require(!Directory.Exists(proofRoot),"Scope proof did not recheck current opt-out.");
+                    Environment.SetEnvironmentVariable(Flag,"1");
+                    foreach(var (status,encoded,matched,host,nativeRoot) in new[]{
+                        ("Matched","matched",true,0x2345L,0x123456789L),
+                        ("Mismatched","mismatched",false,0x2345L,0x9876L),
+                        ("Unresolved","unresolved",false,0L,0L)})
+                    {
+                        method.Invoke(enabled,[new IntPtr(0x123456789L),Scope(status,(nint)host,(nint)nativeRoot)]);
+                        var line=File.ReadLines(Path.Combine(proofRoot,"logs","capture-metadata.jsonl")).Last();
+                        using var json=JsonDocument.Parse(line);var item=json.RootElement;
+                        Require(item.EnumerateObject().Select(p=>p.Name).Order().SequenceEqual(new[]{
+                            "Time","ProcessId","Stage","Milliseconds","Status","ExpectedWindow","NativeHost","Root","Matched"}.Order()),
+                            "Scope proof serialized an unexpected data field.");
+                        Require(item.GetProperty("Stage").GetString()=="window-scope-proof"&&
+                            item.GetProperty("Status").GetString()==encoded&&item.GetProperty("Matched").GetBoolean()==matched,
+                            "Scope proof changed its fixed stage or enum-derived status.");
+                        Require(item.GetProperty("ExpectedWindow").GetInt64()==0x123456789L&&
+                            item.GetProperty("NativeHost").GetInt64()==host&&item.GetProperty("Root").GetInt64()==nativeRoot,
+                            "Scope proof changed its already-resolved numeric handles.");
+                        Require(item.GetProperty("ProcessId").GetInt32()==Environment.ProcessId&&
+                            item.GetProperty("Time").GetDateTimeOffset()<=DateTimeOffset.UtcNow&&item.GetProperty("Milliseconds").GetDouble()>=0,
+                            "Scope proof has invalid process/time metadata.");
+                        Require(!line.Contains("PRIVATE-SENTINEL",StringComparison.Ordinal),"Private content leaked into scope proof.");
+                    }
+                }
+                finally
+                {Environment.SetEnvironmentVariable(Home,root);Environment.SetEnvironmentVariable(Flag,"1");}
             });
             Check("Capture and delivery journals rotate within 256 KiB",()=>
             {
