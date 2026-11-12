@@ -9,7 +9,10 @@ public enum CaptureStage
     Cancellation,PostcheckWindow,PostcheckFocusIdentity,ConstructIdentity,ProviderMetadata,Unknown
 }
 
-/// <summary>Fixed capture stages only. Never queries a native element or logs exception messages.</summary>
+public sealed record CaptureProviderMetadata(string FrameworkId,string ClassName,int ControlTypeId,int TargetProcessId,
+    bool HasKeyboardFocus,bool IsKeyboardFocusable,int[] SupportedPatternIds);
+
+/// <summary>Fixed capture stages and opt-in failed-provider shape. Never logs field values or exception messages.</summary>
 public sealed class CaptureDiagnostic
 {
     readonly Stopwatch? watch;
@@ -32,6 +35,22 @@ public sealed class CaptureDiagnostic
     public void Fail(Exception error)
     {
         if(watch!=null)Write(current.HasValue?Name(current.Value):"begin",false,error);
+    }
+    public void FailedProvider(Func<CaptureProviderMetadata> read)
+    {
+        // The factory can query the provider. Never invoke it in ordinary operation,
+        // before access checks pass, or for unrelated capture failures.
+        if(watch==null||!DiagnosticJournal.Enabled||current!=CaptureStage.TextPattern)return;
+        try
+        {
+            var source=read();
+            static string Safe(string value)=>new((value??"").Where(c=>char.IsAsciiLetterOrDigit(c)||c is '_' or '.' or '-' or '#').Take(80).ToArray());
+            var shape=source with{FrameworkId=Safe(source.FrameworkId),ClassName=Safe(source.ClassName),
+                SupportedPatternIds=(source.SupportedPatternIds??[]).Take(32).ToArray()};
+            DiagnosticJournal.Append("capture-metadata.jsonl",new{Time=DateTimeOffset.UtcNow,ProcessId=Environment.ProcessId,
+                Stage="failed-provider",Success=false,Milliseconds=watch.Elapsed.TotalMilliseconds,Provider=shape});
+        }
+        catch(Exception){} // Metadata must never replace the original capture failure.
     }
     void Write(string stage,bool? success,Exception? error=null)=>DiagnosticJournal.Append("capture-metadata.jsonl",
         new{Time=DateTimeOffset.UtcNow,ProcessId=Environment.ProcessId,Stage=stage,Success=success,

@@ -75,6 +75,45 @@ static class DiagnosticChecks
                     Require(!line.Contains("PRIVATE-SENTINEL",StringComparison.Ordinal),"Private interruption content leaked.");
                 }
             });
+            Check("Single deleted-character diagnostics expose only offsets and fixed classes",()=>
+            {
+                var method=typeof(DeliveryDiagnostic).GetMethod("DescribeTextMismatch",BindingFlags.Public|BindingFlags.Static);
+                var property=typeof(DeliveryDiagnostic).GetProperty("TextMismatch");
+                Require(method!=null&&property!=null,"Single-character mismatch metadata is not implemented.");
+                var kindType=Nullable.GetUnderlyingType(property!.PropertyType.GetProperty("SingleDeletedKind")!.PropertyType)!;
+                Require(kindType.IsEnum&&Enum.GetNames(kindType).Order().SequenceEqual(new[]{"CR","LF","Space","Nbsp","ZeroWidthSpace","WordJoiner","BOM","ObjectReplacement","Other"}.Order()),"Deleted-character classes accept arbitrary input.");
+                JsonElement Describe(string expected,string observed,int boundary)
+                {
+                    var metadata=method!.Invoke(null,[expected,observed,boundary]);
+                    var sample=Sample();property.SetValue(sample,metadata);sample.WriteIfEnabled();
+                    var line=File.ReadLines(Path.Combine(root,"logs","delivery-metadata.jsonl")).Last();
+                    Require(!line.Contains("PRIVATE-SENTINEL",StringComparison.Ordinal),"Mismatch input text leaked.");
+                    using var json=JsonDocument.Parse(line);var result=json.RootElement.GetProperty("Delivery").GetProperty("TextMismatch");
+                    Require(result.EnumerateObject().All(p=>new[]{"FirstMismatchOffset","SingleDeletedPosition","SingleDeletedKind","MissingAtOwnedBoundary"}.Contains(p.Name)),"Mismatch diagnostic serialized an unexpected field.");
+                    return result.Clone();
+                }
+                const string prefix="PRIVATE-SENTINEL";
+                foreach(var (character,kind) in new[]{('\r',"CR"),('\n',"LF"),(' ',"Space"),('\u00a0',"Nbsp"),('\u200b',"ZeroWidthSpace"),
+                    ('\u2060',"WordJoiner"),('\ufeff',"BOM"),('\ufffc',"ObjectReplacement"),('Z',"Other"),('\ud800',"Other")})
+                {
+                    var metadata=Describe(prefix+character+"tail",prefix+"tail",prefix.Length);
+                    Require(metadata.GetProperty("FirstMismatchOffset").GetInt32()==prefix.Length,"Wrong first mismatch offset.");
+                    Require(metadata.GetProperty("SingleDeletedPosition").GetInt32()==prefix.Length,"Wrong single deletion position.");
+                    Require(metadata.GetProperty("SingleDeletedKind").GetString()==kind,"Wrong fixed deleted-character class.");
+                    Require(metadata.GetProperty("MissingAtOwnedBoundary").GetBoolean(),"Missing insertion-boundary diagnosis.");
+                }
+                foreach(var (expected,observed) in new[]{(prefix,prefix),(prefix+"Ztail",prefix+"Ytail"),
+                    (prefix+"ZYtail",prefix+"tail"),(prefix+"Ztail",prefix+"taim"),(prefix,prefix+"Z")})
+                {
+                    var metadata=Describe(expected,observed,prefix.Length);
+                    Require(metadata.GetProperty("SingleDeletedPosition").ValueKind==JsonValueKind.Null&&
+                        metadata.GetProperty("SingleDeletedKind").ValueKind==JsonValueKind.Null&&!metadata.GetProperty("MissingAtOwnedBoundary").GetBoolean(),"A different mismatch was classified as one deleted character.");
+                }
+                var ambiguous=Describe(prefix+"   tail",prefix+"  tail",prefix.Length);
+                Require(ambiguous.GetProperty("SingleDeletedPosition").GetInt32()==prefix.Length+2&&ambiguous.GetProperty("MissingAtOwnedBoundary").GetBoolean(),"Equivalent deletion positions lost the insertion-boundary diagnosis.");
+                foreach(var boundary in new[]{-1,100000,prefix.Length+1})
+                    Require(!Describe(prefix+"Ztail",prefix+"tail",boundary).GetProperty("MissingAtOwnedBoundary").GetBoolean(),"An invalid or different boundary was diagnosed as the missing position.");
+            });
             Check("Capture serializes only bounded technical metadata",()=>
             {
                 Capture(true);
@@ -100,6 +139,55 @@ static class DiagnosticChecks
                 Capture(false);
                 using var completed=JsonDocument.Parse(File.ReadLines(Path.Combine(root,"logs","capture-metadata.jsonl")).Last());
                 Require(completed.RootElement.GetProperty("Stage").GetString()=="complete"&&completed.RootElement.GetProperty("Success").GetBoolean(),"Missing capture completion.");
+            });
+            Check("Failed text-pattern capture records bounded provider shape without private text",()=>
+            {
+                var method=typeof(CaptureDiagnostic).GetMethod("FailedProvider");
+                Require(method!=null,"Failed-capture provider metadata is not implemented.");
+                var queryType=method!.GetParameters().Single().ParameterType;
+                var providerType=queryType.GetGenericArguments().Single();
+                var provider=Activator.CreateInstance(providerType,["Chrome/invalid",new string('x',120),50004,42,true,true,Enumerable.Range(10000,48).ToArray()])!;
+                var factory=typeof(DiagnosticChecks).GetMethod(nameof(ProviderFactory),BindingFlags.Static|BindingFlags.NonPublic)!
+                    .MakeGenericMethod(providerType);
+                var queries=0;
+                Action queried=()=>queries++;
+                var query=factory.Invoke(null,[provider,queried])!;
+                foreach(var disabled in new string?[]{null,"0","true"})
+                {
+                    Environment.SetEnvironmentVariable(Flag,disabled);
+                    var capture=NewCapture();Stage(capture,"TextPattern");method.Invoke(capture,[query]);
+                }
+                Require(queries==0,"Disabled diagnostics queried native provider metadata.");
+                Environment.SetEnvironmentVariable(Flag,"1");
+                var disabledAfterBegin=NewCapture();Stage(disabledAfterBegin,"TextPattern");
+                Environment.SetEnvironmentVariable(Flag,null);
+                try
+                {
+                    method.Invoke(disabledAfterBegin,[query]);
+                    Require(queries==0,"Disabling diagnostics after capture began still queried metadata.");
+                }
+                finally{Environment.SetEnvironmentVariable(Flag,"1");}
+                var wrongStage=NewCapture();Stage(wrongStage,"Integrity");method.Invoke(wrongStage,[query]);
+                Require(queries==0,"Provider metadata queried before text-pattern refusal.");
+                var failed=NewCapture();Stage(failed,"TextPattern");method.Invoke(failed,[query]);
+                Require(queries==1,"Failed capture did not query one provider shape.");
+                var line=File.ReadLines(Path.Combine(root,"logs","capture-metadata.jsonl")).Last();
+                using var json=JsonDocument.Parse(line);var item=json.RootElement;
+                Require(item.GetProperty("Stage").GetString()=="failed-provider","Missing failed-provider event.");
+                var shape=item.GetProperty("Provider");
+                Require(shape.EnumerateObject().All(p=>new[]{"FrameworkId","ClassName","ControlTypeId","TargetProcessId","HasKeyboardFocus","IsKeyboardFocusable","SupportedPatternIds"}.Contains(p.Name)),"Unexpected provider data field.");
+                Require(shape.GetProperty("FrameworkId").GetString()=="Chromeinvalid","Framework metadata was not sanitized.");
+                Require(shape.GetProperty("ClassName").GetString()!.Length==80,"Provider class metadata was not bounded.");
+                Require(shape.GetProperty("ControlTypeId").GetInt32()==50004&&shape.GetProperty("TargetProcessId").GetInt32()==42,"Wrong provider technical identity.");
+                Require(shape.GetProperty("HasKeyboardFocus").GetBoolean()&&shape.GetProperty("IsKeyboardFocusable").GetBoolean(),"Missing focus booleans.");
+                Require(shape.GetProperty("SupportedPatternIds").GetArrayLength()==32,"Supported patterns were not bounded.");
+                Require(!line.Contains("PRIVATE-SENTINEL",StringComparison.Ordinal),"Private content leaked.");
+                var original=new InvalidOperationException("PRIVATE-SENTINEL");
+                Action failQuery=()=>throw original;
+                var failedQuery=factory.Invoke(null,[provider,failQuery])!;
+                method.Invoke(failed,[failedQuery]);
+                var last=File.ReadLines(Path.Combine(root,"logs","capture-metadata.jsonl")).Last();
+                Require(last==line,"Provider failure changed the existing diagnostic evidence.");
             });
             Check("Capture and delivery journals rotate within 256 KiB",()=>
             {
@@ -165,6 +253,7 @@ static class DiagnosticChecks
         try{throw original;}
         catch(Exception error){capture.GetType().GetMethod("Fail")!.Invoke(capture,[error]);return error;}
     }
+    static Func<T> ProviderFactory<T>(T provider,Action queried)=>()=>{queried();return provider;};
     static void Require(bool condition,string message)
     {if(!condition)throw new InvalidOperationException(message);}
 }

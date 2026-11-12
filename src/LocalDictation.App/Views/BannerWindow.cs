@@ -64,7 +64,8 @@ public sealed class BannerWindow : Window
     {
         this.controller=controller;Title="Local Dictation recording";
         Width=614;SizeToContent=SizeToContent.Height;MaxHeight=520;
-        WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.NoResize;ShowInTaskbar=false;ShowActivated=false;Topmost=true;
+        var exposeTestBanner=Environment.GetEnvironmentVariable("LOCAL_DICTATION_TEST_BANNER_WINDOW")=="1";
+        WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.NoResize;ShowInTaskbar=exposeTestBanner;ShowActivated=false;Topmost=true;
         AllowsTransparency=true;Background=Brushes.Transparent;Foreground=Ink;
         outer=new Border{Margin=new(17,12,17,18),Background=Bar,CornerRadius=new(17),BorderThickness=new(1),BorderBrush=Color("#27FFFFFF"),Padding=new(17,15,17,12),
             Effect=new DropShadowEffect{BlurRadius=24,ShadowDepth=7,Opacity=.24,Color=Colors.Black}};
@@ -106,7 +107,10 @@ public sealed class BannerWindow : Window
         outer.Child=column;Content=outer;
         SourceInitialized+=(_,_)=>
         {
-            var helper=new WindowInteropHelper(this);SetWindowLongPtr(helper.Handle,-20,GetWindowLongPtr(helper.Handle,-20)|0x08000080);
+            var helper=new WindowInteropHelper(this);
+            var style=GetWindowLongPtr(helper.Handle,-20)|0x08000000; // Keep WS_EX_NOACTIVATE in both modes.
+            style=exposeTestBanner?(style&~0x80)|0x40000:style|0x80; // Test APPWINDOW, normal TOOLWINDOW.
+            SetWindowLongPtr(helper.Handle,-20,style);
             controller.SetRecordingControlWindow(helper.Handle);
             HwndSource.FromHwnd(helper.Handle).AddHook((nint hwnd,int msg,nint wp,nint lp,ref bool handled)=>
             {if(msg==0x21&&!reviewInteractive){handled=true;return 3;}if(msg==0x2E0)Dispatcher.InvokeAsync(Position);return 0;});

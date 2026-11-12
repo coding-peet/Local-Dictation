@@ -114,11 +114,12 @@ Static offline Help checks passed. Historical checks are recorded in
 and [UI update validation](docs/development/ui-usability-validation-20261111.md).
 
 The [Outlook investigation](docs/development/outlook-delivery-investigation-20261112.md)
-records the new physical Notepad acceptance, unresolved Outlook paste, recovery
-banner/microphone fixes and a PID/time-verifying diagnostic launcher. Current regressions
-pass 23 Settings, 30 compact controller and seven pure diagnostic checks. A new
-native test was stopped by CUA before execution; the Outlook transport is still
-pending an attributable retry.
+records the physical Notepad acceptance and the remaining Outlook confirmation
+mismatch. Avoiding redundant caret selection passes 19 native regression cases;
+focused-provider/text-shape diagnostics pass nine pure checks and the windowless
+MTA worker passes six. Actual Outlook now receives the first partial, but a
+one-character projected-document difference still blocks complete dictation.
+The next diagnostic candidate identifies that difference without logging text.
 
 ## Repository layout
 

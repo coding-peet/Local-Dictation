@@ -32,11 +32,13 @@ command; the fixture and product never synthesize Enter or a send shortcut.
 
 ## What is checked
 
-The 18 checks cover:
+The 19 checks cover:
 
 - Native clipboard memory, bitmap, palette and enhanced-metafile cloning,
   including refusing an unsupported owner-managed format without changing it.
 - Inserting between preserved prefix and suffix text.
+- Initial insertion and live append without reselecting an already collapsed
+  UIA range; replacing a noncollapsed owned tail still selects that tail.
 - Pausing at another field, and resuming inside the original unchanged draft.
 - Withdrawing only the owned draft, then restoring accepted wording.
 - Rejecting a manual document edit and a closed destination.
@@ -55,6 +57,13 @@ The 18 checks cover:
 - A real native paste deferred for 1.6 seconds. Unconfirmed delivery keeps its
   own payload available and retains the previous clipboard for deliberate
   recovery; the late paste never consumes an automatically restored old value.
+
+The collapsed-selection case uses a synthetic TextBox provider. Selecting its
+collapsed UIA range deliberately removes provider selection and consumes Ctrl+V
+without inserting. It exposes that mutation as a regression; it does not claim
+to reproduce every behavior of the installed Chromium or Outlook editor. Its
+cleanup restores a held clipboard only after the fixture has observed its own
+synchronous paste handler consume the command and verified the field unchanged.
 
 Controller cases use isolated temporary protected storage. They disable the
 controller's timers and shortcuts; they do not start a microphone or connection.
@@ -105,9 +114,10 @@ Run only the diagnostic journal checks:
     --report C:\AI\build\Local-Dictation-capture-probe\diagnostic-checks.json
 ~~~
 
-The seven checks cover opt-out without writes, enabled startup identification,
-delivery-event PID, fixed interruption-stage serialization, capture serialization without exception messages, bounded
-journal rotation, and nonfatal IO failure. Each run uses a unique temporary
+The nine checks cover opt-out without writes, enabled startup identification,
+delivery-event PID, fixed interruption-stage serialization, capture serialization
+without exception messages, bounded failed-provider shape, fixed-class single
+character mismatch metadata, bounded journal rotation, and nonfatal IO failure. Each run uses a unique temporary
 root, restores the original process environment, and verifies the resolved
 temporary path before recursive cleanup. The report contains check names and
 results only. This does not exercise actual destination capture or insertion.
@@ -167,14 +177,25 @@ guards without extra native calls. The top-level interruption catch also records
 its technical exception type and HRESULT. No destination values are recorded.
 Capture also writes capture-metadata.jsonl with fixed stage codes, stage-entry
 Success=null, stage-completion success, elapsed milliseconds, UTC time and PID.
-Failures include only exception type and HRESULT. It never logs exception
-messages, field text, UI names, clipboard contents, audio or document paths.
+Failure events include exception type and HRESULT. If the focused element fails
+at the text-pattern stage, the same opt-in also queries a technical provider
+shape before returning the original failure: sanitized framework/class (80
+characters each), numeric control type and target PID, focus/focusable booleans,
+and at most 32 supported numeric pattern IDs. It never reads Name, AutomationId,
+Value or document text for this event. The shape query is best effort and a
+metadata failure cannot replace the original capture failure. Disabled diagnostics
+and failures before the text-pattern stage do not invoke this query.
+
+It never logs exception messages, field text, UI names, clipboard contents,
+audio or document paths.
 
 Capture stages bracket the existing foreground/focus, own-process, integrity,
 inspection callbacks, cancellation, postcheck window/identity and construction/
-provider-metadata operations. Logging makes no extra accessibility calls, even
-after failure. A stage entry without completion can identify a still-blocked
-native call when the controller deadline expires; cancellation is observed only
+provider-metadata operations. Stage logging adds no native calls. The explicit
+opt-in failed-text-pattern provider-shape event described above performs additional
+metadata-only accessibility queries. It does not walk ancestors or adopt another
+field. Capture guards, native insertion and retry behavior are unchanged. A
+stage entry without completion can identify a still-blocked native call when the controller deadline expires; cancellation is observed only
 at the existing cancellation check. A completed capture does not prove insertion.
 
 New journal writes rotate before the active file would exceed 256 KiB, retaining
@@ -191,6 +212,23 @@ provider metadata, and clipboard restoration status. ReadbackRetries and LastRea
 identify transient native inspection failures without recording their contents. It records no transcript,
 audio, UI name, clipboard value or clipboard hash. Equivalence flags diagnose
 provider differences; they do not relax the ownership or insertion checks.
+
+## Text-free mismatch characterization
+
+When diagnostics are enabled, Delivery.TextMismatch describes the latest ordinary
+confirmation readback using only offsets and fixed labels. FirstMismatchOffset
+and SingleDeletedPosition count UTF-16 code units, as the existing length/caret
+metadata does. A single deletion is reported only when removing exactly one
+expected code unit reproduces the complete observed text. MissingAtOwnedBoundary
+tests that condition separately at the end of the owned draft; repeated equal
+characters can make more than one deletion position equivalent.
+
+SingleDeletedKind is limited to CR, LF, Space, Nbsp, ZeroWidthSpace, WordJoiner,
+BOM, ObjectReplacement and Other. No arbitrary character, code point, text,
+substring or text hash is serialized. A different mismatch has no deletion
+position or class. This examines strings already obtained by the existing
+readback, adds no native calls, and neither normalizes text nor relaxes the exact
+text/caret guards. Late reconciliation retains its existing exact checks.
 
 ## Provider readback transitions
 

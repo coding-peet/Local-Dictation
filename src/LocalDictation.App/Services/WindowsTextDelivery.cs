@@ -70,12 +70,13 @@ public sealed class WindowsTextDelivery : ITextDelivery
     public static WindowsTextDelivery Capture(CancellationToken token, bool allowOwnProcess = false)
     {
         var diagnostic=CaptureDiagnostic.Begin();
+        AutomationElement? element=null;
         try
         {
             diagnostic.Stage(CaptureStage.Foreground);
             var window = GetForegroundWindow();
             diagnostic.Stage(CaptureStage.FocusedElement);
-            var element = AutomationElement.FocusedElement ?? throw new InvalidOperationException("No editable field has focus.");
+            element = AutomationElement.FocusedElement ?? throw new InvalidOperationException("No editable field has focus.");
             diagnostic.Stage(CaptureStage.OwnProcess);
             if (!allowOwnProcess && element.Current.ProcessId == Environment.ProcessId)
                 throw new InvalidOperationException("Choose a destination outside Local Dictation; this recording will open in Review.");
@@ -105,7 +106,14 @@ public sealed class WindowsTextDelivery : ITextDelivery
             diagnostic.Complete();
             return delivery;
         }
-        catch(Exception error){diagnostic.Fail(error);throw;}
+        catch(Exception error)
+        {
+            diagnostic.Fail(error);
+            if(element!=null)diagnostic.FailedProvider(()=>new(element.Current.FrameworkId,element.Current.ClassName,
+                element.Current.ControlType.Id,element.Current.ProcessId,element.Current.HasKeyboardFocus,
+                element.Current.IsKeyboardFocusable,element.GetSupportedPatterns().Select(pattern=>pattern.Id).ToArray()));
+            throw;
+        }
     }
 
     enum InterruptionStage { Invalidated,InputGeneration,ForegroundWindow,FocusedField,DeliveryKeysDown }
@@ -131,6 +139,7 @@ public sealed class WindowsTextDelivery : ITextDelivery
         var beforeText=guard.ExpectedText;
         string? expected=null;
         int? observedLength=null,observedCaret=null;
+        DeliveryTextMismatch? textMismatch=null;
         bool? textMatches=null,caretMatches=null,unchanged=null,lineEndingsEquivalent=null,terminalParagraphEquivalent=null,nbspEquivalent=null;
         ClipboardTransaction? clipboard=null;
         bool confirmed=false;
@@ -225,7 +234,9 @@ public sealed class WindowsTextDelivery : ITextDelivery
                 clipboard=ClipboardTransaction.Begin(replacement,()=>Check(token,version));
             }
             Check(token,version);
-            selected.Select();
+            // Appending already owns the current caret. Reselecting a collapsed
+            // UIA range can invalidate an editor's active selection.
+            if(oldTail.Length!=0)selected.Select();
             Check(token,version);
             phase="queue input";
             // Only the mutable suffix is replaced. Stable leading text is untouched.
@@ -254,6 +265,7 @@ public sealed class WindowsTextDelivery : ITextDelivery
                     if(Identity(afterElement)!=guard.Identity)return Stop("The destination changed during insertion.");
                     observedLength=after.Text.Length;observedCaret=after.Caret;
                     textMatches=after.Text==expected;caretMatches=after.Caret==guard.Start+next.Length;unchanged=after.Text==beforeText;
+                    if(DiagnosticJournal.Enabled)textMismatch=DeliveryDiagnostic.DescribeTextMismatch(expected,after.Text,guard.Start+next.Length);
                     lineEndingsEquivalent=after.Text.Replace("\r\n","\n")==expected.Replace("\r\n","\n");
                     terminalParagraphEquivalent=after.Text.TrimEnd('\r','\n')==expected.TrimEnd('\r','\n');
                     nbspEquivalent=after.Text.Replace('\u00a0',' ')==expected.Replace('\u00a0',' ');
@@ -307,7 +319,7 @@ public sealed class WindowsTextDelivery : ITextDelivery
             LastDiagnostic=new(phase,restoreFocus,queued,watch.Elapsed.TotalMilliseconds,beforeText.Length,next.Length,expected?.Length,
                 observedLength,observedCaret,textMatches,caretMatches,unchanged,lineEndingsEquivalent,terminalParagraphEquivalent,nbspEquivalent,
                 provider,clipboard?.SavedFormatCount,clipboard?.WasRestored,clipboard?.WasSuperseded,IsConflict,failureType,failureCode,ClipboardRecovery.HasPending,
-                readbackRetries,lastReadbackStage,lastReadbackFailureType,lastReadbackFailureCode,lastInterruptionStage);
+                readbackRetries,lastReadbackStage,lastReadbackFailureType,lastReadbackFailureCode,lastInterruptionStage,textMismatch);
             LastDiagnostic.WriteIfEnabled();
             Interlocked.Decrement(ref operating);
         }

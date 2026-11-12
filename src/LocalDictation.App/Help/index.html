@@ -386,6 +386,11 @@
           <p>Some editors temporarily leave pasted text selected. The app waits briefly for the original field's exact text and cursor to settle; it does not send a second paste while checking. If the field cannot confirm insertion, inspect it before retrying. Compatibility still depends on the destination application's accessibility support.</p>
         </details>
         <details>
+          <summary>Dictating into Outlook or another Office editor</summary>
+          <p>Click in the message body so the text cursor is visible, then start with your dictation shortcut. Your signature and surrounding text stay in place. Paste Special is not part of the dictation workflow.</p>
+          <p>If an Office paste menu or another small editing popup is open, close it and return the cursor to the message body before starting. A Paste Options button belongs to Office; it is separate from the dictation banner. If insertion is unconfirmed, inspect the message and follow clipboard recovery below before retrying.</p>
+        </details>
+        <details>
           <summary>Paste is unconfirmed, or the previous clipboard needs recovery</summary>
           <p>Open the destination and inspect whether text arrived. Do not retry blindly: a slow editor may still consume a queued paste. The app keeps the dictation paste available and retains your previous clipboard in memory.</p>
           <p>After inspecting the destination and stopping any deferred paste, select <strong>Restore clipboard…</strong> in the idle banner, or <strong>Restore previous clipboard…</strong> from the notification-area menu. Confirm only after the destination can no longer consume the earlier paste. Recording and finishing must stop before restoration is available.</p>

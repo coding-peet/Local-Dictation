@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$AppDirectory = 'C:\Git\Local-Dictation\app',
-    [string]$DataRoot = 'C:\AI\LocalDictation'
+    [string]$DataRoot = 'C:\AI\LocalDictation',
+    [switch]$ExposeTestBanner
 )
 $ErrorActionPreference = 'Stop'
 $appRoot = [IO.Path]::GetFullPath($AppDirectory)
@@ -24,6 +25,8 @@ $start.UseShellExecute = $false
 $start.WorkingDirectory = $appRoot
 $start.Environment['LOCAL_DICTATION_HOME'] = $dataDirectory
 $start.Environment['LOCAL_DICTATION_DELIVERY_DIAGNOSTICS'] = '1'
+# Explicit per-child test mode; do not inherit an earlier shell's opt-in.
+$start.Environment['LOCAL_DICTATION_TEST_BANNER_WINDOW'] = if ($ExposeTestBanner) { '1' } else { '0' }
 $launchUtc = [DateTimeOffset]::UtcNow
 $client = [Diagnostics.Process]::Start($start)
 $marker = Join-Path $dataDirectory 'logs\delivery-session.json'
@@ -45,6 +48,7 @@ if ($null -eq $session) {
     ProcessId = $client.Id
     BuildVersion = $session.BuildVersion
     DiagnosticSessionVerified = $true
+    TemporaryTaskbarButton = [bool]$ExposeTestBanner
     Marker = $marker
     HotkeyLaunch = 'Normal; --no-hotkey was not used'
 }

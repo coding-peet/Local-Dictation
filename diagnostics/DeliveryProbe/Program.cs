@@ -232,6 +232,44 @@ sealed class ProbeWindow : Window
         ClipboardChecks.RequireSame(before,ClipboardChecks.Fingerprint());
     }
 
+    async Task CollapsedSelectionAppend()
+    {
+        var field=new CollapsedSelectionTextBox{Text=Prefix+Suffix,Margin=new(16),FontSize=16};
+        temporaryTarget=new Window{Title="Delivery probe — collapsed selection regression",Width=650,Height=160,
+            Owner=this,Content=field,WindowStartupLocation=WindowStartupLocation.CenterOwner};
+        var before=ClipboardChecks.Fingerprint();
+        try
+        {
+            temporaryTarget.Show();temporaryTarget.Activate();field.Focus();field.Select(Prefix.Length,0);await Settle();
+            using var appendWorker=new AutomationWorker();current=await CaptureOwn(appendWorker,temporaryTarget);
+            foreach(var text in new[]{Draft,Expanded,Approved})
+            {
+                var applied=await appendWorker.Run(token=>current.Apply(text,token));
+                Require(applied,"Collapsed-selection-sensitive delivery failed: "+current.Reason+
+                    $"; collapsed provider Select calls={field.CollapsedProviderSelections}; suppressed paste commands={field.SuppressedPastes}");
+                Require(field.Text==Prefix+text+Suffix,"Collapsed-selection-sensitive delivery changed surrounding text or duplicated the draft.");
+                Require(field.SelectionLength==0&&field.SelectionStart==Prefix.Length+text.Length,"The append did not retain its exact native caret.");
+            }
+            Require(field.CollapsedProviderSelections==0&&!field.ProviderPoisoned,"Append selected an already collapsed UIA range.");
+            Require(field.SuppressedPastes==0,"A paste was sent after the provider lost its caret.");
+            Require(other.Text==OtherText,"Collapsed-selection-sensitive delivery changed the unrelated field.");
+        }
+        finally
+        {
+            if(ClipboardRecovery.HasPending)
+            {
+                // This fixture owns the only target. Its synchronous PreviewKeyDown
+                // has consumed the single queued Ctrl+V; no deferred paste exists.
+                Require(field.SuppressedPastes>0,"The fixture did not observe consumption of its queued paste; keep its clipboard backup alive.");
+                Require(field.Text==Prefix+Suffix,"The poisoned provider unexpectedly inserted text; inspect the fixture before recovery.");
+                var recovery=ClipboardRecovery.RestoreAfterInspection();
+                Require(recovery.Succeeded,"Collapsed-selection cleanup failed: "+recovery.Message);
+            }
+            temporaryTarget.Close();temporaryTarget=null;await Settle();
+            ClipboardChecks.RequireSame(before,ClipboardChecks.Fingerprint());
+        }
+    }
+
     async Task RunChecks()
     {
         run.IsEnabled=false;results.Clear();log.Text="";ResetText();observedInputs=ignoredProgrammaticFocus=0;
@@ -398,6 +436,7 @@ sealed class ProbeWindow : Window
                 }
                 ClipboardChecks.RequireSame(before,ClipboardChecks.Fingerprint());
             });
+            await Step("Append preserves an existing caret without selecting its collapsed UIA range",CollapsedSelectionAppend,continueAfterFailure:true);
             var passed=results.All(r=>r.Passed);status.Text=$"{(passed?"PASS":"FAIL")} — {results.Count(r=>r.Passed)}/{results.Count} native delivery checks";status.Foreground=passed?Brushes.DarkGreen:Brushes.DarkRed;
         }
         catch(Exception exception)
@@ -413,7 +452,7 @@ sealed class ProbeWindow : Window
         {
             current=null;observer?.Dispose();observer=null;reviewSurface?.Hide();temporaryTarget?.Close();temporaryTarget=null;
             var report=new{StartedUtc=started,CompletedUtc=DateTimeOffset.UtcNow,Fixture="Local Dictation DeliveryProbe",NativeProductCode=true,
-                SyntheticFieldsOnly=true,ClipboardRecoveryPending=ClipboardRecovery.HasPending,ClipboardTransactionUnsettled=ClipboardRecovery.HasUnsettledTransaction,Passed=results.Count==18&&results.All(r=>r.Passed),ObservedInputs=observedInputs,
+                SyntheticFieldsOnly=true,ClipboardRecoveryPending=ClipboardRecovery.HasPending,ClipboardTransactionUnsettled=ClipboardRecovery.HasUnsettledTransaction,Passed=results.Count==19&&results.All(r=>r.Passed),ObservedInputs=observedInputs,
                 IgnoredProgrammaticFocus=ignoredProgrammaticFocus,Results=results};
             try
             {

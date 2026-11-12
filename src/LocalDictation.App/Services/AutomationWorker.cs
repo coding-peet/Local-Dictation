@@ -14,7 +14,7 @@ public sealed class AutomationWorker : IDisposable
         {
             foreach (var action in queue.GetConsumingEnumerable()) action();
         }) { IsBackground = true, Name = "Local Dictation UI Automation" };
-        thread.SetApartmentState(ApartmentState.STA);
+        thread.SetApartmentState(ApartmentState.MTA);
         thread.Start();
     }
     public async Task<T> Run<T>(Func<CancellationToken, T> action, TimeSpan? timeout = null)

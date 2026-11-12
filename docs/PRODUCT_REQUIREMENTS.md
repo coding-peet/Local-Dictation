@@ -82,6 +82,9 @@ punctuation, whitespace, and Unicode must be preserved.
   exact destination acknowledgement. Preserve supported previous clipboard
   formats and exclude temporary dictation from Windows clipboard history/cloud.
   Refuse unsupported clipboard formats before replacing them.
+- When appending at an already validated correct caret, avoid reselecting its
+  collapsed UIA range. Select a real owned suffix for replacement and retain
+  explicit caret restoration when needed. Keep all exact acknowledgment guards.
 - A transient post-paste accessibility/selection state may retry only readback
   within a bounded deadline. Keep the original field, full text and exact caret
   requirements; do not issue another paste to obtain acknowledgement.
@@ -92,7 +95,17 @@ punctuation, whitespace, and Unicode must be preserved.
   recording Finish first, block active/inserting restoration and recheck after
   confirmation. Recovery must use one transcript surface in compact Review.
 - Opt-in support journals record PID/build and fixed capture/readback stages,
-  never transcript, field names, audio or clipboard contents. Installation or
+  never transcript, field names/values/text, audio or clipboard contents. Ordinary
+  operation and fixed-stage logging add no UIA queries. Only an opted-in
+  text-pattern capture failure may read the focused provider's bounded technical
+  shape: framework/class, numeric control type, PID, focus flags and pattern IDs.
+  This metadata must not read Name, Value, text range, AutomationId, siblings or
+  ancestors, and must preserve the original failure if collection fails.
+- An explicit child-only diagnostic switch may expose the recording banner's
+  taskbar entry for controlled tests. Preserve its nonactivating behavior and
+  destination guards; this does not establish native tool visibility.
+- Run UIA operations on a dedicated, windowless MTA worker. Preserve clipboard
+  ownership on its separate STA thread. A threading correction, installation or
   successful Notepad delivery does not establish Outlook compatibility.
 - Manual edits, a closed field, or failed ownership validation require an
   explicit destination decision. Never adopt arbitrary focus.
