@@ -13,6 +13,23 @@ docs/development/rebuild-and-recovery.md (fresh-checkout build and continuity).
 Then read the relevant design in docs/superpowers/specs. Older plans and
 validation reports are historical where they conflict with current requirements.
 
+## Working folder and branches
+
+On this PC, perform all source edits, tests, builds, commits, and pushes from:
+
+    C:\Git\Local-Dictation\repo
+
+Use ordinary Git branches in this one folder. Do not create additional
+worktrees, even when an agent workflow normally recommends worktree isolation.
+The active implementation branch is feature/native-windows; inspect the actual
+branch and local changes before switching. Preserve unrelated work.
+
+The former .worktrees/native-windows folder is a detached preservation copy.
+Do not edit, build, test, commit, or push from it. Do not remove it incidentally:
+a candidate service may still import its source until a controlled handover.
+Keep published app files outside the checkout, and models/user data in C:\AI.
+At handoff, report the working folder, active branch, and latest commit.
+
 ## Agent continuity
 
 Inspect the actual checkout, branch, status, and existing changes before editing.

@@ -4,7 +4,7 @@
 
 ~~~text
 C:\Git\Local-Dictation\
-  repo\                        Git checkout and linked native-windows worktree
+  repo\                        Single working checkout; ordinary Git branches
   app\                         Published Windows executable and dependencies
 
 C:\AI\
@@ -38,7 +38,11 @@ runtime data require their own preservation and are not restored by Git.
 ## Canonical source
 
 Edit application code, tests, documentation, prototypes, and packaging
-scripts in the Git checkout.
+scripts only in C:\Git\Local-Dictation\repo. Run tests, builds, commits, and
+pushes from that folder. Use ordinary Git branches; do not add worktrees.
+The former .worktrees/native-windows folder is retained detached as a
+preservation copy, not an active development location. Do not remove it while
+a candidate service still depends on its source.
 
 The Python files under server were imported from the working batch backend.
 The deployed copy under C:\AI\PalaNote-ASR remains in place so existing
@@ -55,7 +59,7 @@ duplicating them.
 
 Use C:\AI\build\Local-Dictation for generated compiler output and test
 artifacts. The SDK artifacts layout separates project/configuration output;
-override Build.ps1 -BuildRoot when building another worktree concurrently.
+override Build.ps1 -BuildRoot for a separate validation output directory.
 
 Publish the Windows client to C:\Git\Local-Dictation\app.
 

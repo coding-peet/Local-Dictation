@@ -37,14 +37,20 @@ This stops only the identified idle candidate. It does not delete source,
 recordings, models, environments, or the separate production API on 8123.
 An ordinary source cleanup must not stop that production API.
 
-## 2. Clone into a new location
+## 2. Recover the canonical checkout
 
-Use an empty destination. These commands create a new source checkout; they do
-not alter the existing installation or runtime data:
+On this PC, continue all development in C:\Git\Local-Dictation\repo with
+ordinary branches. Do not create additional worktrees. If that folder already
+exists, inspect its branch and changes and continue there; do not clone over it,
+delete it, or replace its work. The detached former worktree is a preservation
+copy and may still be needed by a running candidate service.
+
+Only when the canonical source folder is absent, use these commands to restore
+it. They create source files; they do not alter the installed app or runtime data:
 
 ~~~powershell
-git clone --branch feature/native-windows --single-branch https://github.com/coding-peet/Local-Dictation.git C:\Git\Local-Dictation-restore\repo
-Set-Location C:\Git\Local-Dictation-restore\repo
+git clone --branch feature/native-windows --single-branch https://github.com/coding-peet/Local-Dictation.git C:\Git\Local-Dictation\repo
+Set-Location C:\Git\Local-Dictation\repo
 git status --short --branch
 git rev-parse HEAD
 ~~~
@@ -61,7 +67,7 @@ with `Get-Command dotnet`. On the configured PC use the existing portable SDK:
 .\scripts\Build.ps1 `
     -DotnetPath C:\AI\tools\dotnet-10.0.403\dotnet.exe `
     -BuildRoot C:\AI\build\Local-Dictation-restore `
-    -AppDirectory C:\Git\Local-Dictation-restore\app
+    -AppDirectory C:\Git\Local-Dictation\candidate-restore
 ~~~
 
 The command restores NuGet packages as needed, runs Core tests, and publishes
@@ -76,7 +82,8 @@ assemblies/runtime configuration and the .NET 10 Windows Desktop runtime.
 The development Start local service action resolves the checkout that built
 that EXE. Rebuilding from the new checkout records the new location; it does not
 depend on a linked worktree called native-windows. If that source is later removed,
-run the API from another checkout or rebuild again. A running API is a separate
+restore the canonical checkout and rebuild or start the API explicitly from
+that restored canonical source. A running API is a separate
 prerequisite, not part of the client EXE.
 
 ## 4. Reuse the existing local API environment
@@ -122,7 +129,7 @@ Do not run inference concurrently with the production service on the same GPU.
 
 ## 5. Continue with a new agent
 
-Open the new checkout as the agent's workspace. Give it the actual task, then
+Open C:\Git\Local-Dictation\repo as the agent's workspace. Give it the task, then
 ask it to read `AGENTS.md` and `docs/PRODUCT_REQUIREMENTS.md`. It should inspect
 the branch, current changes, and validation status before editing.
 

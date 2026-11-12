@@ -179,6 +179,9 @@ punctuation, whitespace, and Unicode must be preserved.
   folder together; an EXE alone is insufficient for this framework-dependent app.
 - Keep source and application under a common C:\Git\Local-Dictation parent on
   this PC. Keep models, protected data, environments, and SDKs under C:\AI.
+- Perform all development in C:\Git\Local-Dictation\repo with ordinary Git
+  branches. Do not create additional worktrees. Preserve prior work and report
+  the working folder, branch, and latest commit at handoff.
 - Do not retain installers as development clutter. Do not commit binaries,
   model weights, environments, recordings, transcripts, logs, or credentials.
 - Agent continuity must come from committed requirements, AGENTS.md, build and

@@ -24,7 +24,8 @@ Prerequisites: Windows x64, a .NET 10 SDK, and access to the NuGet packages.
 Running the resulting app requires the .NET 10 Windows Desktop runtime.
 Python, a GPU, and model weights are not required to compile the client.
 
-From the checkout root:
+Work directly in `C:\Git\Local-Dictation\repo`, using ordinary branches in
+that folder. Do not create additional worktrees. From the checkout root:
 
 ~~~powershell
 .\scripts\Build.ps1 -AppDirectory 'C:\Git\Local-Dictation\candidate'
@@ -32,7 +33,7 @@ From the checkout root:
 
 This runs Core tests and publishes Release output. The default SDK is
 `C:\AI\tools\dotnet-10.0.403\dotnet.exe`; use `-DotnetPath` for another installed
-.NET 10 SDK. Override `-BuildRoot` when building another checkout concurrently.
+.NET 10 SDK. Override `-BuildRoot` for a separate validation output directory.
 The default app output, without `-AppDirectory`, is
 `C:\Git\Local-Dictation\app`.
 
@@ -76,7 +77,7 @@ editor. Nothing is submitted.
 | Purpose | Location on this PC |
 | --- | --- |
 | Canonical source | C:\Git\Local-Dictation\repo |
-| Current branch worktree | C:\Git\Local-Dictation\repo\.worktrees\native-windows |
+| Working branch in this folder | feature/native-windows; ordinary branches, no new worktrees |
 | Installed app folder | C:\Git\Local-Dictation\app |
 | Settings, Pending Review, latest 20 transcripts and audio | C:\AI\LocalDictation\data |
 | Operational logs and diagnostics | C:\AI\LocalDictation\logs and diagnostics |
