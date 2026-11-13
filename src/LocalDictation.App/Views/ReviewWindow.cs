@@ -8,27 +8,38 @@ namespace LocalDictation.App.Views;
 
 public sealed class ReviewWindow : Window
 {
-    readonly ReviewDocument document;
+    ReviewDocument document;
     readonly Action<ReviewDocument> save;
     readonly Action<string> dismiss;
     readonly Func<ReviewDocument,Task<ReviewInsertionResult>> accept;
     readonly Action<ReviewDocument> chooseDestination;
-    readonly RichTextBox transcript = new() { IsReadOnly=true, VerticalScrollBarVisibility=ScrollBarVisibility.Auto, VerticalContentAlignment=VerticalAlignment.Top,
-        MinHeight=210, BorderThickness=new(0), Padding=new(16), FontSize=16 };
-    readonly TextBox primary = Ui.Box(false,64), verification = Ui.Box(false,64), custom = Ui.Box(true,62), manual = Ui.Box(true,130);
-    readonly TextBlock counter=Ui.Text(""), note=Ui.Text(""), sourceLabel=Ui.Text("");
-    readonly Button copy,acceptButton,destinationButton,undo,rebuild,restore,verifyButton;
-    Action<ReviewDocument>? verifyAction;
+    RichTextBox transcript=null!;
+    TextBox primary=null!,verification=null!,custom=null!,manual=null!;
+    TextBlock counter=null!,note=null!,sourceLabel=null!;
+    Button copy=null!,acceptButton=null!,destinationButton=null!,undo=null!,rebuild=null!,restore=null!,verifyButton=null!;
+    Func<IReadOnlyList<ModelInfo>> verificationModels=()=>[];
+    Func<ModelInfo,string?> verificationAction=_=>"Select a saved recording first.";
+    RetranscriptionPicker transcription=null!;
     bool verificationAvailable;
-    public void SetVerificationAction(Action<ReviewDocument> action,bool available)
-    {verifyAction=action;verificationAvailable=available;verifyButton.IsEnabled=available&&!IsApplying;}
-    readonly StackPanel manualPanel=new();
-    readonly Border choiceCard;
-    readonly Grid middle=new();
-    readonly List<ReviewPiece> differences;
+    Func<bool> saveSucceeded=()=>true;
+    public void SetSaveStatus(Func<bool> saved)=>saveSucceeded=saved;
+    public void SetVerificationAction(Func<IReadOnlyList<ModelInfo>> models,Func<ModelInfo,string?> action,bool available)
+    {verificationModels=models;verificationAction=action;verificationAvailable=available;verifyButton.IsEnabled=available&&!IsApplying;transcription.Refresh(available);}
+    public bool IsTranscribing {get;private set;}
+    public void SetTranscriptionBusy(bool busy)
+    {
+        IsTranscribing=busy;((UIElement)Content).IsEnabled=!busy;
+        if(busy)note.Text="Transcribing the original recording… Your current text is kept.";
+        else Refresh();
+    }
+    StackPanel manualPanel=null!;
+    Border choiceCard=null!;
+    Grid middle=null!;
+    List<ReviewPiece> differences=[];
     int selected;
     bool refreshing;
     public string ReviewId => document.Id;
+    public ReviewDocument Document=>document;
     public bool IsApplying {get;private set;}
 
     public ReviewWindow(ReviewDocument document,Action<ReviewDocument> save,Action<string> dismiss,
@@ -36,9 +47,34 @@ public sealed class ReviewWindow : Window
     {
         this.document=document; this.save=save; this.dismiss=dismiss;
         this.accept=accept;this.chooseDestination=chooseDestination;
-        differences=document.Pieces.Where(p=>p.Different).ToList();
         Title="Review · Local Dictation"; Width=1080; Height=740; MinWidth=650; MinHeight=540;
         WindowStartupLocation=WindowStartupLocation.CenterScreen;
+        SizeChanged+=(_,_)=>UpdateColumns();
+        Closing+=(_,e)=>{if(IsApplying){e.Cancel=true;note.Text="Finishing the insertion check…";}};
+        BuildContent();
+    }
+
+    public void Rebind(ReviewDocument value)
+    {
+        if(IsApplying)throw new InvalidOperationException("Finish insertion before changing this Review.");
+        document=value;selected=0;BuildContent();
+    }
+
+    void UpdateColumns()
+    {
+        var narrow=ActualWidth<920;
+        middle.ColumnDefinitions[1].Width=narrow?new(0):new(340);
+        Grid.SetColumn(choiceCard,narrow?0:1);Grid.SetRow(choiceCard,narrow?1:0);
+        ((FrameworkElement)middle.Children[0]).Margin=narrow?new(0,0,0,12):new(0,0,16,12);
+    }
+
+    void BuildContent()
+    {
+        transcript=new(){IsReadOnly=true,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,VerticalContentAlignment=VerticalAlignment.Top,
+            MinHeight=210,BorderThickness=new(0),Padding=new(16),FontSize=16};
+        primary=Ui.Box(false,64);verification=Ui.Box(false,64);custom=Ui.Box(true,62);manual=Ui.Box(true,130);
+        counter=Ui.Text("");note=Ui.Text("");sourceLabel=Ui.Text("");
+        manualPanel=new();middle=new();differences=document.Pieces.Where(p=>p.Different).ToList();
         var root=new DockPanel { Margin=new(24) };
         System.Windows.Automation.AutomationProperties.SetName(transcript,"Working transcript with phrase choices");
         var header=new StackPanel();
@@ -61,14 +97,15 @@ public sealed class ReviewWindow : Window
         acceptButton=Ui.Button("_Accept and insert",()=>_ = Accept(),true);
         destinationButton=Ui.Button("Choose destination",()=>this.chooseDestination(document));
         LocalDictation.App.Services.SelectedCaretInsertActivation.Attach(this,acceptButton);
-        verifyButton=Ui.Button("Second transcript…",()=>verifyAction?.Invoke(document));verifyButton.IsEnabled=false;
+        transcription=new RetranscriptionPicker(()=>verificationModels(),model=>verificationAction(model));
+        verifyButton=Ui.Button("Transcribe again",transcription.Toggle);verifyButton.IsEnabled=false;
         copy=Ui.Button("_Copy reviewed text",Copy);
         undo=Ui.Button("_Undo choice",()=>{document.Undo();Changed();});
         var keep=Ui.Button("_Keep remaining dictation",()=>{document.KeepRemaining();Changed();});
         var close=Ui.Button("Close",Close);
         var remove=Ui.Button("_Dismiss",Dismiss);
         foreach(var button in new[]{acceptButton,destinationButton,verifyButton,copy,undo,keep,close,remove}) { button.Margin=new(0,0,8,8); buttons.Children.Add(button); }
-        footer.Children.Add(buttons);
+        footer.Children.Add(buttons);footer.Children.Add(transcription);
         footer.Children.Add(note);
         footer.Children.Add(Ui.Text("Accept inserts the reviewed text and closes this window. Close keeps your saved text for later.",12));
         DockPanel.SetDock(footer,Dock.Bottom);root.Children.Add(footer);
@@ -81,6 +118,11 @@ public sealed class ReviewWindow : Window
         manualPanel.Children.Add(Ui.Text("Final manual draft",14,true));
         manualPanel.Children.Add(Ui.Text("This draft takes precedence. Changing a phrase will keep your manual wording.",12));
         manualPanel.Children.Add(manual);
+        manualPanel.Children.Add(Ui.Button("Save text",()=>
+        {
+            document.KeepRemaining();Changed();
+            note.Text=saveSucceeded()?"Text saved. Insert is a separate action.":"Text could not be saved. Your edits are kept here; retry saving before closing.";
+        }));
         rebuild=Ui.Button("Rebuild from choices",()=>
         {
             if(MessageBox.Show(this,"Rebuild the final draft from your phrase choices? Your previous manual draft will remain available.",
@@ -116,13 +158,6 @@ public sealed class ReviewWindow : Window
             tabs.Items.Add(new TabItem{Header="_Verification original",Content=Original(document.Verification,
                 document.VerificationModel,document.HasCompletedVerification,ReviewCopySource.Verification)});
         root.Children.Add(tabs); Content=root;
-        SizeChanged+=(_,_) =>
-        {
-            var narrow=ActualWidth<920;
-            middle.ColumnDefinitions[1].Width=narrow?new(0):new(340);
-            Grid.SetColumn(choiceCard,narrow?0:1);Grid.SetRow(choiceCard,narrow?1:0);
-            left.Margin=narrow?new(0,0,0,12):new(0,0,16,12);
-        };
         custom.TextChanged+=(_,_) =>
         {
             if(refreshing||differences.Count==0)return;
@@ -133,8 +168,7 @@ public sealed class ReviewWindow : Window
             if(refreshing)return;
             document.ManualFinalDraft=manual.Text;save(document);
         };
-        Closing+=(_,e)=>{if(IsApplying){e.Cancel=true;note.Text="Finishing the insertion check…";}};
-        Refresh();
+        Refresh();UpdateColumns();SetTranscriptionBusy(IsTranscribing);
     }
 
     UIElement Original(string source,string model,bool confirmed,ReviewCopySource kind)
@@ -153,6 +187,13 @@ public sealed class ReviewWindow : Window
             note.Text=ReviewCopy.Copy(document,kind,System.Windows.Clipboard.SetText).Message;
         });
         copySource.IsEnabled=confirmed&&source.Length>0;page.Children.Add(copySource);
+        var useSource=Ui.Button("Use this transcript",()=>
+        {
+            document.UseWholeTranscript(kind);Changed();
+            note.Text=saveSucceeded()?"Selected transcript saved. Insert is a separate action.":
+                "The selected transcript could not be saved. Your text is kept here; retry saving before closing.";
+        });
+        useSource.IsEnabled=confirmed&&document.InsertedAt==null;page.Children.Add(useSource);
         if(confirmed&&source.Length==0)page.Children.Add(Ui.Text("This model returned no text.",13));
         return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
     }

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
+using System.Windows.Input;
 using MaterialDesignThemes.Wpf;
 using LocalDictation.App.Services;
 
@@ -17,6 +18,7 @@ public sealed class MainWindowShell : Grid, IDisposable
     readonly Action<int>? pageSelected;
     bool disposed;
 
+    public SettingsSearchControl Search {get;} = new();
     public FrameworkElement Header {get;}
     public FrameworkElement StatusArea {get;}
     public ContentControl PageHost {get;}
@@ -24,7 +26,7 @@ public sealed class MainWindowShell : Grid, IDisposable
 
     public MainWindowShell(ListBox navigation, IReadOnlyList<UIElement> pages,
         Button record, Button help, TextBlock connection, TextBlock saveStatus,
-        TextBlock message, Button recovery, Action<int>? pageSelected=null)
+        TextBlock message, Action<int>? pageSelected=null)
     {
         if(pages.Count!=4)throw new ArgumentException("Provide Dictation, Models, History and Settings pages.",nameof(pages));
         this.pages=pages;this.pageSelected=pageSelected;Navigation=navigation;
@@ -61,12 +63,8 @@ public sealed class MainWindowShell : Grid, IDisposable
         message.Margin=new(0,0,0,4);message.TextWrapping=TextWrapping.Wrap;
         message.SetBinding(VisibilityProperty,new Binding(nameof(TextBlock.Text)){Source=message,Converter=new MessageVisibilityConverter()});
         System.Windows.Automation.AutomationProperties.SetLiveSetting(message,System.Windows.Automation.AutomationLiveSetting.Polite);
-        recovery.HorizontalAlignment=HorizontalAlignment.Left;recovery.Margin=new(0);
-        alerts.Children.Add(message);alerts.Children.Add(recovery);
-        var alertVisibility=new MultiBinding{Converter=new AlertVisibilityConverter()};
-        alertVisibility.Bindings.Add(new Binding(nameof(TextBlock.Text)){Source=message});
-        alertVisibility.Bindings.Add(new Binding(nameof(Visibility)){Source=recovery});
-        alerts.SetBinding(VisibilityProperty,alertVisibility);
+        alerts.Children.Add(message);
+        alerts.SetBinding(VisibilityProperty,new Binding(nameof(TextBlock.Text)){Source=message,Converter=new MessageVisibilityConverter()});
         Grid.SetRow(alerts,1);Children.Add(alerts);
 
         var body=new Grid();body.ColumnDefinitions.Add(new(){Width=new(160)});
@@ -88,9 +86,16 @@ public sealed class MainWindowShell : Grid, IDisposable
             System.Windows.Automation.AutomationProperties.SetName(item,label);navigation.Items.Add(item);
         }
         PageHost=new ContentControl{HorizontalContentAlignment=HorizontalAlignment.Stretch,VerticalContentAlignment=VerticalAlignment.Stretch};
-        Grid.SetColumn(PageHost,1);body.Children.Add(navigation);body.Children.Add(PageHost);
+        var navigationColumn=new Grid();
+        navigationColumn.RowDefinitions.Add(new(){Height=GridLength.Auto});
+        navigationColumn.RowDefinitions.Add(new(){Height=new(1,GridUnitType.Star)});
+        navigationColumn.Children.Add(Search);Grid.SetRow(navigation,1);navigationColumn.Children.Add(navigation);
+        Grid.SetColumn(PageHost,1);body.Children.Add(navigationColumn);body.Children.Add(PageHost);
+        Grid.SetColumn(Search.ResultsView,1);body.Children.Add(Search.ResultsView);
+        Search.QueryChanged+=SearchQueryChanged;
         Grid.SetRow(body,2);Children.Add(body);
         navigation.Loaded+=NavigationLoaded;navigation.SelectionChanged+=NavigationChanged;
+        navigation.AddHandler(UIElement.MouseLeftButtonUpEvent,new MouseButtonEventHandler(NavigationClicked),true);
         ThemeManager.Changed+=RefreshNavigationContrast;
         navigation.SelectedIndex=0;
     }
@@ -99,7 +104,18 @@ public sealed class MainWindowShell : Grid, IDisposable
     void NavigationChanged(object sender,SelectionChangedEventArgs e)
     {
         var index=Navigation.SelectedIndex;if(index<0||index>=pages.Count)return;
+        if(Search.IsQueryActive)Search.Clear();
         PageHost.Content=pages[index];pageSelected?.Invoke(index);RefreshNavigationContrast();
+    }
+    void NavigationClicked(object sender,MouseButtonEventArgs args)
+    {
+        if(Search.IsQueryActive&&args.OriginalSource is DependencyObject source
+            &&ItemsControl.ContainerFromElement(Navigation,source) is ListBoxItem)Search.Clear();
+    }
+    void SearchQueryChanged()
+    {
+        PageHost.Visibility=Search.IsQueryActive?Visibility.Hidden:Visibility.Visible;
+        Search.ResultsView.Visibility=Search.IsQueryActive?Visibility.Visible:Visibility.Collapsed;
     }
     void RefreshNavigationContrast()=>ApplyNavigationContrast(Navigation,SystemParameters.HighContrast);
 
@@ -128,6 +144,8 @@ public sealed class MainWindowShell : Grid, IDisposable
     {
         if(disposed)return;disposed=true;
         Navigation.Loaded-=NavigationLoaded;Navigation.SelectionChanged-=NavigationChanged;
+        Search.QueryChanged-=SearchQueryChanged;
+        Navigation.RemoveHandler(UIElement.MouseLeftButtonUpEvent,new MouseButtonEventHandler(NavigationClicked));
         ThemeManager.Changed-=RefreshNavigationContrast;
     }
 
@@ -136,11 +154,5 @@ public sealed class MainWindowShell : Grid, IDisposable
         public object Convert(object value,Type targetType,object parameter,CultureInfo culture)=>
             value is string text&&!string.IsNullOrWhiteSpace(text)?Visibility.Visible:Visibility.Collapsed;
         public object ConvertBack(object value,Type targetType,object parameter,CultureInfo culture)=>throw new NotSupportedException();
-    }
-    sealed class AlertVisibilityConverter : IMultiValueConverter
-    {
-        public object Convert(object[] values,Type targetType,object parameter,CultureInfo culture)=>
-            values[0] is string text&&!string.IsNullOrWhiteSpace(text)||values[1] is Visibility.Visible?Visibility.Visible:Visibility.Collapsed;
-        public object[] ConvertBack(object value,Type[] targetTypes,object parameter,CultureInfo culture)=>throw new NotSupportedException();
     }
 }

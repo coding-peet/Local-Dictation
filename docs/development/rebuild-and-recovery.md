@@ -163,8 +163,33 @@ transcript, audio, clipboard values, UI names or document paths. Leave it unset
 for normal operation. Do not substitute a custom external-window inspection tool
 when application-control permission is missing.
 
-If the previous client reports clipboard recovery pending, open Resolve clipboard
+Current clipboard-return builds restore the user's clipboard after every attempt,
+regardless of insertion confirmation. Unconfirmed text stays in the banner with
+Insert. Actual Windows restoration failures retry automatically, without a
+recovery dialog. Never overwrite loaded assemblies; use normal tray Exit first.
+
+For an older client that still reports clipboard recovery pending, open Resolve clipboard
 recovery from the banner, Settings or tray. Inspect the destination and stop any
 delayed paste, tick the inspection checkbox, then restore before updating or
 stopping that process. Its previous clipboard backup lives only in memory;
 force termination cannot preserve it.
+
+The older DeliveryProbe and CompactFlowProbe recovery assertions describe the
+previous manual-recovery policy. They are historical, not current clipboard-return
+acceptance. Use VerificationBannerRender for quiet controller/lifetime checks;
+native Outlook/Codex insertion and clipboard-format preservation still need a
+separately authorized manual acceptance test. Do not launch the Defender-blocked
+DeliveryProbe executable or work around its block.
+
+The settings/output update adds same-window settings search, contextual help
+and independent After recording and Verify after recording choices. Old settings
+without AfterRecording retain InsertDirectly. PreviewFirst blocks automatic
+delivery and retains the live-insertion preference. Unknown modes fail closed;
+choose a valid output before recording. Pending Preview/further-transcript items
+persist RequiresExplicitInsert, including language replay. These JSON additions
+do not migrate, rewrite or delete protected history/audio as part of deployment.
+
+See settings-search-help-output-20261113.md for candidate, manifests and checks.
+
+See review-before-push-20261114.md for the full pre-push review, corrections,
+Help validation and the distinction between committed source and installed build.

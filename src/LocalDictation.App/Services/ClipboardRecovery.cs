@@ -2,14 +2,14 @@ namespace LocalDictation.App.Services;
 
 public sealed record ClipboardRecoveryResult(bool Succeeded,string Message);
 
-/// <summary>Retains previous clipboard formats when an uncertain paste or failed restoration needs deliberate recovery.</summary>
+/// <summary>Retains formats only when automatic clipboard restoration needs a retry.</summary>
 public static class ClipboardRecovery
 {
     static readonly object gate=new();
     static ClipboardTransaction? active;
     public static event Action? Changed;
-    // A third-party UIA call can outlive its worker deadline. Reservation lifetime
-    // must therefore block Exit even before Apply reaches Dispose/Hold.
+    // Reserve before replacement so another attempt or Exit cannot discard a
+    // backup still being captured, returned, or retried.
     public static bool HasUnsettledTransaction
     {
         get{_=HasPending;lock(gate)return active!=null;}
@@ -21,19 +21,12 @@ public static class ClipboardRecovery
             ClipboardTransaction? release=null;
             lock(gate)
             {
-                if(active is {RecoveryPending:true} lease&&lease.WasReplacedByAnotherOwner){release=lease;active=null;}
+                if(active is {RecoveryPending:true} lease&&lease.WasReplacedByAnotherOwner)release=lease;
             }
-            if(release!=null){release.ReleaseSuperseded();Notify();}
+            // Keep the registry occupied until Complete finishes under the lease
+            // lock. A concurrent deadline must not restore over a newer attempt.
+            if(release!=null)release.ReleaseSuperseded();
             lock(gate)return active?.RecoveryPending==true;
-        }
-    }
-    public static bool HasAcknowledgedBackup
-    {
-        get
-        {
-            ClipboardTransaction? lease;lock(gate)lease=active;
-            // Never acquire a transaction state lock while holding the registry gate.
-            return lease?.HasAcknowledgedBackup==true&&IsCurrentHeldLease(lease);
         }
     }
     public static string Message
@@ -80,12 +73,12 @@ public static class ClipboardRecovery
     {
         lock(gate)return ReferenceEquals(active,lease)&&lease.RecoveryPending;
     }
-    /// <summary>Retries restoration only after the original paste was positively acknowledged.</summary>
-    public static bool TryRestoreAcknowledged()
+    /// <summary>Retries failed restoration independently of insertion acknowledgement.</summary>
+    public static bool TryRestorePending()
     {
         _=HasPending;
         ClipboardTransaction? lease;lock(gate)lease=active;
-        return lease is null||IsCurrentHeldLease(lease)&&lease.TryRestoreAcknowledged();
+        return lease is null||IsCurrentHeldLease(lease)&&lease.TryRestorePending();
     }
     public static ClipboardRecoveryResult RestoreAfterInspection()
     {

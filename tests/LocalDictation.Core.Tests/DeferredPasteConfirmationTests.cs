@@ -54,7 +54,7 @@ public class DeferredPasteConfirmationTests
     {
         DeferredPasteEligibility[] denied=[
             Eligible with {NativeClipboardPaste=false}, Eligible with {Generation=4},
-            Eligible with {InvalidationVersion=8}, Eligible with {HeldLeaseCurrent=false},
+            Eligible with {InvalidationVersion=8}, Eligible with {AttemptCurrent=false},
             Eligible with {TargetCurrent=false}, Eligible with {ProviderCurrent=false},
             Eligible with {Cancelled=true}, Eligible with {Age=TimeSpan.FromSeconds(10)},
             Eligible with {Age=TimeSpan.FromSeconds(11)}, Eligible with {Age=TimeSpan.FromMilliseconds(-1)}

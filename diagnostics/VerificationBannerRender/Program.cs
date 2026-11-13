@@ -77,8 +77,10 @@ static class Program
             Require(rejected&&ReferenceEquals(invalidSettingsController.Settings,savedSettings),"Invalid Auto preferences replaced the last valid settings.");
             Require(!File.Exists(Path.Combine(AppPaths.Data,"settings.json")),"Invalid Auto preferences were written before validation.");
             checks.Add("invalid preferences preserve saved settings");
+            ClipboardLifetimeChecks.Run(checks);
             CheckReplayReceipts(output,checks);
             ReviewWorkflowChecks.Insertion(output,checks);
+            AfterRecordingChecks.Controller(output,checks);
             var cancelledController=(AppController)RuntimeHelpers.GetUninitializedObject(typeof(AppController));
             var cancelledRunType=typeof(AppController).GetNestedType("Run",BindingFlags.NonPublic)!;
             var cancelledRun=RuntimeHelpers.GetUninitializedObject(cancelledRunType);
@@ -100,6 +102,9 @@ static class Program
                 ReviewWorkflowChecks.Render(theme,output,checks);
                 HistoryIntegrationChecks.Run(theme,output,checks);
                 ModelsUsabilityChecks.Run(theme,output,checks);
+                SettingsSearchChecks.Run(theme,output,checks);
+                SettingsHelpChecks.Run(theme,output,checks);
+                AfterRecordingChecks.Render(theme,output,checks);
                 Render(theme,true,false,true,"Toto je prvý prepis. Po kontrole sa vráti na pôvodný kurzor.","verifying-short");
                 Render(theme,true,false,true,string.Join(" ",Enumerable.Repeat("Dlhší prvý prepis zostáva počas overovania iba v náhľade bannera.",12)),"verifying-long");
                 Render(theme,true,false,false,"Prvý model ešte dokončuje poslednú vetu.","finishing");

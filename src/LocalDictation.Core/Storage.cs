@@ -117,7 +117,11 @@ public sealed class Settings
     public string PrimaryModel { get; set; } = "kinit/whisper-large-v3-turbo-sk";
     public string? VerificationModel { get; set; }
     public bool VerifyAfterRecording { get; set; }
+    [System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<AfterRecordingAction>))]
+    public AfterRecordingAction AfterRecording { get; set; } = AfterRecordingAction.InsertDirectly;
     public bool InsertAtCursor { get; set; } = true;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool CanInsertLive => AfterRecording==AfterRecordingAction.InsertDirectly&&Live&&InsertAtCursor;
     public bool Live { get; set; } = true;
     public List<string> FinalOnlyApplications { get; set; } = [];
     public string Language { get; set; } = "sk";
@@ -143,6 +147,7 @@ public sealed class Settings
     public void Save(string? directory = null)
     {
         ServerUri();
+        if(!Enum.IsDefined(AfterRecording))throw new ArgumentException("Choose Insert directly or Preview first.");
         ShortcutSpec.Parse(Shortcut);
         LanguagePolicy.ValidatePreferences(PreferredLanguages);
         if(Theme is not ("System" or "Light" or "Dark"))throw new ArgumentException("Choose System, Light, or Dark.");

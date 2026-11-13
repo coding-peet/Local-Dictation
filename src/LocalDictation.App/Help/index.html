@@ -166,7 +166,7 @@
       <header>
         <p class="eyebrow">Help · works offline</p>
         <h1>Speak. Check. Keep writing.</h1>
-        <p class="lead">Record speech, watch the local transcript, and return reviewed wording to the field where you started.</p>
+        <p class="lead">Record speech locally, choose when to review it, and place the finished text at your cursor.</p>
         <p class="help-keys"><kbd>F1</kbd> opens Help from Settings. <kbd>Ctrl</kbd> + <kbd>F</kbd> searches this guide in your browser.</p>
       </header>
 
@@ -177,7 +177,7 @@
           <div class="card">
             <h3>Write directly at your cursor</h3>
             <ol>
-              <li>Enable <strong>Insert live text at the cursor</strong> on the <strong>Dictation</strong> section. The change is saved automatically.</li>
+              <li>On <strong>Dictation</strong>, choose <strong>After recording → Insert directly</strong>. Enable <strong>Live transcription</strong> and <strong>Insert live text at the cursor</strong>. Valid changes save automatically.</li>
               <li>Click your destination field, with no text selected.</li>
               <li>Press and release your shortcut, <kbd>Ctrl</kbd> + <kbd>Shift</kbd> by default. Speak.</li>
               <li>Press the shortcut again, or select <strong>Finish</strong> in the banner, to stop.</li>
@@ -185,32 +185,45 @@
           </div>
           <div class="card">
             <h3>Insert the result after recording</h3>
-            <p>Turn off <strong>Insert live text at the cursor</strong>, then start with the shortcut from your destination field. The setting saves automatically.</p>
+            <p>Choose <strong>After recording → Insert directly</strong> and turn off <strong>Insert live text at the cursor</strong>, then start with the shortcut from your destination field. The setting saves automatically.</p>
             <p>Recognition continues without live cursor insertion. Finish in the original field to insert automatically; finishing elsewhere keeps the result for the small Insert action.</p>
-            <p><strong>Record in banner</strong> starts from the app window without an external cursor. Use <strong>Choose destination</strong> when the text is ready.</p>
+            <p><strong>Record in banner</strong> starts from the app window without an external cursor. When the text is ready, click the destination field and use <strong>Insert</strong>.</p>
           </div>
+        </div>
+        <h3>Preview before inserting</h3>
+        <p>Choose <strong>After recording → Preview first</strong>. Your destination stays unchanged throughout recording and completion. Live recognition can stay on. The completed result opens Review for editing, <strong>Save text</strong> and explicit <strong>Insert</strong>. Live insertion is paused; its remembered choice returns when you choose Insert directly again.</p>
+        <div class="table-scroll" role="region" aria-label="After recording and verification" tabindex="0">
+          <table>
+            <caption>After recording and Verify after recording are independent choices</caption>
+            <thead><tr><th scope="col">After recording</th><th scope="col">Verification off</th><th scope="col">Verification on</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Insert directly</th><td>Insert the completed text if the original field passes its checks.</td><td>Agreement inserts if the original field passes its checks. Differences open Review.</td></tr>
+              <tr><th scope="row">Preview first</th><td>Open Review and wait for Insert.</td><td>Agreement and differences both open Review and wait for Insert.</td></tr>
+            </tbody>
+          </table>
         </div>
         <div class="callout info">
           <strong>The app inserts text; it does not send it.</strong>
           <p>Sending, submitting, and saving the destination remain your actions.</p>
         </div>
         <p>Recordings last up to <strong>10 minutes</strong>. During a session, <kbd>Esc</kbd> cancels recording or verification. Cancellation or an interrupted recording does not automatically insert received text; it stays available for review.</p>
-        <p>With verification off, normal completion inserts directly into your remembered field. Review appears when words need a choice or insertion needs attention. Agreement between the two models also returns the text automatically.</p>
+        <p>Automatic completion belongs to <strong>Insert directly</strong>. If insertion cannot be confirmed, your text remains available in the banner. <strong>Preview first</strong> always waits for you to choose Insert, including after resolving every phrase.</p>
       </section>
 
       <section id="live-text" aria-labelledby="live-text-title">
         <h2 id="live-text-title">Live text and the minimal banner</h2>
-        <p><strong>Live transcription</strong> recognizes speech while you record. With <strong>Insert live text at the cursor</strong> enabled, the app updates its own draft in your original field, including corrections after a pause. The banner only shows recording state and duration.</p>
-        <p>Press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> again to finish. The selected dictation model completes the original recording; the final wording is inserted automatically and the banner closes. Verification and word choices are optional.</p>
-        <p>In desktop <strong>Outlook</strong>, the complete result is inserted once after recording. If live delivery fails in another app, Local Dictation remembers that app and uses final-only insertion from the next recording. Live recognition remains enabled. Use <strong>Reset remembered apps</strong> in Dictation settings to try live delivery again; Outlook stays final-only.</p>
+        <p><strong>Live transcription</strong> recognizes speech while you record. In <strong>Insert directly</strong> with <strong>Insert live text at the cursor</strong> enabled, the app updates its own draft in your original field, including corrections after a pause. The small banner shows the recording state, model, language and elapsed time. Preview first keeps the destination unchanged.</p>
+        <p>Press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> again to finish. The selected dictation model completes the original recording. <strong>Insert directly</strong> attempts final insertion after any required verification; confirmed insertion closes the banner. <strong>Preview first</strong> opens Review. Verification and word choices are optional.</p>
+        <p>In desktop <strong>Outlook</strong>, Insert directly inserts the complete result once after recording. If live delivery fails in another app, Local Dictation remembers that app and uses final-only insertion from the next recording. Live recognition remains available. Use <strong>Settings → Application compatibility → Re-enable live insertion for remembered apps</strong> to try live delivery again; Outlook stays final-only. Preview first opens Review in Outlook too.</p>
         <h3>Move the banner</h3>
         <p>Drag its waveform or status area. It remains small and does not take keyboard focus. The soft edge fades to a transparent window boundary; text and controls stay sharp. Placement is retained during the current app run.</p>
         <h3>Switching fields or apps</h3>
         <p>Recording continues and insertion pauses. Return to the <strong>same unchanged field during recording</strong> to resume. If you finish elsewhere, the text is saved and waits for the small <strong>Insert</strong> action. Returning after Finish never triggers delayed automatic insertion.</p>
         <p>Keep the original field unchanged until insertion completes. Manual edits, a closed target or unsupported accessibility may require an explicit destination in Review. The app never submits or sends the text.</p>
         <h3>Clipboard</h3>
-        <p>The app preserves the previous clipboard and restores it automatically after acknowledged insertion. If you copy something new, that newer clipboard is kept. No clipboard action is needed in the normal dictation flow.</p>
-        <p>If insertion cannot be confirmed immediately, the app briefly checks the unchanged original field without pasting again. Confirmed insertion closes the banner and restores the clipboard automatically. Otherwise the transcript and backup remain protected. The small <strong>Resolve</strong> action opens exceptional recovery; the same window is available in Settings and the tray.</p>
+        <p>Every insertion attempt temporarily backs up your current clipboard and returns it automatically, whether insertion succeeds or not. A newer copy you make takes priority. You do not need to manage clipboard recovery.</p>
+        <p>If Windows temporarily refuses clipboard access, the app keeps the backup and retries its return automatically. Insert becomes available when that return finishes. The explicit <strong>Copy text</strong> and <strong>Copy this original</strong> actions put your chosen text on the clipboard for you to use.</p>
+        <p>Confirmed insertion closes the banner. Otherwise your transcript stays in the banner with <strong>Insert</strong>. Select the destination cursor and click Insert to make a new attempt with a fresh backup of your current clipboard. The banner stays open until insertion is confirmed or you close it with <strong>X</strong>; closing keeps your text in History.</p>
       </section>
 
       <section id="review" aria-labelledby="review-title">
@@ -218,11 +231,11 @@
         <p>Enable <strong>Verify after recording</strong> on the <strong>Dictation</strong> section to reveal the <strong>Verification model</strong> selector. Choose a different eligible model for a second pass over the audio. Verification takes extra time, and either model can be wrong. Turning verification off hides these details and retains an eligible selected model for next time.</p>
         <ol>
           <li>Dictate and stop recording.</li>
-          <li>The transcript is saved before its live draft is removed from a validated destination. Surrounding text stays.</li>
-          <li>The first transcript stays visible in a read-only banner preview while verification runs. Scroll longer text without opening an editor. Agreement inserts the final result and closes the banner; differences open compact Review.</li>
+          <li>If live text was inserted, the transcript is saved before its owned draft is removed from a validated destination. Surrounding text stays. Preview first has no destination draft to remove.</li>
+          <li>The first transcript stays visible in a read-only banner preview while verification runs. Scroll longer text without opening an editor. With <strong>Insert directly</strong>, agreement inserts the final result and closes the banner; differences open compact Review. With <strong>Preview first</strong>, agreement and differences both open Review without inserting.</li>
           <li>Click an underlined phrase and choose its correct wording from the two alternatives. The live wording is first; the alternative is second. There are no model labels in the choices.</li>
           <li>After each choice, the next unresolved phrase opens automatically.</li>
-          <li>The final choice returns the finished text to the remembered cursor. If no differences need a choice, normal completion returns the text automatically.</li>
+          <li>In an ordinary <strong>Insert directly</strong> Review, the final choice returns the finished text to the remembered cursor. <strong>Preview first</strong> and further transcripts keep Review open after resolving choices; use <strong>Insert</strong> when ready. Saving edited text always keeps insertion separate.</li>
         </ol>
         <p>The destination is checked again before insertion. If it changed or cannot be validated, the draft may remain in place and Review keeps your text with an explanation. Use <strong>Choose destination</strong> when needed. Cancelled or failed sessions do not automatically insert on completion.</p>
 
@@ -235,9 +248,11 @@
               <tr><td>First / second wording</td><td>Choose the correct text. The first comes from live dictation; the second is its alternative. The next unresolved phrase opens automatically. With keyboard focus on a wording, press and release <kbd>Enter</kbd> to choose it once.</td></tr>
               <tr><td>Remove this text</td><td>An empty alternative deliberately removes the phrase. <strong>∅</strong> marks an empty phrase in the transcript.</td></tr>
               <tr><td>Edit wording → Use this wording</td><td>Type your correction, then select <strong>Use this wording</strong> or press and release <kbd>Enter</kbd> to apply it and advance. <strong>Cancel</strong> or <kbd>Esc</kbd> leaves it unapplied.</td></tr>
-              <tr><td>Keep the remaining wording</td><td>Keeps the displayed wording for remaining phrases without changing existing choices, then inserts when possible.</td></tr>
+              <tr><td>Keep the remaining wording</td><td>Keeps the displayed wording for remaining phrases without changing existing choices. An ordinary Insert directly Review then attempts insertion. Preview first and further transcripts wait for explicit Insert.</td></tr>
               <tr><td>Insert</td><td>Places ready text at the external cursor you selected. Click in the destination first, then click Insert in the floating Review. The Insert click keeps focus in your destination.</td></tr>
-              <tr><td>Second transcript…</td><td>Choose a different eligible model to transcribe the original recording and open a new comparison. The complete second transcript is also shown read-only.</td></tr>
+              <tr><td>Transcribe again</td><td>Choose Model and confirm Transcribe directly in Review. Your original recording is reused; no separate model-picker window opens.</td></tr>
+              <tr><td>Use this transcript</td><td>Select and save the complete alternative as your working text. Previous manual edits are archived; original model outputs stay unchanged. Nothing is inserted.</td></tr>
+              <tr><td>Save text</td><td>Save the complete edited result without inserting or closing Review. Insert remains a separate action.</td></tr>
               <tr><td>Details</td><td>Opens the optional full editor with original model outputs, revision information, undo, and whole-text editing.</td></tr>
             </tbody>
           </table>
@@ -245,22 +260,22 @@
         <p>A phrase correction is saved as you type, but changes the transcript only after <strong>Use this wording</strong>. Cancelling the editor, choosing another phrase, or reopening Review keeps that draft for the next time you select <strong>Edit wording</strong> on the same phrase. Holding <kbd>Enter</kbd> does not accept following phrases.</p>
         <p>In <strong>Details</strong>, <strong>Dictation original</strong> and <strong>Verification original</strong> keep model outputs unchanged. An edited final draft takes precedence over phrase choices; <strong>Rebuild from choices</strong> preserves a previous draft for restoration.</p>
         <h3>Try a second model on the same recording</h3>
-        <p>Select <strong>Second transcript…</strong> in Review or Details and choose an eligible installed model. This uses the protected original recording without opening the microphone or changing your source transcript. A separate comparison preserves your edits and original model information. Even if the models agree, this action waits for explicit placement. An already inserted History item can also be compared this way.</p>
+        <p>Select <strong>Transcribe again</strong> in Review or Details, choose <strong>Model</strong> and confirm <strong>Transcribe</strong> in that same window. This uses the protected original recording without opening the microphone or changing your source transcript. The compact Review stays open while the new comparison runs. Even if the models agree, this action waits for explicit placement. An already inserted History item can also be compared this way.</p>
+        <p>The complete result appears under <strong>Alternative transcript</strong>. Select <strong>Use this transcript</strong> to make the entire alternative your saved working text. You can edit it further. The original outputs remain unchanged, and a manual draft replaced by this action remains available in the draft archive in Details. This action does not insert text into another app.</p>
         <h3>Type directly into the transcript</h3>
         <p>Click ordinary transcript text, press <kbd>F2</kbd>, or select <strong>Edit text</strong> to edit the whole draft in the compact Review window. Delete an extra word, add punctuation, or rewrite a sentence. Actual edits are saved automatically, including when Review closes.</p>
-        <p>While editing the whole draft, phrase alternatives pause so they cannot overwrite your corrections. Select <strong>Use edited text</strong> when ready to return it to the validated destination. Typing or pressing <kbd>Enter</kbd> never approves it. Originals and comparison choices remain in <strong>Details</strong>.</p>
-        <p>Automatic delivery currently accepts a single paragraph. Pasted line breaks or control characters stay preserved for correction; remove them before approval. Already inserted transcripts remain read-only.</p>
+        <p>While editing the whole draft, phrase alternatives pause so they cannot overwrite your corrections. Select <strong>Save text</strong> to keep the complete result here. A <strong>Saved</strong> status confirms protected saving; a failure keeps the editable text available for retry. Select the destination cursor and use <strong>Insert</strong> separately when ready. Typing, saving or pressing <kbd>Enter</kbd> never inserts it. Originals and comparison choices remain in <strong>Details</strong>.</p>
+        <p>Insertion currently accepts a single paragraph. Pasted line breaks or control characters stay preserved for correction; remove them before inserting. Already inserted transcripts remain read-only.</p>
         <div class="callout info">
           <strong>Review has its own compact window.</strong>
           <p>No large editor opens automatically. Pending items remain available for later. In the optional Details editor, <strong>Close</strong> and <strong>Copy reviewed text</strong> keep the item; <strong>Dismiss</strong> removes the saved unfinished Review; a retained recording remains in History.</p>
         </div>
-        <p>Automatic insertion accepts <strong>single-paragraph text</strong>. Remove added line breaks/control characters before insertion. Rejection leaves the field unchanged and keeps the text available.</p>
       </section>
 
       <section id="destination" aria-labelledby="destination-title">
         <h2 id="destination-title">Choose a destination</h2>
         <p>To place ready text, click in the desired external editable field so its cursor is visible, then click <strong>Insert</strong> in the floating Review. This captures the cursor you just chose, including after an earlier attempt failed. An exact original live draft at that cursor is replaced; text left at another position is preserved, so check for earlier drafts before choosing a different position.</p>
-        <p>Automatic Finish still uses the original validated field. If you finish while reviewing another window, the result stays pending. It will not appear later just because focus returns. For an alternative using the shortcut:</p>
+        <p>In Insert directly, automatic Finish uses the original validated field. If you finish while another window is active, the result stays pending. It will not appear later just because focus returns. Preview first always waits for explicit Insert. For an alternative using the shortcut from Details:</p>
         <ol>
           <li>Resolve all differences in Review.</li>
           <li>Select <strong>Choose destination</strong>. The banner shows placement instructions.</li>
@@ -328,9 +343,9 @@
           <li>Resolve the remaining wording choices, or edit and approve the final draft.</li>
           <li>Click the destination field so its text cursor is visible, then click <strong>Insert</strong> in the floating Review. The Insert click keeps that destination focused.</li>
         </ol>
-        <p>If an earlier attempt left some live text elsewhere, inspect it before choosing a new position. Explicit Insert replaces a live draft only when its exact ownership at the selected cursor can be proven; otherwise earlier text is preserved. An unsettled paste must finish or be resolved before another insertion.</p>
+        <p>If an earlier attempt left some live text elsewhere, inspect it before choosing a new position. Explicit Insert replaces a live draft only when its exact ownership at the selected cursor can be proven; otherwise earlier text is preserved. An unconfirmed result can be retried using explicit Insert once automatic clipboard return has finished.</p>
         <h3>Try another model or correct the language</h3>
-        <p>Choose <strong>Open Review → Second transcript…</strong> and select an eligible different model to compare the original recording. It creates a separate comparison, keeps the source and your edits, and shows the full second transcript. This action waits for explicit Insert even when both models agree. A saved original recording and an eligible installed, runtime-tested verifier are required; see <a href="#review">Review</a>.</p>
+        <p>Choose <strong>Open Review → Transcribe again</strong>, select an eligible different model in the inline selector and confirm Transcribe. It creates a separate comparison, keeps the source and your edits, and shows the full alternative with <strong>Use this transcript</strong>. Save text and Insert are separate actions. A saved original recording and an eligible installed, runtime-tested verifier are required; see <a href="#review">Review</a>.</p>
         <p>Use <strong>More actions (⋯) → Change language…</strong> in History to transcribe the same audio in another supported language. It creates a new Review without starting the microphone or changing text previously inserted elsewhere.</p>
         <p>An item marked <strong>Already inserted</strong> shows the saved text with insertion and phrase editing disabled. Its original choices and recording information remain available through <strong>Details</strong>. Use <strong>Copy text</strong> if you want to reuse that text manually.</p>
         <p>Open Review, Copy text and More actions sit beneath the selected text. The player stays below both columns. History list entries show short previews, while the detail uses the available height. At narrower sizes, the list moves above the selected transcript; scroll the page to reach the actions and player. Leaving History or closing the main window stops playback. Returning keeps the selected dictation and does not play it automatically.</p>
@@ -339,7 +354,8 @@
 
       <section id="settings" aria-labelledby="settings-title">
         <h2 id="settings-title">Settings and shortcuts</h2>
-        <p>The <strong>Dictation</strong> section groups the microphone, model, language, and both live options. <strong>Insert live text at the cursor</strong> sits directly below <strong>Live transcription</strong>. Enable <strong>Verify after recording</strong> to show its additional settings.</p>
+        <p>The <strong>Dictation</strong> section groups the microphone, model, language, <strong>After recording</strong> and both live options. <strong>Insert live text at the cursor</strong> sits directly below <strong>Live transcription</strong>. Enable <strong>Verify after recording</strong> to show its additional settings. Verification works with either output choice; it takes extra time and does not guarantee correctness.</p>
+        <p><strong>Search settings</strong> above the named menu finds settings by name, category, description or keyword. Press <kbd>Ctrl</kbd> + <kbd>F</kbd> to focus it, then select a result or press Enter. The app opens and scrolls to that setting. Hidden dependent options lead to their prerequisite without changing it. Press <kbd>Esc</kbd> to clear search. Small information icons beside settings explain them on hover, click or keyboard activation; the same text is available to screen readers.</p>
         <p>Open the <strong>Settings</strong> section for appearance, shortcut, and local service preferences. Connection and automatic saving status share one row at the top of the window.</p>
         <dl>
           <dt>Appearance</dt>
@@ -393,29 +409,30 @@
         <details>
           <summary>The app switched to Review or will not resume at the cursor</summary>
           <p>If only the beginning of a dictation appeared, the full transcript remains in History with its review status. A live correction must validate the text already inserted before replacing it. A range warning means delivery stopped; inspect the partial text before choosing another destination so it is not inserted twice.</p>
-          <p>A slow accessibility check can temporarily pause delivery. Once that check has ended, fresh live updates can resume in the same unchanged field. An uncertain paste still waits for confirmation or clipboard recovery; it is never repeated automatically.</p>
+          <p>A slow accessibility check can temporarily pause delivery. Once that check has ended, fresh live updates can resume in the same unchanged field. An uncertain insertion is never repeated automatically. The clipboard returns independently; your transcript remains available through Insert.</p>
           <p>Return to the original field and leave its text unchanged. The destination must expose reliable editable text and selection access. A protected, elevated, unsupported, closed, or manually edited field cannot be used automatically. Continue through Review and <strong>Choose destination</strong>.</p>
-          <p><strong>Record in banner</strong> starts from the app window and needs a destination selection. For preview-only dictation with an automatic final return, turn off <strong>Insert live text at the cursor</strong> and start with the shortcut from the destination field.</p>
+          <p><strong>Record in banner</strong> starts from the app window and needs a destination selection. For an automatic final return without live insertion, choose <strong>Insert directly</strong>, turn off <strong>Insert live text at the cursor</strong> and start with the shortcut from the destination field. <strong>Preview first</strong> always waits for explicit Insert.</p>
         </details>
         <details>
           <summary>A wording choice or final insertion could not finish</summary>
-          <p>Resolve every underlined phrase, or select <strong>Keep the remaining wording</strong>. The last choice inserts automatically when the original field is valid. If that destination is gone, use <strong>Choose destination</strong>. Reviews reopened after restarting the app need a new destination selection.</p>
+          <p>Resolve every underlined phrase, or select <strong>Keep the remaining wording</strong>. In an ordinary <strong>Insert directly</strong> Review, the last choice inserts automatically when the original field is valid. <strong>Preview first</strong> and further transcripts wait for explicit Insert. If the destination is gone, select a new cursor and use <strong>Insert</strong>. Reviews reopened after restarting the app need a new destination selection.</p>
           <p>Remove line breaks/control characters from a manual final draft. If protected saving fails, keep Review open and correct the storage problem before retrying.</p>
           <p>If the app says text was inserted but its saved insertion status could not be updated, check the destination and preserve a copy. Do not insert the same pending item again after restarting. Items marked <strong>Already inserted</strong> have insertion disabled.</p>
-          <p>Automatic completion and the final wording choice use the validated original destination. Explicit <strong>Insert</strong> uses a fresh capture of the external cursor you selected. A click in Review's editor activates Review; click back into the destination before Insert. Unsupported, protected or elevated fields may still refuse placement. Your text stays protected if validation fails.</p>
+          <p>In an ordinary Insert directly Review, automatic completion and the final wording choice use the validated original destination. Preview first and further transcripts wait for explicit <strong>Insert</strong>, which uses a fresh capture of the external cursor you selected. A click in Review's editor activates Review; click back into the destination before Insert. Unsupported, protected or elevated fields may still refuse placement. Your text stays protected if validation fails.</p>
           <p>Some editors temporarily leave pasted text selected. The app waits briefly for the original field's text and cursor to settle; it does not send a second paste while checking. Both must match exactly, apart from the specific Outlook line-break case below. If the field cannot confirm insertion, inspect it before retrying. Compatibility still depends on the destination application's accessibility support.</p>
         </details>
         <details>
           <summary>Dictating into Outlook or another Office editor</summary>
-          <p>Click in the message body so the text cursor is visible, then start with your dictation shortcut. In desktop Outlook, the live draft stays in the recognition pipeline; <strong>Finish</strong> returns the complete text to that original cursor after processing and any required word choices. Your signature and surrounding text stay in place. Paste Special is not part of the dictation workflow.</p>
+          <p>Click in the message body so the text cursor is visible, then start with your dictation shortcut. In desktop Outlook with Insert directly, the live draft stays in the recognition pipeline; <strong>Finish</strong> returns the complete text to that original cursor after processing and any required word choices. Preview first opens Review and waits for Insert. Your signature and surrounding text stay in place. Paste Special is not part of the dictation workflow.</p>
           <p>When you start at the beginning of a message above a signature, Outlook may report two leading line breaks as one after the paste. The app can confirm this specific first insertion only when the complete dictated text, the rest of the message, and the final cursor position match. It does not paste the result again.</p>
-          <p>If an Office paste menu or another small editing popup is open, close it and return the cursor to the message body before starting. A Paste Options button belongs to Office; it is separate from the dictation banner. If insertion is unconfirmed, inspect the message and follow clipboard recovery below before retrying.</p>
+          <p>If an Office paste menu or another small editing popup is open, close it and return the cursor to the message body before starting. A Paste Options button belongs to Office; it is separate from the dictation banner. If insertion is unconfirmed, the clipboard returns automatically and the transcript stays in the banner.</p>
         </details>
         <details>
-          <summary>Paste is unconfirmed, or the previous clipboard needs recovery</summary>
-          <p>Open the destination and inspect whether text arrived. Do not retry blindly: a slow editor may still consume a queued paste. The app keeps the dictation paste available and retains your previous clipboard in memory.</p>
-          <p>Open <strong>Resolve</strong> in the idle banner, <strong>Resolve clipboard recovery</strong> in Settings, or <strong>Resolve clipboard recovery…</strong> from the notification-area menu. After inspecting the destination and stopping any delayed paste, tick the inspection checkbox and select <strong>Restore previous clipboard</strong>. A delayed paste could otherwise insert your previous clipboard contents. Finish recording before restoring. If insertion was already confirmed, <strong>Retry clipboard restoration</strong> retries restoration without sending text.</p>
-          <p>The banner's <strong>X</strong> hides the idle recovery message and keeps your saved text and clipboard backup. A new recovery event or an explicit Start/Exit attempt can show it again. New delivery and normal Exit still wait for recovery. A newer copy made in another app is preserved. Avoid force-closing the app while it holds the backup; a crash or forced termination loses that in-memory state.</p>
+          <summary>Insertion is unconfirmed, or Windows is busy with the clipboard</summary>
+          <p>The transcript stays in the banner with <strong>Insert</strong>. Your clipboard returns after every attempt; it does not wait for the destination to confirm. Check whether text already arrived before retrying so that you do not insert it twice. Insert uses your newly selected external cursor and a fresh clipboard backup.</p>
+          <p>The app briefly checks an unchanged original field without sending text again. If it can confirm the existing insertion, the banner closes. Otherwise it stays until you retry successfully or use <strong>X</strong>. X hides the banner and keeps your protected text in History.</p>
+          <p>If another application locks the clipboard, Local Dictation retains the complete backup and retries restoration automatically. A newer copy takes priority. Settings shows the temporary error without opening another window. A genuine restoration failure can briefly prevent another insertion or normal Exit; an unconfirmed insertion alone does not.</p>
+          <p>A very slow destination can process its queued paste after the clipboard has returned and read the restored contents. Automatic return cannot completely prevent that case. The temporary dictation payload has a one-second deadline even if the destination's accessibility check stalls.</p>
         </details>
         <details>
           <summary>A model repeats the same word many times</summary>
@@ -458,7 +475,7 @@
       </section>
 
       <footer>
-        <p>Local Dictation · Windows client · Guide updated 13 November 2026</p>
+        <p>Local Dictation · Windows client · Guide updated 14 November 2026</p>
         <p>Labels in this guide match the current English interface. Model quality and cursor compatibility should be checked with your own recordings and destination apps.</p>
       </footer>
     </main>

@@ -16,7 +16,7 @@ public sealed class CompactReviewPanel : Border
     readonly StackPanel alternatives=new(),editing=new();
     readonly Button first,second,edit,keep,destination,details;
     readonly TextBox custom=new();
-    readonly Button saveCustom,cancelCustom,editText,useEdited,exitText;
+    readonly Button saveCustom,cancelCustom,editText,useEdited,exitText,useAlternative;
     readonly TextBox directEditor=new();
     readonly TextBox secondTranscript=new(){IsReadOnly=true,VerticalContentAlignment=VerticalAlignment.Top,TextWrapping=TextWrapping.Wrap,AcceptsReturn=true,
         VerticalScrollBarVisibility=ScrollBarVisibility.Auto,Height=140};
@@ -113,7 +113,7 @@ public sealed class CompactReviewPanel : Border
             else if(e.Key==Key.Escape)
             {
                 e.Handled=true;
-                if(controller.BannerReview?.ManualFinalDraft==null)ExitTextEdit();
+                ExitTextEdit();
             }
         };
         transcriptScroll=new ScrollViewer{Content=transcript,MinHeight=40,MaxHeight=100,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,Margin=new(0,9,0,8)};
@@ -126,7 +126,7 @@ public sealed class CompactReviewPanel : Border
         directEditor.SelectionBrush=SystemColors.HighlightBrush;directEditor.SelectionTextBrush=SystemColors.HighlightTextBrush;
         directEditor.Visibility=Visibility.Collapsed;
         System.Windows.Automation.AutomationProperties.SetName(directEditor,"Edit final transcript");
-        System.Windows.Automation.AutomationProperties.SetHelpText(directEditor,"Edits are saved. Use edited text approves the complete draft. Enter never inserts it.");
+        System.Windows.Automation.AutomationProperties.SetHelpText(directEditor,"Edits are saved as a draft. Save text keeps the complete result without inserting. Enter never inserts it.");
         directEditor.TextChanged+=(_,_)=>SaveDirectDraft();
         DataObject.AddPastingHandler(directEditor,(_,e)=>
         {
@@ -141,12 +141,12 @@ public sealed class CompactReviewPanel : Border
             e.CancelCommand();
         });
         textSurface.Children.Add(directEditor);column.Children.Add(textSurface);
-        useEdited=Ui.Button("Use edited text",()=>_ = controller.ApproveBannerEditedText(),true);
+        useEdited=Ui.Button("Save text",()=>{if(controller.SaveBannerEditedText())ExitTextEdit();},true);
         useEdited.MinHeight=48;useEdited.Padding=new(16,8,16,8);useEdited.Margin=new(0,0,8,8);
         useEdited.SetResourceReference(Control.BackgroundProperty,"Accent");
         useEdited.SetResourceReference(Control.ForegroundProperty,"OnAccent");
         useEdited.BorderThickness=new(0);useEdited.FontSize=12;useEdited.FontWeight=FontWeights.SemiBold;
-        exitText=SmallButton("Back to choices",ExitTextEdit);
+        exitText=SmallButton("Done editing",ExitTextEdit);
         directActions.Children.Add(useEdited);directActions.Children.Add(exitText);column.Children.Add(directActions);
 
         first=WordingButton("First wording","primary");second=WordingButton("Second wording","verification");
@@ -187,10 +187,13 @@ public sealed class CompactReviewPanel : Border
         var actions=new WrapPanel{Margin=new(0,2,0,0)};
         foreach(var button in new[]{editText,edit,keep,destination,details})actions.Children.Add(button);
         column.Children.Add(actions);
-        var secondLabel=Ui.Text("Second transcript",12,true);secondLabel.Margin=new(0,0,0,8);
+        var secondLabel=Ui.Text("Alternative transcript",12,true);secondLabel.Margin=new(0,0,0,8);
         secondTranscript.SetResourceReference(TextBox.ForegroundProperty,"Ink");secondTranscript.SetResourceReference(TextBox.BackgroundProperty,"Surface");
         secondTranscript.SetResourceReference(TextBox.BorderBrushProperty,"InputBorder");
-        secondTranscriptPanel.Children.Add(secondLabel);secondTranscriptPanel.Children.Add(secondTranscript);column.Children.Add(secondTranscriptPanel);
+        secondTranscriptPanel.Children.Add(secondLabel);secondTranscriptPanel.Children.Add(secondTranscript);
+        useAlternative=SmallButton("Use this transcript",()=>controller.UseWholeBannerTranscript(ReviewCopySource.Verification));
+        secondTranscriptPanel.Children.Add(useAlternative);
+        column.Children.Add(secondTranscriptPanel);
         System.Windows.Automation.AutomationProperties.SetName(secondTranscript,"Complete second-model transcript");
         status.FontSize=11.5;status.LineHeight=17;status.Foreground=Muted;status.TextWrapping=TextWrapping.Wrap;status.Margin=new(0,7,0,0);
         column.Children.Add(status);
@@ -256,9 +259,7 @@ public sealed class CompactReviewPanel : Border
 
     void ExitTextEdit()
     {
-        // Once changed, the complete draft is authoritative. Details retains
-        // original comparisons and the explicit rebuild/restore workflow.
-        if(controller.BannerReview?.ManualFinalDraft!=null)return;
+        // Leaving the editor never discards its saved draft or inserts it.
         editingText=false;Refresh();transcript.Focus();
     }
 
@@ -306,6 +307,12 @@ public sealed class CompactReviewPanel : Border
             finally{updatingDirectText=false;}
         }
         if(inserted)editingText=false;
+        if(editingText&&directEditor.Text!=document.OutputText)
+        {
+            updatingDirectText=true;
+            try{directEditor.Text=document.OutputText;directEditor.CaretIndex=directEditor.Text.Length;}
+            finally{updatingDirectText=false;}
+        }
         var changed=shownDocument!=document||shownPieces!=document.Pieces||shownChoices!=document.Choices||shownSelected!=selected||
             shownManual!=manual||shownHistory!=document.History.Count||shownChoiceCount!=document.Choices.Count||shownInserted!=inserted;
         if(changed)
@@ -336,10 +343,11 @@ public sealed class CompactReviewPanel : Border
             shownInserted=inserted;
             if(selectedPiece!=null){SetWording(first,selectedPiece.Primary);SetWording(second,selectedPiece.Verification);}
         }
-        var applying=controller.IsApplyingReview;
+        var applying=controller.IsApplyingReview||controller.IsBusy;
         var unsaved=controller.IsReviewUnsaved(document.Id);
         heading.Text=inserted?"INSERTED TEXT":editingText?"EDIT YOUR TEXT":manual!=null?"EDITED FINAL TEXT":selectedPiece!=null?"CHOOSE THE CORRECT WORDING":"YOUR TEXT";
-        progress.Text=inserted?"Already inserted":applying?"Inserting…":unsaved?"Not saved":editingText&&manual!=null?"Draft saved":document.UnresolvedCount==0?"Ready":$"{document.UnresolvedCount} left";
+        progress.Text=inserted?"Already inserted":controller.IsBusy?"Transcribing…":applying?"Inserting…":unsaved?"Not saved":
+            manual!=null&&document.UnresolvedCount==0?"Saved":editingText&&manual!=null?"Draft saved":document.UnresolvedCount==0?"Ready":$"{document.UnresolvedCount} left";
         alternatives.Visibility=selectedPiece!=null&&manual==null&&!editingPhrase&&!editingText&&!inserted?Visibility.Visible:Visibility.Collapsed;
         editing.Visibility=editingPhrase&&manual==null&&!editingText?Visibility.Visible:Visibility.Collapsed;
         edit.Visibility=selectedPiece!=null&&manual==null&&!editingPhrase&&!editingText&&!inserted?Visibility.Visible:Visibility.Collapsed;
@@ -349,21 +357,21 @@ public sealed class CompactReviewPanel : Border
         directEditor.Visibility=editingText?Visibility.Visible:Visibility.Collapsed;
         directActions.Visibility=editingText?Visibility.Visible:Visibility.Collapsed;
         editText.Visibility=!editingText&&!inserted?Visibility.Visible:Visibility.Collapsed;
-        exitText.Visibility=manual==null?Visibility.Visible:Visibility.Collapsed;
+        exitText.Visibility=Visibility.Visible;
         foreach(var button in new[]{first,second,editText,edit,keep,destination,saveCustom,cancelCustom,exitText})button.IsEnabled=!applying&&!inserted;
         details.IsEnabled=!applying;
         custom.IsEnabled=!applying&&!inserted;
         directEditor.IsReadOnly=applying||inserted;
-        useEdited.IsEnabled=!applying&&!inserted&&manual!=null&&!manual.Any(char.IsControl);
+        useEdited.IsEnabled=!applying&&!inserted&&manual!=null;
+        useAlternative.IsEnabled=!applying&&!inserted&&document.HasCompletedVerification;
         // Updating only enabled state must not rebuild the inline transcript or steal keyboard focus.
         foreach(var link in transcript.Inlines.OfType<Hyperlink>())link.IsEnabled=!applying&&!inserted;
         status.Text=inserted?unsaved?"This text was inserted, but its receipt could not be saved. Keep Review open and do not insert it again.":"This text was already inserted. Details keeps its recording information and original choices available.":
             unsaved?"Protected saving failed. Your edits are in memory only. Keep Review open and retry saving before inserting.":
             editingText&&manual?.Any(char.IsControl)==true?"Remove line breaks or control characters before inserting. Your exact edited text is saved here.":
-            editingText&&manual!=null&&document.CanInsert?document.Reason+" Your edited text is kept. Use edited text to retry, or choose a destination.":
-            editingText&&manual!=null?"Your edits are saved. Use edited text approves the whole draft. Original wording and choices remain in Details.":
+            editingText&&manual!=null?"Your draft is saved. Save text keeps the complete result here. Insert is a separate action.":
             editingText?"Edit anywhere in your text. Enter never inserts it. Back to choices keeps the comparison unchanged.":
-            manual!=null?"Your edited final draft is kept. Click the text or press F2 to edit it.":document.Reason;
-        status.Foreground=unsaved?Amber:applying?Muted:document.UnresolvedCount>0?Muted:Amber;
+            manual!=null?"Saved. Click the text or press F2 to edit it. Insert when ready.":document.Reason;
+        status.Foreground=unsaved||editingText&&manual?.Any(char.IsControl)==true?Amber:Muted;
     }
 }

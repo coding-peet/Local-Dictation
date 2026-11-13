@@ -104,7 +104,7 @@ public sealed class WindowsTextDelivery : ITextDelivery
         get
         {
             var pending=CurrentPending(CancellationToken.None);
-            return pending is not null&&ClipboardRecovery.IsCurrentHeldLease(pending.Lease);
+            return pending is not null;
         }
     }
     PendingNativePaste? CurrentPending(CancellationToken token)
@@ -124,7 +124,6 @@ public sealed class WindowsTextDelivery : ITextDelivery
         token.ThrowIfCancellationRequested();
         lock(lifecycleGate)
             if(!ReferenceEquals(pendingPaste,pending)||!PendingEligible(pending,token))throw new Interrupted(InterruptionStage.Invalidated);
-        if(!ClipboardRecovery.IsCurrentHeldLease(pending.Lease))throw new Interrupted(InterruptionStage.Invalidated);
     }
     void DropPending(PendingNativePaste pending)
     {
@@ -151,10 +150,8 @@ public sealed class WindowsTextDelivery : ITextDelivery
         PendingPasteConfirmation? receipt=null;
         try
         {
-            // Before querying UIA, the original held transaction must still own its
-            // exact marker/payload. A newer clipboard owner is never overwritten.
-            EnsurePending(pending,token);
-            if(!pending.Lease.IsCurrentHeldPayload()){DropPending(pending);return null;}
+            // Readback proves the exact dispatched attempt, independently of the
+            // clipboard which has already been returned to its previous contents.
             EnsurePending(pending,token);
             if(!IsWindow(window)||GetForegroundWindow()!=window||!AutomationWindowScope.IsCurrent(pending.NativeHost,window))
                 throw new Interrupted(InterruptionStage.ForegroundWindow);
@@ -174,27 +171,19 @@ public sealed class WindowsTextDelivery : ITextDelivery
                 PendingProvider(pending,token,finalFocused)!=pending.Provider)throw new Interrupted(InterruptionStage.FocusedField);
             EnsurePending(pending,token);
             var kind=PasteAcknowledgementKind.None;
-            var acknowledged=pending.Lease.TryAcknowledgeHeldPaste(()=>
+            lock(lifecycleGate)
             {
-                // Clipboard ownership is locked by the lease. Only pure comparison
-                // and local state publication occur under this short lifecycle lock.
-                lock(lifecycleGate)
-                {
-                    if(!ReferenceEquals(pendingPaste,pending)||!PendingEligible(pending,token))return false;
-                    kind=DeferredPasteConfirmation.TryAcknowledge(guard,pending.Paste,pending.Paste.Identity,after.Text,after.Caret);
-                    if(kind==PasteAcknowledgementKind.None)return false;
-                    receipt=new(pending.Paste.NextText,pending.Paste.IsFinal);
-                    // Publish before pending is cleared and before the transaction
-                    // exposes acknowledged=true. A lost worker return cannot lose it.
-                    confirmedReceipts.Publish(receipt);
-                    pendingPaste=null;Interlocked.Exchange(ref invalid,0);Interlocked.Exchange(ref transportFailure,0);
-                    return true;
-                }
-            });
-            if(!acknowledged)return null;
-            // Restoration belongs to the controller after it drains the retained
-            // fact. Do not spend the accessibility worker deadline restoring formats.
-            Reason=pending.Lease.RecoveryPending?"The inserted text was confirmed. Previous clipboard restoration is pending.":"";
+                if(!ReferenceEquals(pendingPaste,pending)||!PendingEligible(pending,token))return null;
+                kind=DeferredPasteConfirmation.TryAcknowledge(guard,pending.Paste,pending.Paste.Identity,after.Text,after.Caret);
+                if(kind==PasteAcknowledgementKind.None)return null;
+                receipt=new(pending.Paste.NextText,pending.Paste.IsFinal);
+                // Publish before clearing the pending attempt. Caller timeouts or
+                // a fresh explicit Insert must still observe this proven receipt.
+                confirmedReceipts.Publish(receipt);
+                pendingPaste=null;Interlocked.Exchange(ref invalid,0);Interlocked.Exchange(ref transportFailure,0);
+            }
+            pending.Lease.Acknowledge();
+            Reason="";
             LastDiagnostic=pending.Diagnostic with
             {
                 Phase="deferred confirm "+kind,Milliseconds=Stopwatch.GetElapsedTime(pending.DispatchedAt).TotalMilliseconds,
@@ -672,9 +661,15 @@ public sealed class WindowsTextDelivery : ITextDelivery
                     }
                 }
                 Check(token,version);
-                phase="queue input";clipboard.MarkMayHaveQueued();
-                // One ordinary paste command. No Enter or application send command is synthesized.
-                QueueInput([Key(0x11,0,false),Key(0x56,0,false),Key(0x56,2,false),Key(0x11,2,false)],ref queued);
+                phase="clipboard ownership";
+                // One ordinary paste command. The lease returns automatically at
+                // its deadline even if the following provider readback stalls.
+                // No Enter or application send command is synthesized.
+                clipboard.Dispatch(()=>
+                {
+                    CheckLease(token,version);phase="queue input";
+                    QueueInput([Key(0x11,0,false),Key(0x56,0,false),Key(0x56,2,false),Key(0x11,2,false)],ref queued);
+                });
                 fullyDispatchedPaste=queued==4;pendingAllowed=fullyDispatchedPaste;dispatchedAt=Stopwatch.GetTimestamp();
                 // This assignment is unreachable after partial or rejected dispatch.
                 if(firstPasteEvidence is { } proof)firstPasteEvidence=proof with {QueuedInputEvents=queued};
@@ -746,7 +741,7 @@ public sealed class WindowsTextDelivery : ITextDelivery
                 readbackRetries,lastReadbackStage,lastReadbackFailureType,lastReadbackFailureCode,lastInterruptionStage,textMismatch,outlookParagraphProjection,lastFocusMismatch,focusRestoreChecks,providerFocusRequested,inputMethod.ToString(),inputChunks,ownedRangeStrategy);
             LastDiagnostic.WriteIfEnabled();
             if(!confirmed&&fullyDispatchedPaste&&pendingAllowed&&expected is not null&&clipboard is not null&&
-                capturedProvider is { } raw&&ClipboardRecovery.IsCurrentHeldLease(clipboard))
+                capturedProvider is { } raw)
             {
                 lock(lifecycleGate)
                 {

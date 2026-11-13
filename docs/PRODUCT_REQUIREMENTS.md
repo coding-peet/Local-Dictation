@@ -52,6 +52,23 @@ punctuation, whitespace, and Unicode must be preserved.
   toggles must not require a separate Save action before shortcut recording.
   Debounce text settings, preserve the last valid configuration on errors, and
   show saving/saved/error status. Changes during a session apply to the next one.
+- Provide Search settings inside the main window. Search setting names,
+  categories, descriptions and keywords without case or accent sensitivity.
+  Open the matching page, scroll to the setting and focus its control. For a
+  hidden or disabled dependent setting, reveal its prerequisite without enabling
+  it or changing saved values. Ctrl+F focuses search; Escape clears results.
+- Put occasional explanations behind a small information icon beside the
+  setting. Show the same help on hover and click, support keyboard activation
+  and accessible names/help text. Keep actionable errors and saving status visible.
+- After recording offers Insert directly or Preview first. It is independent
+  of Verify after recording; all four combinations are valid. Do not combine
+  these separate decisions into a three-level slider or silently rewrite values.
+  Preview first prevents live and final automatic delivery, including agreement
+  between models. Open the existing compact Review for successful completed text.
+  Resolving its last phrase or saving edited text still requires explicit Insert.
+  Keep live recognition available; disable live insertion with a visible reason
+  and retain its saved preference for returning to Insert directly. Snapshot
+  the mode for the whole recording and persist explicit insertion on its Review.
 - Enable live capability for the built-in Large-v3 profile, independently of
   measured latency/readiness. Explain that its partial updates may be slow;
   do not disable a technically supported mode merely because it is experimental.
@@ -144,11 +161,11 @@ punctuation, whitespace, and Unicode must be preserved.
   Initial placement should avoid the native caret when available. Fade its
   decorative window edge to fully transparent pixels, keeping text and controls
   sharp. Do not leave an opaque rectangular toolkit window behind it.
-- A shortcut-started session captures the original external destination even
+- In Insert directly, a shortcut-started session captures the original external destination even
   when live cursor insertion is off. In that case keep partial text in the
   recognition pipeline and return the completed text automatically after successful
   completion and any required word choices, provided Finish occurred in the original field.
-- In desktop Outlook, keep live recognition running and insert the
+- In Insert directly on desktop Outlook, keep live recognition running and insert the
   complete final text once after Finish and any required verification choices.
   Detect the destination application without reading message content or relying
   on window titles. Keep the original validated caret and surrounding signature.
@@ -163,13 +180,15 @@ punctuation, whitespace, and Unicode must be preserved.
   must preserve that external focus; ordinary editing and wording choices may
   activate Review normally. Capture and validate the selected field after the
   click, with an insertion reservation before asynchronous work. Refuse input
-  or foreground changes during capture, unsupported fields, and unsettled pastes.
+  or foreground changes during capture, unsupported fields, and active dispatch
+  or clipboard restoration. An older unconfirmed attempt alone does not block
+  a new user-requested Insert.
   Do not reuse a permanently rejected original lease for explicit retries.
 - When a fresh capture proves the exact original field, complete document and
   owned draft ending at the selected caret, replace that owned draft. Otherwise
   insert at the chosen caret and leave earlier text elsewhere intact. Never
   guess ownership or delete text from another destination. Preserve exact
-  readback, clipboard recovery, durable receipts and duplicate-click protection.
+  readback, automatic clipboard return, durable receipts and duplicate-click protection.
 - At Finish, latch whether the exact original field is still current without
   activating anything. If it is elsewhere, preserve the result for explicit Insert;
   a later return must not start delayed automatic insertion. Automatic completion
@@ -234,22 +253,29 @@ punctuation, whitespace, and Unicode must be preserved.
   requirements; do not issue another paste to obtain acknowledgement.
 - After a fully dispatched but unconfirmed paste, permit read-only late
   acknowledgement for at most ten monotonic seconds from dispatch. Require the
-  same unchanged foreground field, input generation, clipboard payload/marker
-  and exact complete-document/caret proof. Cancel on focus/input/invalidation;
-  never replay input. Publish and retain a confirmed receipt before clipboard
-  restoration, so a worker timeout cannot lose an already proven insertion.
-- Idle recovery can be hidden with the banner X without discarding protected
-  text, a clipboard lease or its backup. Old queued notifications must not undo
-  dismissal; a new recovery event or explicit Start/Exit can resurface it.
-- Preserve and restore the clipboard automatically on acknowledged delivery.
-  Keep temporary text out of clipboard history/cloud and preserve newly copied
-  content. The normal banner must not expose Restore clipboard. If dispatch or
-  restoration remains uncertain, retain the backup and protected transcript;
-  exceptional Resolve opens a usable recovery window from the banner, Settings
-  or tray. Require explicit destination-inspection acknowledgement before
-  restoring an unconfirmed paste. Offer automatic/manual restoration retry
-  only for an already acknowledged backup. Clear stale recovery status once
-  resolved; repeated notifications for the same lease must not undo X dismissal.
+  same unchanged foreground field, input generation, current attempt and exact
+  complete-document/caret proof. Clipboard ownership is independent of readback.
+  Cancel on focus/input/invalidation; never replay input. Publish and retain a
+  confirmed receipt so a worker timeout cannot lose an already proven insertion.
+- Every delivery attempt, including explicit Insert, backs up the user's current
+  clipboard and restores it automatically whether insertion is confirmed or not.
+  Return it as soon as the attempt finishes. Arm an independent one-second return
+  timer when replacement completes, and renew the full one-second window after
+  dispatch. Refuse dispatch if the lease already expired. UIA stalls must never
+  extend the temporary payload's lifetime.
+  Keep temporary text out of clipboard history/cloud; a newer user copy wins.
+  Unsupported backup formats must still refuse delivery before replacement.
+- Unconfirmed delivery leaves the protected transcript in the existing banner
+  with Insert. Do not open a clipboard recovery window, offer Resolve/Restore
+  actions, require inspection checkboxes or hold the clipboard awaiting readback.
+  A fresh explicit Insert captures the selected external cursor and makes a new
+  attempt with a fresh clipboard backup; never repeat an uncertain attempt
+  automatically. Existing confirmed receipts still prevent duplicate insertion.
+- Close the result banner only after confirmed insertion or the user's X.
+  X hides it without deleting protected text; clipboard retry notifications must
+  not reopen it. If Windows prevents restoration, retain the complete backup and
+  retry automatically without a dialog, independently of destination readback.
+  Report the temporary restoration error in Settings and preserve newer copies.
 - Opt-in support journals record PID/build and fixed capture/readback stages,
   never transcript, field names/values/text, audio or clipboard contents. Ordinary
   operation and fixed-stage logging add no UIA queries. Only an opted-in
@@ -284,22 +310,27 @@ punctuation, whitespace, and Unicode must be preserved.
   final primary processing and verification run. The banner remains nonactivating,
   movable and scrollable for a long transcript; it is not an editor.
   During verification, only the banner holds the withdrawn first transcript.
-  Agreement inserts the final result at the original validated cursor and closes
-  the banner; differences open separate Review.
+  With Insert directly, agreement inserts the final result at the original
+  validated cursor and closes the banner; differences open separate Review.
+  Preview first always opens Review and leaves the destination untouched.
 - Open ordinary Review in its own small floating window. Keep the recording banner minimal.
   Underline disputed
   phrases; clicking one shows two exact alternatives without model/source names.
   The live wording comes first, the verifier's wording second.
 - Selecting wording automatically activates the next unresolved phrase.
-  The last choice inserts the complete reviewed text at the original cursor.
-  Successful verification with no differences inserts automatically.
+  With Insert directly, the last choice inserts the complete reviewed text at
+  the original cursor and agreement inserts automatically. Preview first keeps
+  the ready Review open until explicit Insert or Close, even after every choice.
 - Allow custom phrase wording and empty alternatives. Preserve unapplied custom
   drafts when changing phrases, closing, or restarting. A held Enter gesture
   must accept only one choice, on release.
 - Allow direct editing of the entire visible transcript in the same compact
   Review window, including common text and punctuation. Keep originals and choices.
   A manually edited final draft is authoritative and saved as it changes;
-  approve it explicitly before insertion so ordinary typing never inserts it.
+  provide an explicit Save text action that resolves the whole edited draft and
+  persists it without insertion or closing Review. Insert remains a separate
+  action; ordinary typing and Save text never deliver externally. Report storage
+  failures and keep the editable text in memory for retry.
   Pause phrase alternatives while whole-text edits are authoritative, rather
   than guessing new comparison offsets or overwriting the user's changes.
   Keep the current single-paragraph delivery constraint explicit; Enter is not
@@ -312,12 +343,18 @@ punctuation, whitespace, and Unicode must be preserved.
 - For explicit placement, select a destination cursor and click Insert. Keep
   Choose destination plus the recording shortcut as an alternative, including
   after restart. Neither route requires manual copy/paste.
-- Offer Second transcript in compact Review and Details when protected original
+- Offer Transcribe again in compact Review and Details when protected original
   audio and an eligible different model are available. Transcribe that audio
   only with the chosen verifier; preserve the primary output, edits, source
   recording identity and model revisions. Create a separate comparison without
   changing the source item or its insertion receipt. Show the complete second
-  transcript read-only, alongside phrase choices. Agreement in this post-hoc
+  transcript read-only as Alternative transcript, alongside phrase choices.
+  Show Model selection and Transcribe confirmation inline in the same Review,
+  never in another model-picker popup. Keep the compact Review instance open
+  while its saved recording is retranscribed and display transcription progress.
+  Provide Use this transcript to select and save the entire alternative without
+  insertion. Preserve originals/provenance and archive an overridden manual draft;
+  update the active editor to the selected text. Agreement in this post-hoc
   workflow still waits for explicit Insert; it must not replace earlier text.
 - Preserve cancelled/failed second transcripts for recovery, including source
   provenance. Escape cancels; a language correction reuses the same recording
@@ -369,11 +406,12 @@ punctuation, whitespace, and Unicode must be preserved.
   individual pending files without deleting them or blocking valid recovery.
 - Normal application Exit must await recording cleanup and protected saving.
   Do not silently discard text still marked unsaved.
-- If paste was queued but cannot be confirmed, retain its payload and all saved
-  clipboard formats in memory. Block new delivery and normal Exit until deliberate
-  recovery or a newer clipboard copy resolves it. Offer Resolve clipboard
-  recovery in the tray, with an explicit destination-inspection checkbox. A crash or forced process
-  termination cannot preserve this in-memory clipboard backup.
+- An unconfirmed paste must not block a later explicit Insert or normal Exit
+  once the clipboard has returned. An active clipboard replacement or an actual
+  restoration failure still retains its backup and blocks overlapping delivery
+  and Exit until automatic restoration or a newer copy completes. No manual
+  clipboard recovery dialog is part of this flow. A forced termination loses
+  any in-memory backup that Windows has not yet accepted.
 - Operational diagnostics must not record actual transcript text or audio.
 - Whisper repetition recovery must re-decode audio using its native generation
   fallback, rather than deleting repeated words from the transcript. Preserve

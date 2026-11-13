@@ -14,6 +14,7 @@ public sealed class ReviewDocument
     public string Reason { get; set; } = "Review before inserting";
     public DateTimeOffset? InsertedAt {get;set;}
     public bool DraftWithdrawn {get;set;}
+    public bool RequiresExplicitInsert {get;set;}
     [JsonIgnore] public bool CanInsert=>InsertedAt==null&&UnresolvedCount==0;
     public ReviewProvenance? Provenance {get;set;}
     public string PrimaryModel { get; set; } = "";
@@ -85,6 +86,25 @@ public sealed class ReviewDocument
         Remember();
         foreach (var piece in Pieces.Where(p => p.Different))
             Choices.TryAdd(piece.Id, new("primary"));
+    }
+
+    public void UseWholeTranscript(ReviewCopySource source)
+    {
+        if(InsertedAt!=null)throw new InvalidOperationException("This text was already inserted.");
+        if(source==ReviewCopySource.Verification&&!HasCompletedVerification)
+            throw new InvalidOperationException("The alternative transcript has not completed.");
+        if(source is not (ReviewCopySource.Dictation or ReviewCopySource.Verification))
+            throw new ArgumentException("Choose an original model transcript.",nameof(source));
+        var text=source==ReviewCopySource.Verification?Verification:Primary;
+        Remember();
+        if(ManualFinalDraft is {} previous&&previous!=text)
+        {
+            if(!ManualDraftArchive.Contains(previous))ManualDraftArchive.Add(previous);
+            PreviousManualDraft=previous;
+        }
+        ManualFinalDraft=text;
+        var kind=source==ReviewCopySource.Verification?"verification":"primary";
+        foreach(var piece in Pieces.Where(p=>p.Different))Choices[piece.Id]=new(kind);
     }
 
     public void Undo()

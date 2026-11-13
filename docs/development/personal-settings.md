@@ -15,6 +15,20 @@ task-local launcher; it does not install a Windows service or change startup.
 
 ## Appearance and keyboard shortcut
 
+Search settings above the named navigation, or press Ctrl+F, to find a setting
+by name, category, description or keyword. Select a result or press Enter to
+open its page and reveal the setting. Escape clears search. Searching does not
+enable a hidden dependency or change saved values. Information icons explain
+settings on hover, click or keyboard activation and expose the same help text
+to accessibility tools. Runtime warnings stay visible.
+
+In Dictation, After recording offers Insert directly and Preview first.
+Verification is independent and works with both. Preview first leaves the
+destination unchanged during recording and completion, then opens Review for
+Save text and explicit Insert. Live recognition can stay on; live insertion is
+paused without forgetting its saved choice. These changes apply to the next
+recording. Further transcripts from History also require explicit insertion.
+
 In Settings, choose System, Light, or Dark under Appearance.
 The preview updates immediately and valid choices save automatically. Check the
 saving status in the main window; there is no separate Save settings step.
@@ -44,7 +58,7 @@ History window is opened.
   seek five seconds while the slider is focused.
 - Copy the current transcript or open it in Review. For a pending result,
   resolve/edit the text, click a destination cursor, then click Insert.
-- In Review, Second transcript compares the retained audio with an eligible
+- In Review, Transcribe again compares the retained audio with an eligible
   different model. History More actions -> Change language reprocesses that
   same audio in another supported language. Both preserve the source and create a new Review.
 - More actions (...) -> Save audio exports an ordinary WAV to your chosen
@@ -85,7 +99,9 @@ is scripts/Create-IconOptions.ps1.
 
 Press F1 anywhere in the Settings window, including while a text field has
 focus, or select Help in the compact main header. The bundled Help.html
-opens in the Windows default HTML viewer, normally a browser. Opening Help does not save settings.
+opens in the Windows default HTML viewer, normally a browser. Normal automatic
+saving remains active, including committing valid text drafts when focus leaves
+a settings field.
 
 The guide is self-contained and requires no network connection. Use Ctrl+F
 in the browser to find a topic. Source: src/LocalDictation.App/Help/index.html.

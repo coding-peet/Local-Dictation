@@ -85,11 +85,18 @@ static class Ui
     {
         var row=new Grid{Margin=new(0,8,0,8),MinHeight=48};
         row.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});row.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
+        row.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
         var copy=new StackPanel{VerticalAlignment=VerticalAlignment.Center,Margin=new(0,0,16,0)};
         var title=Text(label);title.Margin=new(0);copy.Children.Add(title);
-        if(hint!=null){var detail=Text(hint,12);detail.SetResourceReference(TextBlock.ForegroundProperty,"Muted");detail.Margin=new(0,4,0,0);copy.Children.Add(detail);}
         copy.Background=Brushes.Transparent;copy.MouseLeftButtonUp+=(_,_)=>{if(toggle.IsEnabled){toggle.IsChecked=toggle.IsChecked!=true;toggle.Focus();}};
-        row.Children.Add(copy);Grid.SetColumn(toggle,1);row.Children.Add(toggle);return row;
+        row.Children.Add(copy);
+        // Help is a sibling of the clickable label so its input cannot toggle the setting.
+        if(!string.IsNullOrWhiteSpace(hint))
+        {
+            var info=SettingsHelp.Create(label,hint);Grid.SetColumn(info,1);row.Children.Add(info);
+            System.Windows.Automation.AutomationProperties.SetHelpText(toggle,hint);
+        }
+        Grid.SetColumn(toggle,2);row.Children.Add(toggle);return row;
     }
     public static StackPanel Row(params UIElement[] children)
     {var row=new StackPanel{Orientation=Orientation.Horizontal};foreach(var child in children)row.Children.Add(child);return row;}
@@ -108,9 +115,14 @@ static class Ui
             if(control is FrameworkElement field)field.Margin=new(0,8,0,8);
         }
         else{var caption=Text(label,12,true);caption.Margin=new(0,8,0,8);parent.Children.Add(caption);}
-        parent.Children.Add(control);
-        if(hint!=null){var text=Text(hint,12);text.SetResourceReference(TextBlock.ForegroundProperty,"Muted");text.Margin=new(16,0,0,16);parent.Children.Add(text);}
+        if(!string.IsNullOrWhiteSpace(hint))
+        {
+            var row=new Grid();row.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});row.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
+            row.Children.Add(control);var info=SettingsHelp.Create(label,hint);Grid.SetColumn(info,1);row.Children.Add(info);parent.Children.Add(row);
+        }
+        else parent.Children.Add(control);
         System.Windows.Automation.AutomationProperties.SetName(control,label);
+        if(!string.IsNullOrWhiteSpace(hint))System.Windows.Automation.AutomationProperties.SetHelpText(control,hint);
     }
     public static TextBox Box(bool editable=true,double height=80)=>new()
     {IsReadOnly=!editable,AcceptsReturn=true,TextWrapping=TextWrapping.Wrap,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,MinHeight=height,MaxHeight=height*2,VerticalContentAlignment=VerticalAlignment.Top};

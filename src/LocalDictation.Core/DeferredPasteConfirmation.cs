@@ -9,7 +9,7 @@ public sealed record PasteAcknowledgementSnapshot(string Identity, string? Proce
 
 public readonly record struct DeferredPasteEligibility(bool NativeClipboardPaste, int QueuedEvents,
     TimeSpan Age, int Generation, int ExpectedGeneration, long InvalidationVersion,
-    long ExpectedInvalidationVersion, bool HeldLeaseCurrent, bool TargetCurrent,
+    long ExpectedInvalidationVersion, bool AttemptCurrent, bool TargetCurrent,
     bool ProviderCurrent, bool Cancelled);
 
 public static class DeferredPasteConfirmation
@@ -20,7 +20,7 @@ public static class DeferredPasteConfirmation
         evidence.Age>=TimeSpan.Zero&&evidence.Age<MaximumAge&&
         evidence.Generation==evidence.ExpectedGeneration&&
         evidence.InvalidationVersion==evidence.ExpectedInvalidationVersion&&
-        evidence.HeldLeaseCurrent&&evidence.TargetCurrent&&evidence.ProviderCurrent&&!evidence.Cancelled;
+        evidence.AttemptCurrent&&evidence.TargetCurrent&&evidence.ProviderCurrent&&!evidence.Cancelled;
     public static PasteAcknowledgementKind TryAcknowledge(TargetGuard guard, PasteAcknowledgementSnapshot paste,
         string observedIdentity, string observedText, int observedCaret)
     {

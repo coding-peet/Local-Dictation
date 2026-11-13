@@ -69,7 +69,7 @@ public sealed class BannerWindow : Window
         preview.FontSize=14;preview.LineHeight=20;preview.Margin=new(0);preview.Focusable=false;
         preview.TextWrapping=TextWrapping.Wrap;preview.TextTrimming=TextTrimming.None;
         System.Windows.Automation.AutomationProperties.SetName(preview,"First transcript preview");
-        System.Windows.Automation.AutomationProperties.SetHelpText(preview,"Read only while verification runs. The completed text returns to the original cursor after comparison.");
+        System.Windows.Automation.AutomationProperties.SetHelpText(preview,"Read only while verification runs. Insert directly uses the validated original cursor after comparison and any wording choices. Preview first opens Review for explicit Insert.");
         previewScroll=new ScrollViewer{Content=preview,Height=80,MaxHeight=80,Margin=new(0,8,8,0),
             VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,
             Focusable=false,IsTabStop=false,Visibility=Visibility.Collapsed};
@@ -93,7 +93,6 @@ public sealed class BannerWindow : Window
     {
         if(controller.IsRecording){controller.Stop();return;}
         if(controller.IsBusy||controller.IsApplyingReview)return;
-        if(controller.CanRestoreClipboard){controller.ShowClipboardRecoveryDetails();return;}
         if(controller.BannerReview is {CanInsert:true})_=controller.ApplyBannerReviewAtSelectedCursor();
         else if(controller.BannerReview is {} review)controller.OpenReview(review);
     }
@@ -138,8 +137,12 @@ public sealed class BannerWindow : Window
 
     public void Refresh()
     {
+        RefreshContent();
+        if(controller.ShowBanner){if(!IsVisible)Show();Position();}else Hide();
+    }
+    void RefreshContent()
+    {
         var review=controller.BannerReview;
-        var recover=controller.CanRestoreClipboard;
         var previewText=controller.VerificationPreviewText;
         var showPreview=previewText.Length>0;
         if(showPreview!=showingPreview)
@@ -153,17 +156,17 @@ public sealed class BannerWindow : Window
             else Ui.BindCapsule(cloud);
         }
         preview.Text=previewText;previewScroll.Visibility=showPreview?Visibility.Visible:Visibility.Collapsed;
-        state.Text=recover?"Clipboard recovery":controller.IsRecording?"Recording":controller.IsVerifying?"Verifying…":controller.IsBusy?"Finishing…":review is {CanInsert:true}?"Text ready":review!=null?"Review needed":controller.StateLabel=="Unavailable"?"Interrupted":controller.StateLabel;
+        state.Text=controller.IsRecording?"Recording":controller.IsVerifying?"Verifying…":controller.IsBusy?"Finishing…":review is {CanInsert:true}?"Text ready":review!=null?"Review needed":controller.StateLabel=="Unavailable"?"Interrupted":controller.StateLabel;
         model.Text=controller.BannerModelLabel;model.ToolTip=controller.BannerModelDetails;
         System.Windows.Automation.AutomationProperties.SetHelpText(model,controller.BannerModelDetails);
-        timer.Text=recover?"Resolve to continue":showPreview?controller.ElapsedLabel:controller.IsRecording||controller.IsBusy?controller.ElapsedLabel:review is {CanInsert:true}?"Insert when ready":review!=null?"Open Review":"";
-        if(!recover&&controller.CanChangeInputLanguage)timer.Text+=" · "+controller.InputLanguageLabel;
-        language.IsEnabled=controller.CanChangeInputLanguage&&!recover;
-        var insert=!recover&&!controller.IsBusy&&review is {CanInsert:true}&&!controller.IsApplyingReview;
-        var pending=!controller.IsBusy&&(review!=null||recover)&&!controller.IsApplyingReview;
+        timer.Text=showPreview?controller.ElapsedLabel:controller.IsRecording||controller.IsBusy?controller.ElapsedLabel:review is {CanInsert:true}?"Insert when ready":review!=null?"Open Review":"";
+        if(controller.CanChangeInputLanguage)timer.Text+=" · "+controller.InputLanguageLabel;
+        language.IsEnabled=controller.CanChangeInputLanguage;
+        var insert=!controller.IsBusy&&review is {CanInsert:true}&&!controller.IsApplyingReview;
+        var pending=!controller.IsBusy&&review!=null&&!controller.IsApplyingReview;
         if(pending)
         {
-            action.SetResourceReference(FrameworkElement.StyleProperty,"Md3TextButton");action.Content=recover?"Resolve":insert?"Insert":"Review";
+            action.SetResourceReference(FrameworkElement.StyleProperty,"Md3TextButton");action.Content=insert?"Insert":"Review";
             action.Width=double.NaN;action.Height=48;action.MinWidth=56;action.Padding=new(8);action.Margin=new(0);
         }
         else
@@ -173,11 +176,10 @@ public sealed class BannerWindow : Window
             action.ClearValue(WidthProperty);action.ClearValue(HeightProperty);action.ClearValue(MinWidthProperty);action.ClearValue(Control.PaddingProperty);action.ClearValue(MarginProperty);
         }
         action.IsEnabled=controller.IsRecording||pending;action.Visibility=controller.IsRecording||controller.IsBusy||pending?Visibility.Visible:Visibility.Collapsed;
-        var actionLabel=recover?"Resolve clipboard recovery":insert?"Insert completed dictation":pending?"Open dictation review":"Finish recording";action.ToolTip=actionLabel;
+        var actionLabel=insert?"Insert completed dictation":pending?"Open dictation review":"Finish recording";action.ToolTip=actionLabel;
         System.Windows.Automation.AutomationProperties.SetName(action,actionLabel);
         cancel.IsEnabled=!controller.IsApplyingReview;
         for(var i=0;i<bars.Length;i++)bars[i].Height=controller.IsRecording?4+(WaveHeights[i]-4)*Math.Min(1,controller.Level*6):4;
-        if(controller.ShowBanner){if(!IsVisible)Show();Position();}else Hide();
     }
     [DllImport("user32.dll",EntryPoint="GetWindowLongPtrW")] static extern nint GetWindowLongPtr(nint hwnd,int index);
     [DllImport("user32.dll",EntryPoint="SetWindowLongPtrW")] static extern nint SetWindowLongPtr(nint hwnd,int index,nint value);

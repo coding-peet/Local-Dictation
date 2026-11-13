@@ -13,6 +13,7 @@ public static class SavedVerification
         if(string.IsNullOrWhiteSpace(verifier)||verifier==source.PrimaryModel)
             throw new ArgumentException("Choose a different second model.");
         var document=new ReviewDocument{PrimaryModel=source.PrimaryModel,VerificationModel=verifier,
+            RequiresExplicitInsert=true,
             RequestedLanguage=source.RequestedLanguage,Language=source.Language,LanguageMode=source.LanguageMode,
             RetranscriptionOf=source.Id,Reason="Comparing the original recording with a second model."};
         document.SetPrimary(source.Primary);

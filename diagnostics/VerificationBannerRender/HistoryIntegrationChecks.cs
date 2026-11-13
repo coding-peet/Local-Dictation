@@ -83,8 +83,7 @@ static class HistoryIntegrationChecks
             TextBlock Text(string label)=>(TextBlock)ui.GetMethod("Text",BindingFlags.Static|BindingFlags.Public)!.Invoke(null,[label,12d,false])!;
             var nav=new ListBox();var record=Button("Record in banner",true);var help=Button("Help");
             var connection=Text("Ready · Local transcription");var saved=Text("Saved automatically");var alert=Text("");
-            var recovery=Button("Resolve clipboard recovery");recovery.Visibility=Visibility.Collapsed;
-            using(var shell=new MainWindowShell(nav,[new Border(),new Border(),page,new Border()],record,help,connection,saved,alert,recovery))
+            using(var shell=new MainWindowShell(nav,[new Border(),new Border(),page,new Border()],record,help,connection,saved,alert))
             {
                 try
                 {
@@ -96,10 +95,11 @@ static class HistoryIntegrationChecks
                     Layout(shell,640,600);
                     Require(nav.Items.OfType<ListBoxItem>().Select(i=>(TextBlock)i.Content).All(t=>t.Visibility==Visibility.Visible),"Narrow window hides its menu labels.");
                     Save(shell,640,600,Path.Combine(output,"named-menu-shell-compact-"+theme+".png"));checks.Add("named menu retained at compact width "+theme);
-                    alert.Text="The previous operation could not finish. Your saved text is preserved; inspect History before retrying.";recovery.Visibility=Visibility.Visible;
+                    alert.Text="Windows could not restore the previous clipboard yet. Its backup is kept and restoration will retry automatically. A newer copy takes priority.";
                     connection.Text="The local transcription service is unavailable. Reconnect after checking its status.";saved.Text="Settings could not be saved. The previous valid settings are still active.";
                     Layout(shell,640,600);
-                    Require(shell.StatusArea.Visibility==Visibility.Visible&&alert.ActualHeight>0&&recovery.ActualHeight>=48&&saved.ActualHeight>0,"Compact chrome hid actionable errors or recovery.");
+                    Require(shell.StatusArea.Visibility==Visibility.Visible&&alert.ActualHeight>0&&saved.ActualHeight>0,"Compact chrome hid actionable errors.");
+                    Require(!Find<Button>(shell).Any(b=>b.Content?.ToString()?.Contains("clipboard",StringComparison.OrdinalIgnoreCase)==true),"A clipboard recovery action remains in the main window.");
                     Save(shell,640,600,Path.Combine(output,"named-menu-shell-errors-"+theme+".png"));checks.Add("compact save and recovery errors remain visible "+theme);
                 }
                 finally{shell.PageHost.Content=null;}

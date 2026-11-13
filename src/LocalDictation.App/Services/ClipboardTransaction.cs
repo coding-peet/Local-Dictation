@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -16,15 +17,15 @@ public sealed class ClipboardTransaction : IDisposable
     readonly uint markerFormat=RegisterClipboardFormat("LocalDictation.ClipboardLease");
     byte[] payloadBytes=[];
     uint sequence;
-    bool changed,finished,mayHaveQueued,acknowledged,restoreFailed,recoveryPending;
+    Timer? returnDeadline;
+    long returnDeadlineVersion,returnDeadlineStartedAt;
+    bool changed,finished,dispatchExpired,mayHaveQueued,acknowledged,recoveryPending;
     public int SavedFormatCount=>saved.Count;
-    internal bool HasAcknowledgedBackup=>Volatile.Read(ref acknowledged)&&Volatile.Read(ref recoveryPending)&&!Volatile.Read(ref finished);
     public bool WasRestored {get;private set;}
     public bool WasSuperseded {get;private set;}
     public bool RecoveryPending {get=>Volatile.Read(ref recoveryPending);internal set=>Volatile.Write(ref recoveryPending,value);}
-    public string RecoveryMessage=>restoreFailed
-        ?"The previous clipboard could not be fully restored. Its complete backup is held in memory. Keep Local Dictation open and use Restore previous clipboard."
-        :"Paste was not confirmed. Check the destination and stop any delayed paste before restoring: it could insert your previous clipboard contents. Keep Local Dictation open until recovery is complete.";
+    public string RecoveryMessage=>(mayHaveQueued&&!acknowledged?"Insertion was not confirmed. ":"")+
+        "Windows could not restore the previous clipboard yet. Its backup is kept and restoration will retry automatically. A newer copy takes priority.";
     internal bool WasReplacedByAnotherOwner=>changed&&!finished&&GetClipboardOwner()!=owner;
 
     sealed class FormatCopy(uint format,nint handle,Action<nint> release) : IDisposable
@@ -77,6 +78,9 @@ public sealed class ClipboardTransaction : IDisposable
                 foreach(var copy in payload)copy.Transfer();
             }
             finally{CloseClipboard();transaction.sequence=GetClipboardSequenceNumber();}
+            // Protect the pre-dispatch checks too: a provider may stall after
+            // replacement but before any native input has been sent.
+            transaction.ArmReturnDeadline();
             return transaction;
         }
         catch{transaction.Dispose();throw;}
@@ -85,6 +89,8 @@ public sealed class ClipboardTransaction : IDisposable
 
     public void EnsureCurrent()
     {
+        lock(stateGate)
+        {
         if(finished)throw new InvalidOperationException("The paste clipboard lease has ended.");
         Open(()=>{},100);
         try
@@ -95,6 +101,7 @@ public sealed class ClipboardTransaction : IDisposable
                 throw new InvalidOperationException("The clipboard changed before paste. Your transcript is preserved.");
         }
         finally{CloseClipboard();sequence=GetClipboardSequenceNumber();}
+        }
     }
     static bool Contains(uint format,byte[] bytes)
     {
@@ -103,43 +110,68 @@ public sealed class ClipboardTransaction : IDisposable
         try{var actual=new byte[bytes.Length];Marshal.Copy(memory,actual,0,actual.Length);return actual.SequenceEqual(bytes);}
         finally{GlobalUnlock(handle);}
     }
-    public void MarkMayHaveQueued(){lock(stateGate)mayHaveQueued=true;}
+    public void MarkMayHaveQueued()
+    {
+        lock(stateGate)
+        {
+            if(finished||dispatchExpired)throw new InvalidOperationException("The paste clipboard lease has ended. Try Insert again.");
+            if(returnDeadlineStartedAt!=0)EnsureDispatchWindow();
+            mayHaveQueued=true;
+            ArmReturnDeadline();
+        }
+    }
+    void ArmReturnDeadline()
+    {
+        lock(stateGate)
+        {
+            if(finished||dispatchExpired)return;
+            var version=++returnDeadlineVersion;
+            returnDeadlineStartedAt=Stopwatch.GetTimestamp();
+            returnDeadline?.Dispose();
+            returnDeadline=new Timer(_=>ReturnAtDeadline(version),null,TimeSpan.FromSeconds(1),Timeout.InfiniteTimeSpan);
+        }
+    }
+    void ReturnAtDeadline(long version)
+    {
+        lock(stateGate)
+        {
+            // Disposing/renewing a timer cannot retract an already queued callback.
+            // It may return the clipboard only for its own still-current window.
+            if(finished||version!=returnDeadlineVersion)return;
+            // Expiry revokes dispatch even if restoration cannot finish yet.
+            dispatchExpired=true;
+            RestoreCore();
+        }
+    }
+    void EnsureDispatchWindow()
+    {
+        // Timer scheduling and clipboard contention can delay actual return.
+        // Neither extends or revives the pre-dispatch consumption window.
+        if(finished||dispatchExpired||returnDeadlineStartedAt==0||
+            Stopwatch.GetElapsedTime(returnDeadlineStartedAt)>=TimeSpan.FromSeconds(1))
+        {
+            dispatchExpired=true;
+            throw new InvalidOperationException("The paste clipboard lease has ended. Try Insert again.");
+        }
+    }
+    public void Dispatch(Action send)
+    {
+        ArgumentNullException.ThrowIfNull(send);
+        lock(stateGate)
+        {
+            // Serialize native dispatch with deadline restoration. An expired
+            // preflight must never send input using the already-returned clipboard.
+            EnsureDispatchWindow();EnsureCurrent();EnsureDispatchWindow();mayHaveQueued=true;
+            try{send();}
+            finally{ArmReturnDeadline();}
+        }
+    }
     public void MarkNoInputQueued(){lock(stateGate)if(!acknowledged)mayHaveQueued=false;}
     public void Acknowledge(){lock(stateGate)Volatile.Write(ref acknowledged,true);}
 
-    internal bool IsCurrentHeldPayload()
+    internal bool TryRestorePending()
     {
-        lock(stateGate)
-        {
-            if(finished||acknowledged||!ClipboardRecovery.IsCurrentHeldLease(this))return false;
-            try{EnsureCurrent();return true;}
-            catch(Exception error) when(error is InvalidOperationException or Win32Exception){return false;}
-        }
-    }
-    internal bool TryAcknowledgeHeldPaste(Func<bool> accept)
-    {
-        lock(stateGate)
-        {
-            if(finished||acknowledged||!ClipboardRecovery.IsCurrentHeldLease(this))return false;
-            try
-            {
-                Open(()=>{},100);
-                try
-                {
-                    // Keep the native clipboard locked while atomically accepting the
-                    // already-read destination. No input or UIA call occurs in accept.
-                    if(GetClipboardOwner()!=owner||!Contains(markerFormat,marker)||!Contains(UnicodeText,payloadBytes)||
-                        !ClipboardRecovery.IsCurrentHeldLease(this)||!accept())return false;
-                    Volatile.Write(ref acknowledged,true);return true;
-                }
-                finally{CloseClipboard();sequence=GetClipboardSequenceNumber();}
-            }
-            catch(Exception error) when(error is InvalidOperationException or Win32Exception){return false;}
-        }
-    }
-    internal bool TryRestoreAcknowledged()
-    {
-        lock(stateGate)return acknowledged&&RestoreCore();
+        lock(stateGate)return RestoreCore();
     }
 
     void Open(Action validate,int milliseconds)
@@ -156,7 +188,8 @@ public sealed class ClipboardTransaction : IDisposable
         lock(stateGate)
         {
             if(finished)return;
-            if(mayHaveQueued&&!acknowledged){ClipboardRecovery.Hold(this);return;}
+            // Clipboard lifetime ends with the attempt, independently of UIA
+            // acknowledgement. Only an actual restoration failure retains backup.
             RestoreCore();
         }
     }
@@ -185,7 +218,7 @@ public sealed class ClipboardTransaction : IDisposable
         }
         catch(Exception error) when(error is InvalidOperationException or Win32Exception)
         {
-            restoreFailed=true;ClipboardRecovery.Hold(this);Diagnostics.Error("clipboard restore",error);return false;
+            ClipboardRecovery.Hold(this);Diagnostics.Error("clipboard restore",error);return false;
         }
         finally{foreach(var copy in attempt)copy.Dispose();}
     }
@@ -194,6 +227,7 @@ public sealed class ClipboardTransaction : IDisposable
     {
         if(finished)return;
         Volatile.Write(ref finished,true);RecoveryPending=false;
+        returnDeadline?.Dispose();returnDeadline=null;
         foreach(var copy in saved)copy.Dispose();
         ClipboardRecovery.Release(this);
     }

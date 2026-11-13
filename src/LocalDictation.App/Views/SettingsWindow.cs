@@ -11,9 +11,11 @@ using LocalDictation.App.Services;
 
 namespace LocalDictation.App.Views;
 
-public sealed class SettingsWindow : Window
+public sealed partial class SettingsWindow : Window
 {
     readonly AppController controller;
+    readonly bool enumerateMicrophones;
+    readonly MainWindowShell shell;
     readonly ListBox navigation=new(){VerticalAlignment=VerticalAlignment.Stretch};
     HistoryPanel? historyPanel;
     public void SelectHistory()=>navigation.SelectedIndex=2;
@@ -21,6 +23,9 @@ public sealed class SettingsWindow : Window
     readonly TextBox endpoint=new(), repository=new();
     readonly TextBox shortcutValue=new();
     readonly ComboBox theme=new(){ItemsSource=new[]{"System","Light","Dark"}};
+    readonly ComboBox afterRecording=new(){ItemsSource=new[]{"Insert directly","Preview first"}};
+    FrameworkElement liveInsertRow=null!;
+    readonly TextBlock outputDependency=Ui.Text("",12);
     readonly ComboBox microphone=new(){DisplayMemberPath="Name",SelectedValuePath="Id"},
         primary=new(){DisplayMemberPath="Label",SelectedValuePath="Id"},
         verifier=new(){DisplayMemberPath="Label",SelectedValuePath="Id"},
@@ -38,7 +43,7 @@ public sealed class SettingsWindow : Window
     readonly TextBlock compatibility=Ui.Text("",12);
     Button resetCompatibility=null!;
     Button download=null!,cancelDownload=null!,checkModel=null!,testModel=null!,removeModel=null!;
-    readonly Button record,recovery;
+    readonly Button record;
     readonly ProgressBar progress=new(){Minimum=0,Maximum=100,Height=6,Margin=new(0,6,0,8)};
     readonly DispatcherTimer poll=new(){Interval=TimeSpan.FromSeconds(1)};
     readonly DispatcherTimer saveDelay=new(){Interval=TimeSpan.FromMilliseconds(650)};
@@ -50,29 +55,25 @@ public sealed class SettingsWindow : Window
     static readonly Dictionary<string,string> activeDownloads=new(StringComparer.OrdinalIgnoreCase);
     bool modelActionBusy,inspecting,closed;
     bool loading,updating,polling,selectionPending,microphoneEnumerationFailed;
-    public SettingsWindow(AppController controller)
+    public SettingsWindow(AppController controller):this(controller,true){}
+    internal SettingsWindow(AppController controller,bool enumerateMicrophones)
     {
         this.controller=controller;
-        PreviewKeyDown+=(_,e)=>
-        {
-            if(e.Key!=Key.F1||Keyboard.Modifiers!=ModifierKeys.None)return;
-            e.Handled=true;
-            if(!e.IsRepeat)OpenHelp();
-        };
+        this.enumerateMicrophones=enumerateMicrophones;
+        PreviewKeyDown+=OnSettingsKey;
         Title="Local Dictation";Width=1040;Height=820;MinWidth=640;MinHeight=620;
         WindowStartupLocation=WindowStartupLocation.CenterScreen;
         record=Ui.Button("Record in banner",RecordInBanner,true);
-        recovery=Ui.Button("Resolve clipboard recovery",controller.ShowClipboardRecoveryDetails);
-        recovery.Visibility=Visibility.Collapsed;
         var pages=new[]{DictationPage(),ModelsPage(),HistoryPage(),PreferencesPage()};
-        var shell=new MainWindowShell(navigation,pages,record,Ui.Button("Help",OpenHelp),
-            connection,saveStatus,message,recovery,index=>historyPanel?.SetActive(index==2));
+        shell=new MainWindowShell(navigation,pages,record,Ui.Button("Help",OpenHelp),
+            connection,saveStatus,message,index=>historyPanel?.SetActive(index==2));
         Content=shell;
+        ConfigureSettingsSearch();
         controller.Changed+=Refresh;
         Closing+=(_,_)=>CommitTextEdits();
         Closed+=(_,_)=>{closed=true;controller.Changed-=Refresh;shell.Dispose();poll.Stop();saveDelay.Stop();historyPanel?.Dispose();};
         poll.Tick+=(_,_)=>_ = PollDownload();
-        foreach(var box in new[]{microphone,primary,verifier,language,theme})box.SelectionChanged+=(_,_)=>SelectionChanged(box);
+        foreach(var box in new[]{microphone,primary,verifier,language,theme,afterRecording})box.SelectionChanged+=(_,_)=>SelectionChanged(box);
         foreach(var check in new[]{live,verify,insert,shortcutEnabled})
         {check.Checked+=(_,_)=>SelectionChanged(check);check.Unchecked+=(_,_)=>SelectionChanged(check);}
         foreach(var text in new[]{endpoint,shortcutValue})
@@ -128,8 +129,13 @@ public sealed class SettingsWindow : Window
         var languageChoice=new StackPanel();Ui.Label(languageChoice,"Language",language);Grid.SetColumn(languageChoice,1);modelRow.Children.Add(languageChoice);recording.Children.Add(modelRow);
         Ui.Label(recording,"Preferred Auto languages (supported by installed models)",preferredLanguages);
         modelStatus.FontSize=12;modelStatus.Margin=new(0,0,0,10);modelStatus.SetResourceReference(TextBlock.ForegroundProperty,"Muted");recording.Children.Add(modelStatus);
-        recording.Children.Add(Ui.SwitchRow("Live transcription",live,"Recognize speech while you record."));recording.Children.Add(Ui.SwitchRow("Insert live text at the cursor",insert,"Updates only the original, validated field."));page.Children.Add(Ui.Card(recording));
-        page.Children.Add(Ui.SwitchRow("Verify after recording",verify,"Compare with a second local model. Matching results insert automatically."));
+        Ui.Label(recording,"After recording",afterRecording,"Insert directly places completed text at the validated original cursor. Preview first opens Review and leaves the destination unchanged until you use Insert. Verification can be combined with either choice.");
+        recording.Children.Add(Ui.SwitchRow("Live transcription",live,"Recognize speech while you record. Live recognition can stay on in Preview first."));
+        liveInsertRow=Ui.SwitchRow("Insert live text at the cursor",insert,"Updates only the original, validated field. Available with Insert directly and Live transcription. Your choice is retained in Preview first.");
+        recording.Children.Add(liveInsertRow);
+        outputDependency.SetResourceReference(TextBlock.ForegroundProperty,"Muted");recording.Children.Add(outputDependency);
+        page.Children.Add(Ui.Card(recording));
+        page.Children.Add(Ui.SwitchRow("Verify after recording",verify,"Compare with a second local model. With Insert directly, matching results insert and differences open Review. With Preview first, both outcomes open Review without inserting."));
         Ui.Label(verificationDetails,"Verification model",verifier);
         verificationStatus.FontSize=12;verificationStatus.SetResourceReference(TextBlock.ForegroundProperty,"Muted");verificationDetails.Children.Add(verificationStatus);
         page.Children.Add(verificationDetails);
@@ -227,6 +233,7 @@ public sealed class SettingsWindow : Window
 
     void LoadMicrophones()
     {
+        if(!enumerateMicrophones)return;
         var selected=microphone.SelectedValue as string??controller.Settings.MicrophoneId??"";
         List<MicrophoneInfo> devices;var enumerated=true;
         try{devices=MicrophoneCapture.Devices();}
@@ -274,7 +281,6 @@ public sealed class SettingsWindow : Window
             record.Content=controller.IsRecording?"Stop recording":"Record in banner";
             System.Windows.Automation.AutomationProperties.SetName(record,(string)record.Content);
             record.IsEnabled=!controller.HasClipboardRecovery&&(controller.IsRecording||controller.Connected);
-            recovery.Visibility=controller.HasClipboardRecovery?Visibility.Visible:Visibility.Collapsed;
             var selected=primary.SelectedValue as string??controller.Settings.PrimaryModel;
             primary.ItemsSource=controller.Models;primary.SelectedValue=selected;
             if(initial)
@@ -282,10 +288,13 @@ public sealed class SettingsWindow : Window
                 endpoint.Text=controller.Settings.Endpoint;
                 live.IsChecked=controller.Settings.Live;verify.IsChecked=controller.Settings.VerifyAfterRecording;
                 insert.IsChecked=controller.Settings.InsertAtCursor;shortcutEnabled.IsChecked=controller.Settings.EnableShortcut;
+                afterRecording.SelectedIndex=(int)controller.Settings.AfterRecording;
+                if(afterRecording.SelectedIndex is not (0 or 1))selectionError="Choose Insert directly or Preview first under After recording.";
                 shortcutValue.Text=controller.Settings.Shortcut;theme.SelectedItem=controller.Settings.Theme;
                 language.SelectedItem=controller.Settings.Language;LoadMicrophones();
             }
             UpdateModelChoices(false);
+            UpdateOutputDependencies();
             UpdateSaveStatus();
             var selectedInstalled=SelectedInstalledModel()?.Id;
             var installed=controller.Models.Where(m=>m.Installed).Select(m=>new InstalledModelRow(m)).ToList();
@@ -351,6 +360,7 @@ public sealed class SettingsWindow : Window
     void SelectionChanged(Control source)
     {
         if(loading)return;
+        UpdateOutputDependencies();
         selectionPending=true;
         if(source==microphone&&!microphoneEnumerationFailed&&microphone.SelectedIndex>=0&&microphone.SelectedValue as string!=missingMicrophoneId)ClearMicrophoneWarning();
         var modelChange=source==primary||source==verifier||source==language||source==live||source==verify;
@@ -369,6 +379,8 @@ public sealed class SettingsWindow : Window
     {
         selectionPending=true;
         var value=Snapshot();
+        if(afterRecording.SelectedIndex is not (0 or 1))
+        {selectionError="Choose Insert directly or Preview first under After recording.";UpdateSaveStatus();return false;}
         try
         {
             var model=primary.SelectedItem as ModelInfo;
@@ -393,6 +405,7 @@ public sealed class SettingsWindow : Window
         // Keep the saved microphone ID until the user explicitly selects another microphone.
         if(microphone.SelectedIndex>=0)value.MicrophoneId=microphone.SelectedValue as string;
         value.InsertAtCursor=insert.IsChecked==true;value.EnableShortcut=shortcutEnabled.IsChecked==true;
+        value.AfterRecording=(AfterRecordingAction)afterRecording.SelectedIndex;
         value.Theme=theme.SelectedItem as string??"System";
         var saved=Persist(value);selectionPending=!saved||selectionError.Length>0;
         UpdateSaveStatus();return saved;

@@ -3,6 +3,13 @@ using Xunit;
 
 public sealed class SavedVerificationTests
 {
+    [Fact] public void FurtherTranscriptAlwaysWaitsForExplicitInsertion()
+    {
+        var source=Source();
+        Assert.True(SavedVerification.Begin(source,"second").RequiresExplicitInsert);
+        source.RequiresExplicitInsert=true;
+        Assert.True(SavedVerification.Begin(source,"second").RequiresExplicitInsert);
+    }
     static ReviewDocument Source()
     {
         var source=new ReviewDocument{PrimaryModel="first",Language="en",RequestedLanguage="auto",LanguageMode="detected"};
