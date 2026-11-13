@@ -13,6 +13,9 @@ namespace LocalDictation.App.Views;
 public sealed class SettingsWindow : Window
 {
     readonly AppController controller;
+    readonly ListBox navigation=new(){Margin=new(0,8,16,0),VerticalAlignment=VerticalAlignment.Stretch};
+    HistoryPanel? historyPanel;
+    public void SelectHistory()=>navigation.SelectedIndex=3;
     readonly TextBlock connection=Ui.Text(""), shortcut=Ui.Text(""), message=Ui.Text(""), importStatus=Ui.Text(""), modelStatus=Ui.Text(""), verificationStatus=Ui.Text(""), saveStatus=Ui.Text("");
     readonly TextBox endpoint=new(), repository=new();
     readonly TextBox shortcutValue=new();
@@ -79,7 +82,6 @@ public sealed class SettingsWindow : Window
         // A desktop navigation rail keeps destinations stable while their forms scroll independently.
         var shell=new Grid();var navigationColumn=new ColumnDefinition{Width=new(216)};
         shell.ColumnDefinitions.Add(navigationColumn);shell.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});
-        var navigation=new ListBox{Margin=new(0,8,16,0),VerticalAlignment=VerticalAlignment.Stretch};
         navigation.SetResourceReference(Control.BackgroundProperty,"Canvas");
         var destinations=new[]{("Dictation",PackIconKind.Microphone),("Models",PackIconKind.CubeOutline),("Pending Review",PackIconKind.TextBoxCheckOutline),("History",PackIconKind.History),("Settings",PackIconKind.CogOutline)};
         var pages=new[]{DictationPage(),ModelsPage(),ReviewPage(),HistoryPage(),PreferencesPage()};
@@ -95,12 +97,17 @@ public sealed class SettingsWindow : Window
         }
         void NavigationContrast()=>ApplyNavigationContrast(navigation,SystemParameters.HighContrast);
         navigation.Loaded+=(_,_)=>NavigationContrast();ThemeManager.Changed+=NavigationContrast;
-        navigation.SelectionChanged+=(_,_)=>{if(navigation.SelectedIndex>=0)pageHost.Content=pages[navigation.SelectedIndex];NavigationContrast();};
+        navigation.SelectionChanged+=(_,_)=>
+        {
+            if(navigation.SelectedIndex<0)return;
+            historyPanel?.SetActive(navigation.SelectedIndex==3);
+            pageHost.Content=pages[navigation.SelectedIndex];NavigationContrast();
+        };
         navigation.SelectedIndex=0;Grid.SetColumn(pageHost,1);shell.Children.Add(navigation);shell.Children.Add(pageHost);root.Children.Add(shell);Content=root;
         SizeChanged+=(_,_)=>{var compact=ActualWidth<840;navigationColumn.Width=new(compact?96:216);foreach(var label in labels)label.Visibility=compact?Visibility.Collapsed:Visibility.Visible;};
         controller.Changed+=Refresh;
         Closing+=(_,_)=>CommitTextEdits();
-        Closed+=(_,_)=>{controller.Changed-=Refresh;ThemeManager.Changed-=NavigationContrast;poll.Stop();saveDelay.Stop();};
+        Closed+=(_,_)=>{controller.Changed-=Refresh;ThemeManager.Changed-=NavigationContrast;poll.Stop();saveDelay.Stop();historyPanel?.Dispose();};
         poll.Tick+=(_,_)=>_ = PollDownload();
         foreach(var box in new[]{microphone,primary,verifier,language,theme})box.SelectionChanged+=(_,_)=>SelectionChanged(box);
         foreach(var check in new[]{live,verify,insert,shortcutEnabled})
@@ -245,14 +252,7 @@ public sealed class SettingsWindow : Window
         page.Children.Add(Ui.Text("Copy and Close keep an item. Use Dismiss inside Review to remove it.",12));
         return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,MaxWidth=880,HorizontalAlignment=HorizontalAlignment.Stretch};
     }
-    UIElement HistoryPage()
-    {
-        var page=new StackPanel{Margin=new(0,8,8,0)};
-        page.Children.Add(Ui.Text("Recent dictations",18,true));
-        page.Children.Add(Ui.Text("Keep the latest 20 transcripts and recordings. Open History to play audio, copy text, export a WAV, or remove an item.",13));
-        var open=Ui.Button("Open transcript and audio history",controller.ShowHistory);
-        open.HorizontalAlignment=HorizontalAlignment.Left;page.Children.Add(open);return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,MaxWidth=880,HorizontalAlignment=HorizontalAlignment.Stretch};
-    }
+    UIElement HistoryPage()=>historyPanel=new HistoryPanel(controller){Margin=new(0,8,8,0)};
 
     static FrameworkElement Section(FrameworkElement content)
     {return Ui.Card(content);}

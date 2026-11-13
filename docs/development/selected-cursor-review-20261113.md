@@ -73,10 +73,11 @@ Source branch: feature/native-windows. Base HEAD: acc3bcee00fe494bf30c9e4f8c556d
 Peter requested comment, commit and push after reviewing this candidate. Publish
 the reviewed source on the existing branch without changing the installed app.
 
-## Open UI follow-up
+## History integration follow-up
 
-Peter subsequently requested integrating a popup into the main window. The
-target is not yet identified: second-model selection, Review, or History. Keep
-this request open rather than implementing a guessed relocation. The prepared
-candidate retains the documented separate views. This publication does not
-resolve that UI follow-up or claim native application acceptance.
+Peter clarified that the complete Local Dictation History window should be
+integrated. The follow-up extracts HistoryPanel into the main History section;
+it does not relocate Review or the second-model picker. See
+[integrated History validation](integrated-history-20261113.md) for the newer
+candidate and its checks. This source publication does not establish deployment
+or native application acceptance.

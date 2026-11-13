@@ -55,5 +55,5 @@ to load the new endpoint; preserve production TypeWhisper API 8123.
 Canonical checkout: C:\Git\Local-Dictation\repo.
 Branch: feature/native-windows. Starting HEAD: acc3bcee00fe494bf30c9e4f8c556d47c744f058.
 Peter subsequently authorized comment, commit and push on this existing branch.
-The requested main-window integration remains an open clarification; no guessed
-UI relocation is included in this publication.
+Peter subsequently identified the complete History workspace for main-window
+integration. See the integrated-history follow-up plan and validation record.

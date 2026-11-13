@@ -177,7 +177,7 @@
           <div class="card">
             <h3>Write directly at your cursor</h3>
             <ol>
-              <li>Enable <strong>Insert live text at the cursor</strong> on the <strong>Dictation</strong> tab. The change is saved automatically.</li>
+              <li>Enable <strong>Insert live text at the cursor</strong> on the <strong>Dictation</strong> section. The change is saved automatically.</li>
               <li>Click your destination field, with no text selected.</li>
               <li>Press and release your shortcut, <kbd>Ctrl</kbd> + <kbd>Shift</kbd> by default. Speak.</li>
               <li>Press the shortcut again, or select <strong>Finish</strong> in the banner, to stop.</li>
@@ -215,7 +215,7 @@
 
       <section id="review" aria-labelledby="review-title">
         <h2 id="review-title">Verify after recording and Review</h2>
-        <p>Enable <strong>Verify after recording</strong> on the <strong>Dictation</strong> tab to reveal the <strong>Verification model</strong> selector. Choose a different eligible model for a second pass over the audio. Verification takes extra time, and either model can be wrong. Turning verification off hides these details and retains an eligible selected model for next time.</p>
+        <p>Enable <strong>Verify after recording</strong> on the <strong>Dictation</strong> section to reveal the <strong>Verification model</strong> selector. Choose a different eligible model for a second pass over the audio. Verification takes extra time, and either model can be wrong. Turning verification off hides these details and retains an eligible selected model for next time.</p>
         <ol>
           <li>Dictate and stop recording.</li>
           <li>The transcript is saved before its live draft is removed from a validated destination. Surrounding text stays.</li>
@@ -272,7 +272,7 @@
 
       <section id="models" aria-labelledby="models-title">
         <h2 id="models-title">Models and languages</h2>
-        <p>Choose <strong>Dictation model</strong> and <strong>Language</strong> on the <strong>Dictation</strong> tab; valid choices save automatically. The dropdown also lists catalog entries marked <strong>not installed</strong>; install those before selecting them for recording. Available languages and verification choices depend on the model.</p>
+        <p>Choose <strong>Dictation model</strong> and <strong>Language</strong> on the <strong>Dictation</strong> section; valid choices save automatically. The dropdown also lists catalog entries marked <strong>not installed</strong>; install those before selecting them for recording. Available languages and verification choices depend on the model.</p>
         <div class="table-scroll" role="region" aria-label="Current model modes" tabindex="0">
           <table>
             <caption>Current local model profiles</caption>
@@ -288,7 +288,7 @@
 
         <h3>Install or test a model</h3>
         <ol>
-          <li>Open the <strong>Models</strong> tab.</li>
+          <li>Open the <strong>Models</strong> section.</li>
           <li>Use <strong>Inspect selected catalog model</strong>, or enter a public repository URL/<code>owner/name</code> and <strong>Inspect compatibility and size</strong>.</li>
           <li>Check the size, then <strong>Download inspected model</strong>.</li>
           <li>Select the installed Dictation model and <strong>Test selected model with audio…</strong>.</li>
@@ -306,7 +306,7 @@
 
       <section id="history" aria-labelledby="history-title">
         <h2 id="history-title">History and original audio</h2>
-        <p>Open <strong>History</strong> from the notification-area menu, or select <strong>Open transcript and audio history</strong> on the <strong>History</strong> tab.</p>
+        <p>Select <strong>History</strong> in the main window. <strong>History</strong> in the notification-area menu opens this same section. The list, selected transcript, audio player and actions are all here; there is no separate History window.</p>
         <ul>
           <li>The <strong>Play</strong>, <strong>Pause</strong> and <strong>Stop</strong> icons control the selected original recording. Pause keeps your position; Stop returns to the beginning.</li>
           <li>Drag the round timeline thumb to seek. Elapsed/total time and the amplitude waveform show your position. With the slider focused, Left/Right move one second; Page Up/Page Down move five seconds. Selecting a recording does not play it.</li>
@@ -317,16 +317,27 @@
         </ul>
         <div class="callout">
           <strong>History keeps the latest 20 dictations with audio.</strong>
-          <p>The next saved item removes the oldest transcript and audio. Pending Review is separate. Recordings without received text do not create history items.</p>
+          <p>The next saved item removes the oldest transcript and audio. Pending Review is separate. A recording with captured audio can be retained even when no words were recognized; use Change language… to try that audio again.</p>
         </div>
+        <h3>Insert a saved pending result</h3>
+        <ol>
+          <li>Select the dictation in History and choose <strong>Open Review</strong>.</li>
+          <li>Resolve the remaining wording choices, or edit and approve the final draft.</li>
+          <li>Click the destination field so its text cursor is visible, then click <strong>Insert</strong> in the floating Review. The Insert click keeps that destination focused.</li>
+        </ol>
+        <p>If an earlier attempt left some live text elsewhere, inspect it before choosing a new position. Explicit Insert replaces a live draft only when its exact ownership at the selected cursor can be proven; otherwise earlier text is preserved. An unsettled paste must finish or be resolved before another insertion.</p>
+        <h3>Try another model or correct the language</h3>
+        <p>Choose <strong>Open Review → Second transcript…</strong> and select an eligible different model to compare the original recording. It creates a separate comparison, keeps the source and your edits, and shows the full second transcript. This action waits for explicit Insert even when both models agree. A saved original recording and an eligible installed, runtime-tested verifier are required; see <a href="#review">Review</a>.</p>
+        <p>Use <strong>Change language…</strong> in History to transcribe the same audio in another supported language. It creates a new Review without starting the microphone or changing text previously inserted elsewhere.</p>
         <p>An item marked <strong>Already inserted</strong> shows the saved text with insertion and phrase editing disabled. Its original choices and recording information remain available through <strong>Details</strong>. Use <strong>Copy text</strong> if you want to reuse that text manually.</p>
+        <p>At narrower sizes, the list moves above the selected transcript; scroll the page to reach playback and actions. Leaving History or closing the main window stops playback. Returning keeps the selected dictation and does not play it automatically.</p>
         <p>History is protected for your Windows account. Exported WAV files are ordinary, unencrypted audio; export recordings you need beyond the limit.</p>
       </section>
 
       <section id="settings" aria-labelledby="settings-title">
         <h2 id="settings-title">Settings and shortcuts</h2>
-        <p>The <strong>Dictation</strong> tab groups the microphone, model, language, and both live options. <strong>Insert live text at the cursor</strong> sits directly below <strong>Live transcription</strong>. Enable <strong>Verify after recording</strong> to show its additional settings.</p>
-        <p>Open the <strong>Settings</strong> tab for appearance, shortcut, and local service preferences. Connection and automatic saving status share one row at the top of the window.</p>
+        <p>The <strong>Dictation</strong> section groups the microphone, model, language, and both live options. <strong>Insert live text at the cursor</strong> sits directly below <strong>Live transcription</strong>. Enable <strong>Verify after recording</strong> to show its additional settings.</p>
+        <p>Open the <strong>Settings</strong> section for appearance, shortcut, and local service preferences. Connection and automatic saving status share one row at the top of the window.</p>
         <dl>
           <dt>Appearance</dt>
           <dd><strong>System</strong> follows Windows at app startup. <strong>Light</strong> / <strong>Dark</strong> override it. Preview is immediate and saves automatically. Windows high contrast takes priority.</dd>
@@ -339,7 +350,7 @@
         </dl>
         <h3>Close Settings or exit the app</h3>
         <p><strong>Close</strong> closes Settings; the app stays available in the Windows notification area. Choose <strong>Exit</strong> from its notification-area menu to quit.</p>
-        <p>If a session is active, Exit asks to stop it, then waits while it saves the received text and original recording before closing. Stopping this way keeps the text for Review and does not complete automatic insertion. A recording needs received text to appear in History. If protected Review saving fails, the app stays open so you can copy or explicitly dismiss the unsaved text.</p>
+        <p>If a session is active, Exit asks to stop it, then waits while it saves the received text and original recording before closing. Stopping this way keeps the text for Review and does not complete automatic insertion. Captured audio can appear in History even if recognition returned no text. If protected Review saving fails, the app stays open so you can copy or explicitly dismiss the unsaved text.</p>
         <h3>Local transcription service</h3>
         <p>If offline, use <strong>Start local API</strong>, wait for preparation, then <strong>Reconnect</strong>. Disconnected clients also retry automatically.</p>
         <p>Current address: <code>http://127.0.0.1:48125</code>. TypeWhisper's separate batch server on port <code>8123</code> is not this client's session service.</p>
@@ -352,7 +363,7 @@
           <ol>
             <li>Open <strong>Settings → Local transcription service</strong> and select <strong>Start local API</strong>.</li>
             <li>Wait for preparation, then select <strong>Reconnect</strong>. Confirm the address points to the session service.</li>
-            <li>Check that the required model is installed on the <strong>Models</strong> tab.</li>
+            <li>Check that the required model is installed on the <strong>Models</strong> section.</li>
           </ol>
         </details>
         <details>
@@ -366,7 +377,7 @@
         <details>
           <summary>The microphone is silent, unavailable, or recording is interrupted</summary>
           <ol>
-            <li>Reconnect the microphone and select <strong>Refresh microphones</strong> on the <strong>Dictation</strong> tab.</li>
+            <li>Reconnect the microphone and select <strong>Refresh microphones</strong> on the <strong>Dictation</strong> section.</li>
             <li>Select the intended input device and check the automatic saving status. <strong>System default microphone</strong> follows the Windows default capture device.</li>
             <li>Check Windows microphone access and the input level. Watch whether the banner's waveform reacts while you speak.</li>
             <li>Retry after correcting the device or service issue. Check Pending Review for text already received.</li>
@@ -419,7 +430,7 @@
         </details>
         <details>
           <summary>A recording is missing from History or will not play</summary>
-          <p>History contains the latest 20 items that had both received text and recorded audio. Earlier items may have been removed by the limit or explicitly deleted. Check your playback device if a saved item will not play. A pending Review can outlive its history audio; it is not an unlimited recording archive. If History saving fails, the transcript is kept in Pending Review, but audio recovery is unavailable.</p>
+          <p>History contains the latest 20 retained recordings, including recordings where no words were recognized. Earlier items may have been removed by the limit or explicitly deleted. Check your playback device if a saved item will not play. A pending Review can outlive its history audio; it is not an unlimited recording archive. If History saving fails, the transcript is kept in Pending Review, but audio recovery is unavailable.</p>
         </details>
       </section>
 

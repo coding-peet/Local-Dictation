@@ -16,11 +16,13 @@ task-local launcher; it does not install a Windows service or change startup.
 ## Appearance and keyboard shortcut
 
 In Settings, choose System, Light, or Dark under Appearance.
-The preview updates immediately. Select Save settings to keep the choice.
+The preview updates immediately and valid choices save automatically. Check the
+saving status in the main window; there is no separate Save settings step.
 System follows Windows when the app starts; Windows high contrast takes priority.
 
 The default shortcut is Ctrl+Shift. To change it, enter a modifier combination
-and Space, a letter, digit, or F1 through F24, then Save settings.
+and Space, a letter, digit, or F1 through F24. Text changes save after a short
+pause or focus change; invalid text leaves the previous shortcut active.
 For example: Ctrl+Alt+Space or Ctrl+Shift+D.
 
 When TypeWhisper is running, the default Ctrl+Shift shortcut is disabled here
@@ -30,16 +32,30 @@ keeps all global shortcuts disabled until the app is relaunched normally.
 
 ## Recent transcripts and audio
 
-Open History from the tray menu or the History tab.
+Select History in the main window. The tray History action opens the same
+section, with the full list, selected transcript and player. No separate
+History window is opened.
 
-- Play or stop the selected recording.
-- Copy the current transcript or open it in Review.
+- Use the Play, Pause and Stop icons. Pause keeps the current position; Stop
+  returns to the beginning.
+- Drag the round timeline thumb to seek. Elapsed/total time and the amplitude
+  waveform show the position. Left/Right seek one second; Page Up/Page Down
+  seek five seconds while the slider is focused.
+- Copy the current transcript or open it in Review. For a pending result,
+  resolve/edit the text, click a destination cursor, then click Insert.
+- In Review, Second transcript compares the retained audio with an eligible
+  different model. History Change language reprocesses that same audio in
+  another supported language. Both preserve the source and create a new Review.
 - Save audio exports an ordinary WAV to your chosen location.
 - Delete removes that history item and its audio.
 
-The client keeps the latest 20 dictations containing received text and recorded
-audio. After the 21st is saved, the oldest transcript and audio are removed.
+The client keeps the latest 20 retained recordings, including audio with no
+recognized words. After the 21st is saved, the oldest transcript and audio are removed.
 Pending Review is stored separately and is not removed by this limit.
+
+On a narrow window, the list moves above the transcript; scroll the page to
+reach the player and actions. Leaving History stops playback and clears its
+loaded audio. Returning keeps selection without automatically playing.
 
 History is under C:\AI\LocalDictation\data\history, or the corresponding
 LOCAL_DICTATION_HOME data directory. Text metadata and WAV audio are protected

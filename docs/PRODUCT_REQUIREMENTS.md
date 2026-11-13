@@ -310,6 +310,15 @@ punctuation, whitespace, and Unicode must be preserved.
 
 ## History and recovery
 
+- Embed the complete Recent dictations workspace in the main window's History
+  section: list, selected transcript/model/language, player and existing actions.
+  History in the notification-area menu opens that same section and main window.
+  Do not open a separate History window or require a launcher button.
+- Use a list/detail layout with a stacked compact layout and vertical scrolling
+  when space is limited. Preserve the selected item during refresh/navigation.
+  Load its protected audio only while History is selected; leaving the section
+  stops/clears playback. Closing the main window disposes its player/subscriptions.
+
 - Retain the latest 20 dictations with their original audio. Evict the oldest
   history transcript and audio when adding a 21st item.
 - Protect saved transcripts and audio for the current Windows account with

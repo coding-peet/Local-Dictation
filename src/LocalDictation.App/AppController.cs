@@ -40,7 +40,6 @@ public sealed class AppController : IDisposable
     readonly PendingReviews pending;
     readonly HistoryStore historyStore=new(Path.Combine(AppPaths.Data,"history"));
     public IReadOnlyList<HistoryEntry> History {get;private set;}=[];
-    HistoryWindow? historyWindow;
     readonly DispatcherTimer reconnectTimer=new(){Interval=TimeSpan.FromSeconds(5)};
     bool refreshing;
     ReviewWindow? reviewWindow;
@@ -1356,9 +1355,7 @@ public sealed class AppController : IDisposable
     public void DeleteHistory(string id){historyStore.Delete(id);History=historyStore.Load();Changed?.Invoke();}
     public void ShowHistory()
     {
-        if(historyWindow!=null){historyWindow.Show();historyWindow.Activate();return;}
-        historyWindow=new HistoryWindow(this);historyWindow.Closed+=(_,_)=>historyWindow=null;
-        historyWindow.Show();historyWindow.Activate();
+        ShowSettings();settingsWindow!.SelectHistory();
     }
     bool ClipboardBlocksExit()
     {

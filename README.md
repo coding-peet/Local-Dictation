@@ -9,44 +9,26 @@ from this repository; model weights and personal data are stored separately.
 
 ## Latest installed build: 13 November 2026
 
-Version `0.1.0-banner-model.20261113.1` is installed and running in
-C:\Git\Local-Dictation\app, with candidate session API 48125 ready.
-The banner shows actual `Auto · SK` / `Auto · EN` language metadata and a small
-active model name. Preferred-language tags with `+` restrict correction choices;
-clearing all tags restores the full supported language list. Language correction
-reuses the original audio. Verify keeps the first transcript in a read-only
-banner and uses the resolved source language for its second pass.
+Version `0.1.0-history.20261113.1` is installed in C:\Git\Local-Dictation\app.
+The complete Recent dictations workspace lives in the main History section;
+the tray History action opens that same section. It includes the transcript,
+Play/Pause/Stop icons, a seekable timeline and the recording amplitude waveform.
 
-Validation: 376 Core tests and 36 windowless UI/lifecycle checks passed; Release
-publish had zero warnings/errors. The unchanged backend last passed 132 tests.
-All 17 installed files and backups were hash-verified; settings are byte-identical.
-Both API processes were preserved. No desktop control, recording or playback
-was used for this update. Earlier guarded cursor and pause-worker fixes remain.
+Explicit Insert captures the external cursor selected immediately before the
+click, including after an old destination failed. Automatic Finish retains its
+original-field guards. Review offers a second-model pass over the protected
+original recording and shows the complete second transcript.
 
-See [preferred picker and model caption](docs/development/preferred-picker-model-20261113.md),
-[language and Verify](docs/development/input-language-verification-20261113.md)
-and [banner layout](docs/development/language-banner-layout-20261113.md) for evidence.
-Earlier prepared-Review placement into Outlook through Ctrl+Shift passed a native
-check. Complete live speech-pause and automatic recording-to-Outlook Finish
-acceptance remain unconfirmed; see [native acceptance](docs/development/native-acceptance-20261113.md).
+Validation: 421 Core tests and 58 windowless controller/UI checks passed.
+The backend passed 149 synthetic tests before the preceding source publication.
+All 17 installed files and their backups were hash-verified; settings stayed
+byte-identical. Session API 48125 is ready and exposes saved-audio verification.
+The separate TypeWhisper service on 8123 was already stopped and was not started.
 
-The source prepared for publication also waits for the previous API owner to
-release admission before a language replay and retains duration during Verify.
-These final review corrections passed 379 Core tests and 38 windowless checks;
-the backend passed 132 synthetic tests. They were not deployed during this Git
-task. See [pre-commit verification](docs/development/pre-commit-verification-20261113.md).
-
-## Prepared selected-cursor and Review update
-
-Version `0.1.0-review.20261113.1` is prepared separately; it is not yet the
-installed client. Explicit Insert uses the external cursor selected immediately
-before the click. Review can compare the original audio with a second model,
-and History provides Play/Pause/Stop, seeking, time and an amplitude waveform.
-
-Validation: 421 Core tests, 149 backend tests and 50 windowless controller/UI
-checks passed. Release publish succeeded. No desktop control or sound was used;
-native OpenAI/Outlook and audio-device acceptance remain manual checks.
-See [selected-cursor and Review validation](docs/development/selected-cursor-review-20261113.md).
+No desktop control, microphone capture or audio playback was used for this
+update. Native OpenAI/Outlook insertion and audio-device acceptance remain
+manual checks. See [integrated History validation](docs/development/integrated-history-20261113.md)
+and [selected-cursor and Review validation](docs/development/selected-cursor-review-20261113.md).
 
 ## Start here
 
