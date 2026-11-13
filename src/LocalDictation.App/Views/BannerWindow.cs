@@ -94,7 +94,7 @@ public sealed class BannerWindow : Window
         if(controller.IsRecording){controller.Stop();return;}
         if(controller.IsBusy||controller.IsApplyingReview)return;
         if(controller.CanRestoreClipboard){controller.ShowClipboardRecoveryDetails();return;}
-        if(controller.BannerReview is {CanInsert:true})_=controller.ApplyBannerReview();
+        if(controller.BannerReview is {CanInsert:true})_=controller.ApplyBannerReviewAtSelectedCursor();
         else if(controller.BannerReview is {} review)controller.OpenReview(review);
     }
     void MakeDraggable(FrameworkElement grip)

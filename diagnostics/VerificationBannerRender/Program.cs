@@ -78,6 +78,7 @@ static class Program
             Require(!File.Exists(Path.Combine(AppPaths.Data,"settings.json")),"Invalid Auto preferences were written before validation.");
             checks.Add("invalid preferences preserve saved settings");
             CheckReplayReceipts(output,checks);
+            ReviewWorkflowChecks.Insertion(output,checks);
             var cancelledController=(AppController)RuntimeHelpers.GetUninitializedObject(typeof(AppController));
             var cancelledRunType=typeof(AppController).GetNestedType("Run",BindingFlags.NonPublic)!;
             var cancelledRun=RuntimeHelpers.GetUninitializedObject(cancelledRunType);
@@ -96,6 +97,7 @@ static class Program
             foreach(var theme in new[]{"Light","Dark"})
             {
                 ThemeManager.Apply(theme);
+                ReviewWorkflowChecks.Render(theme,output,checks);
                 Render(theme,true,false,true,"Toto je prvý prepis. Po kontrole sa vráti na pôvodný kurzor.","verifying-short");
                 Render(theme,true,false,true,string.Join(" ",Enumerable.Repeat("Dlhší prvý prepis zostáva počas overovania iba v náhľade bannera.",12)),"verifying-long");
                 Render(theme,true,false,false,"Prvý model ešte dokončuje poslednú vetu.","finishing");

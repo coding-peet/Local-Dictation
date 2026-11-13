@@ -21,6 +21,12 @@ BUILTINS = [
      "live_supported":True,"live_ready":False,"prevalidated":False}
 ]
 
+
+def canonical_model_id(model):
+    aliases = {"kinit-turbo": BUILTINS[0]["id"], "whisper-large": BUILTINS[1]["id"],
+               "whisper-large-turbo": BUILTINS[2]["id"]}
+    return aliases.get(model, model)
+
 class Catalog:
     def __init__(self,config):
         self.config=config
@@ -104,10 +110,8 @@ class Catalog:
                     for m in self.entries.values()]
 
     def require(self,model):
-        aliases={"kinit-turbo":BUILTINS[0]["id"],"whisper-large":BUILTINS[1]["id"],
-                 "whisper-large-turbo":BUILTINS[2]["id"]}
         with self.lock:
-            entry=self.entries.get(aliases.get(model,model))
+            entry=self.entries.get(canonical_model_id(model))
             if not entry:raise ValueError("Unknown model. Select an installed model from Models.")
             self.check(entry)
             if not entry["installed"]:raise ValueError("This model installation is missing or incomplete.")

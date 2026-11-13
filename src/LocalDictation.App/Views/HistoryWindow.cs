@@ -2,7 +2,6 @@ using System.Security.Cryptography;
 using System.Windows;
 using System.Windows.Controls;
 using LocalDictation.Core;
-using NAudio.Wave;
 
 namespace LocalDictation.App.Views;
 
@@ -12,7 +11,8 @@ public sealed class HistoryWindow : Window
     readonly ListBox items=new(){DisplayMemberPath="Label",MinHeight=150};
     readonly TextBox transcript=new(){IsReadOnly=true,AcceptsReturn=true,TextWrapping=TextWrapping.Wrap,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,VerticalContentAlignment=VerticalAlignment.Top};
     readonly TextBlock detail=Ui.Text(""),message=Ui.Text("");
-    WaveOut? player;WaveFileReader? reader;byte[]? audio;
+    readonly HistoryAudioPlayerControl playback=new();
+    bool refreshing;
     IReadOnlyList<HistoryEntry>? shown;
     public HistoryWindow(AppController controller)
     {
@@ -22,9 +22,9 @@ public sealed class HistoryWindow : Window
         header.Children.Add(Ui.Text("The latest 20 dictations and recordings, protected for your Windows account.",14));
         DockPanel.SetDock(header,Dock.Top);root.Children.Add(header);
         var footer=new StackPanel{Margin=new(0,16,0,0)};
+        playback.Margin=new(0,0,0,8);playback.PlaybackError+=text=>message.Text=text;footer.Children.Add(playback);
         var actions=new WrapPanel();
-        foreach(var button in new[]{Ui.Button("Play audio",Play,true),Ui.Button("Stop",Stop),
-            Ui.Button("Copy text",Copy),Ui.Button("Open Review",OpenReview),
+        foreach(var button in new[]{Ui.Button("Copy text",Copy),Ui.Button("Open Review",OpenReview),
             Ui.Button("Change language…",()=>{if(Selected is {} entry)controller.ShowInputLanguage(entry.Document);}),
             Ui.Button("Save audio…",Export),Ui.Button("Delete",Delete)}){button.Margin=new(0,0,8,8);actions.Children.Add(button);}
         footer.Children.Add(actions);footer.Children.Add(message);DockPanel.SetDock(footer,Dock.Bottom);root.Children.Add(footer);
@@ -36,41 +36,29 @@ public sealed class HistoryWindow : Window
         SizeChanged+=(_,_)=>{var compact=ActualWidth<800;body.ColumnDefinitions[0].Width=new(compact?200:280);};
         System.Windows.Automation.AutomationProperties.SetName(items,"Recent dictations");
         System.Windows.Automation.AutomationProperties.SetName(transcript,"Selected dictation transcript");
-        items.SelectionChanged+=(_,_)=>Select();Closed+=(_,_)=>{Stop();controller.Changed-=Refresh;};
+        items.SelectionChanged+=(_,_)=>{if(!refreshing)Select();};Closed+=(_,_)=>{playback.Dispose();controller.Changed-=Refresh;};
         controller.Changed+=Refresh;Refresh();
     }
     HistoryEntry? Selected=>items.SelectedItem as HistoryEntry;
     void Refresh()
     {
         if(ReferenceEquals(shown,controller.History))return;shown=controller.History;
-        var id=Selected?.Id;items.ItemsSource=controller.History;
-        items.SelectedItem=controller.History.FirstOrDefault(e=>e.Id==id)??controller.History.FirstOrDefault();
+        var id=Selected?.Id;refreshing=true;
+        try
+        {
+            items.ItemsSource=controller.History;
+            items.SelectedItem=controller.History.FirstOrDefault(e=>e.Id==id)??controller.History.FirstOrDefault();
+        }
+        finally{refreshing=false;}
         Select();
     }
     void Select()
     {
-        Stop();transcript.Text=Selected?.Document.OutputText??"";
+        playback.Clear();message.Text="";transcript.Text=Selected?.Document.OutputText??"";
         detail.Text=Selected is {} e?$"{e.Document.PrimaryModel} · {e.DurationSeconds:0.0} seconds · {LanguagePolicy.Label(e.Document.RequestedLanguage,e.Document.Language,e.Document.LanguageMode,null)}":"No dictations saved yet.";
-    }
-    void Play()
-    {
-        if(Selected is not {} entry)return;Stop();
-        try
-        {
-            audio=controller.HistoryAudio(entry.Id);reader=new WaveFileReader(new MemoryStream(audio,false));
-            player=new WaveOut();player.Init(reader);
-            var playing=player;
-            player.PlaybackStopped+=(_,_)=>Dispatcher.BeginInvoke(()=>{if(ReferenceEquals(player,playing)){message.Text="Playback stopped.";Stop();}});
-            player.Play();message.Text="Playing original recording…";
-        }
-        catch(Exception){Stop();message.Text="Audio could not be played. Check your output device and saved recording.";}
-    }
-    void Stop()
-    {
-        var old=player;player=null;
-        if(old!=null){old.Stop();old.Dispose();}
-        reader?.Dispose();reader=null;
-        if(audio!=null)CryptographicOperations.ZeroMemory(audio);audio=null;
+        if(Selected is not {} entry)return;
+        try{playback.LoadAudio(controller.HistoryAudio(entry.Id));}
+        catch(Exception){playback.Clear();message.Text="The original recording could not be opened.";}
     }
     void Copy(){if(Selected is not {} entry)return;try{Clipboard.SetText(entry.Document.OutputText);message.Text="Copied.";}catch(Exception){message.Text="Clipboard unavailable. Select and copy the text manually.";}}
     void OpenReview(){if(Selected is {} entry)controller.OpenReview(entry.Document);}
@@ -88,6 +76,6 @@ public sealed class HistoryWindow : Window
     {
         if(Selected is not {} entry)return;
         if(MessageBox.Show(this,"Delete this transcript and recording from History? Pending Review is kept separately.","Delete dictation",MessageBoxButton.YesNo,MessageBoxImage.Question)!=MessageBoxResult.Yes)return;
-        Stop();try{controller.DeleteHistory(entry.Id);message.Text="Deleted.";}catch(Exception){message.Text="Could not delete this history item.";}
+        playback.Clear();try{controller.DeleteHistory(entry.Id);message.Text="Deleted.";}catch(Exception){message.Text="Could not delete this history item.";}
     }
 }

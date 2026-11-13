@@ -18,6 +18,9 @@ public sealed class CompactReviewPanel : Border
     readonly TextBox custom=new();
     readonly Button saveCustom,cancelCustom,editText,useEdited,exitText;
     readonly TextBox directEditor=new();
+    readonly TextBox secondTranscript=new(){IsReadOnly=true,VerticalContentAlignment=VerticalAlignment.Top,TextWrapping=TextWrapping.Wrap,AcceptsReturn=true,
+        VerticalScrollBarVisibility=ScrollBarVisibility.Auto,Height=140};
+    readonly StackPanel secondTranscriptPanel=new(){Margin=new(0,12,0,0),Visibility=Visibility.Collapsed};
     readonly WrapPanel directActions=new();
     ReviewDocument? editingDocument;
     bool editingText,updatingDirectText;
@@ -184,6 +187,11 @@ public sealed class CompactReviewPanel : Border
         var actions=new WrapPanel{Margin=new(0,2,0,0)};
         foreach(var button in new[]{editText,edit,keep,destination,details})actions.Children.Add(button);
         column.Children.Add(actions);
+        var secondLabel=Ui.Text("Second transcript",12,true);secondLabel.Margin=new(0,0,0,8);
+        secondTranscript.SetResourceReference(TextBox.ForegroundProperty,"Ink");secondTranscript.SetResourceReference(TextBox.BackgroundProperty,"Surface");
+        secondTranscript.SetResourceReference(TextBox.BorderBrushProperty,"InputBorder");
+        secondTranscriptPanel.Children.Add(secondLabel);secondTranscriptPanel.Children.Add(secondTranscript);column.Children.Add(secondTranscriptPanel);
+        System.Windows.Automation.AutomationProperties.SetName(secondTranscript,"Complete second-model transcript");
         status.FontSize=11.5;status.LineHeight=17;status.Foreground=Muted;status.TextWrapping=TextWrapping.Wrap;status.Margin=new(0,7,0,0);
         column.Children.Add(status);
         Child=new ScrollViewer{Content=column,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled};
@@ -283,6 +291,8 @@ public sealed class CompactReviewPanel : Border
         var document=controller.BannerReview;
         if(document==null){Visibility=Visibility.Collapsed;shownDocument=null;editingDocument=null;editingText=false;return;}
         Visibility=Visibility.Visible;
+        secondTranscriptPanel.Visibility=document.HasCompletedVerification?Visibility.Visible:Visibility.Collapsed;
+        if(secondTranscript.Text!=document.Verification)secondTranscript.Text=document.Verification;
         var selected=controller.SelectedReviewPieceId;
         var selectedPiece=document.Pieces.FirstOrDefault(p=>p.Different&&p.Id==selected);
         var inserted=document.InsertedAt!=null;

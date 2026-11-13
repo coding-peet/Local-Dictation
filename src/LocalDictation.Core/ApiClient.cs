@@ -44,9 +44,11 @@ public sealed class ApiClient : IDisposable
 {
     readonly HttpClient http;
     public ApiClient(Settings settings):this(settings,new HttpClientHandler {UseProxy=false}){}
-    public ApiClient(Settings settings,HttpMessageHandler handler)
+    public ApiClient(Settings settings,HttpMessageHandler handler):this(settings,handler,TimeSpan.FromSeconds(45)){}
+    public ApiClient(Settings settings,TimeSpan timeout):this(settings,new HttpClientHandler {UseProxy=false},timeout){}
+    public ApiClient(Settings settings,HttpMessageHandler handler,TimeSpan timeout)
     {
-        http = new(handler) { BaseAddress = settings.ServerUri(), Timeout = TimeSpan.FromSeconds(45) };
+        http = new(handler) { BaseAddress = settings.ServerUri(), Timeout = timeout };
     }
     public async Task<JsonElement> Get(string path, CancellationToken token = default)
     {
@@ -98,6 +100,19 @@ public sealed class ApiClient : IDisposable
         content.Add(new StringContent(language), "language");
         using var response = await http.PostAsync("/v1/models/test", content, token);
         await Read(response, token);
+    }
+    public async Task<SavedVerificationResult> VerifyRecording(byte[] wave,ReviewDocument source,string verifier,string language,
+        IReadOnlyList<string> preferred,CancellationToken token)
+    {
+        using var content=new MultipartFormDataContent();
+        var audio=new ByteArrayContent(wave);audio.Headers.ContentType=new("audio/wav");
+        content.Add(audio,"file","recording.wav");content.Add(new StringContent(verifier),"model");
+        content.Add(new StringContent(source.Primary),"primary");content.Add(new StringContent(source.PrimaryModel),"primary_model");
+        content.Add(new StringContent(language),"language");
+        if(source.Provenance?.Primary.Revision is {} revision)content.Add(new StringContent(revision),"primary_revision");
+        if(preferred.Count>0)content.Add(new StringContent(JsonSerializer.Serialize(preferred)),"preferred_languages");
+        using var response=await http.PostAsync("/v1/audio/verifications",content,token);
+        return (await Read(response,token)).Deserialize<SavedVerificationResult>(Protocol.Json)??throw new InvalidDataException("No second transcript was returned.");
     }
     public void Dispose() => http.Dispose();
 }

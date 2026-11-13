@@ -17,7 +17,11 @@ public sealed class ReviewWindow : Window
         MinHeight=210, BorderThickness=new(0), Padding=new(16), FontSize=16 };
     readonly TextBox primary = Ui.Box(false,64), verification = Ui.Box(false,64), custom = Ui.Box(true,62), manual = Ui.Box(true,130);
     readonly TextBlock counter=Ui.Text(""), note=Ui.Text(""), sourceLabel=Ui.Text("");
-    readonly Button copy,acceptButton,destinationButton,undo,rebuild,restore;
+    readonly Button copy,acceptButton,destinationButton,undo,rebuild,restore,verifyButton;
+    Action<ReviewDocument>? verifyAction;
+    bool verificationAvailable;
+    public void SetVerificationAction(Action<ReviewDocument> action,bool available)
+    {verifyAction=action;verificationAvailable=available;verifyButton.IsEnabled=available&&!IsApplying;}
     readonly StackPanel manualPanel=new();
     readonly Border choiceCard;
     readonly Grid middle=new();
@@ -56,12 +60,14 @@ public sealed class ReviewWindow : Window
         var buttons=new WrapPanel { Margin=new(0,10,0,8) };
         acceptButton=Ui.Button("_Accept and insert",()=>_ = Accept(),true);
         destinationButton=Ui.Button("Choose destination",()=>this.chooseDestination(document));
+        LocalDictation.App.Services.SelectedCaretInsertActivation.Attach(this,acceptButton);
+        verifyButton=Ui.Button("Second transcript…",()=>verifyAction?.Invoke(document));verifyButton.IsEnabled=false;
         copy=Ui.Button("_Copy reviewed text",Copy);
         undo=Ui.Button("_Undo choice",()=>{document.Undo();Changed();});
         var keep=Ui.Button("_Keep remaining dictation",()=>{document.KeepRemaining();Changed();});
         var close=Ui.Button("Close",Close);
         var remove=Ui.Button("_Dismiss",Dismiss);
-        foreach(var button in new[]{acceptButton,destinationButton,copy,undo,keep,close,remove}) { button.Margin=new(0,0,8,8); buttons.Children.Add(button); }
+        foreach(var button in new[]{acceptButton,destinationButton,verifyButton,copy,undo,keep,close,remove}) { button.Margin=new(0,0,8,8); buttons.Children.Add(button); }
         footer.Children.Add(buttons);
         footer.Children.Add(note);
         footer.Children.Add(Ui.Text("Accept inserts the reviewed text and closes this window. Close keeps the pending Review for later.",12));
@@ -202,6 +208,7 @@ public sealed class ReviewWindow : Window
             copy.IsEnabled=document.UnresolvedCount==0;
             acceptButton.IsEnabled=document.CanInsert&&!IsApplying;
             destinationButton.IsEnabled=document.CanInsert&&!IsApplying;
+            verifyButton.IsEnabled=verificationAvailable&&!IsApplying;
             undo.IsEnabled=document.History.Count>0;
             manualPanel.Visibility=document.ManualFinalDraft!=null||document.PreviousManualDraft!=null?Visibility.Visible:Visibility.Collapsed;
             manual.Visibility=document.ManualFinalDraft!=null?Visibility.Visible:Visibility.Collapsed;

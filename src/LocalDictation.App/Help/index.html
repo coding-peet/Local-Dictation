@@ -236,13 +236,16 @@
               <tr><td>Remove this text</td><td>An empty alternative deliberately removes the phrase. <strong>∅</strong> marks an empty phrase in the transcript.</td></tr>
               <tr><td>Edit wording → Use this wording</td><td>Type your correction, then select <strong>Use this wording</strong> or press and release <kbd>Enter</kbd> to apply it and advance. <strong>Cancel</strong> or <kbd>Esc</kbd> leaves it unapplied.</td></tr>
               <tr><td>Keep the remaining wording</td><td>Keeps the displayed wording for remaining phrases without changing existing choices, then inserts when possible.</td></tr>
-              <tr><td>Insert</td><td>Retries a ready text's insertion when a previous attempt could not finish. No manual copy/paste is needed.</td></tr>
+              <tr><td>Insert</td><td>Places ready text at the external cursor you selected. Click in the destination first, then click Insert in the floating Review. The Insert click keeps focus in your destination.</td></tr>
+              <tr><td>Second transcript…</td><td>Choose a different eligible model to transcribe the original recording and open a new comparison. The complete second transcript is also shown read-only.</td></tr>
               <tr><td>Details</td><td>Opens the optional full editor with original model outputs, revision information, undo, and whole-text editing.</td></tr>
             </tbody>
           </table>
         </div>
         <p>A phrase correction is saved as you type, but changes the transcript only after <strong>Use this wording</strong>. Cancelling the editor, choosing another phrase, or reopening Review keeps that draft for the next time you select <strong>Edit wording</strong> on the same phrase. Holding <kbd>Enter</kbd> does not accept following phrases.</p>
         <p>In <strong>Details</strong>, <strong>Dictation original</strong> and <strong>Verification original</strong> keep model outputs unchanged. An edited final draft takes precedence over phrase choices; <strong>Rebuild from choices</strong> preserves a previous draft for restoration.</p>
+        <h3>Try a second model on the same recording</h3>
+        <p>Select <strong>Second transcript…</strong> in Review or Details and choose an eligible installed model. This uses the protected original recording without opening the microphone or changing your source transcript. A separate comparison preserves your edits and original model information. Even if the models agree, this action waits for explicit placement. An already inserted History item can also be compared this way.</p>
         <h3>Type directly into the transcript</h3>
         <p>Click ordinary transcript text, press <kbd>F2</kbd>, or select <strong>Edit text</strong> to edit the whole draft in the compact Review window. Delete an extra word, add punctuation, or rewrite a sentence. Actual edits are saved automatically, including when Review closes.</p>
         <p>While editing the whole draft, phrase alternatives pause so they cannot overwrite your corrections. Select <strong>Use edited text</strong> when ready to return it to the validated destination. Typing or pressing <kbd>Enter</kbd> never approves it. Originals and comparison choices remain in <strong>Details</strong>.</p>
@@ -256,7 +259,8 @@
 
       <section id="destination" aria-labelledby="destination-title">
         <h2 id="destination-title">Choose a destination</h2>
-        <p>Use this when no external cursor was captured, for older Reviews after restart, or when the original field is no longer valid. A preview-only recording started with the shortcut from a valid field already has a remembered destination.</p>
+        <p>To place ready text, click in the desired external editable field so its cursor is visible, then click <strong>Insert</strong> in the floating Review. This captures the cursor you just chose, including after an earlier attempt failed. An exact original live draft at that cursor is replaced; text left at another position is preserved, so check for earlier drafts before choosing a different position.</p>
+        <p>Automatic Finish still uses the original validated field. If you finish while reviewing another window, the result stays pending. It will not appear later just because focus returns. For an alternative using the shortcut:</p>
         <ol>
           <li>Resolve all differences in Review.</li>
           <li>Select <strong>Choose destination</strong>. The banner shows placement instructions.</li>
@@ -304,7 +308,8 @@
         <h2 id="history-title">History and original audio</h2>
         <p>Open <strong>History</strong> from the notification-area menu, or select <strong>Open transcript and audio history</strong> on the <strong>History</strong> tab.</p>
         <ul>
-          <li><strong>Play audio</strong> plays the selected original recording; <strong>Stop</strong> stops playback.</li>
+          <li>The <strong>Play</strong>, <strong>Pause</strong> and <strong>Stop</strong> icons control the selected original recording. Pause keeps your position; Stop returns to the beginning.</li>
+          <li>Drag the round timeline thumb to seek. Elapsed/total time and the amplitude waveform show your position. With the slider focused, Left/Right move one second; Page Up/Page Down move five seconds. Selecting a recording does not play it.</li>
           <li><strong>Copy text</strong> copies the current transcript.</li>
           <li><strong>Open Review</strong> opens the item's current text in the separate compact Review window. Select <strong>Details</strong> for its original wordings and recording information. Reopening an item does not insert it.</li>
           <li><strong>Save audio…</strong> exports an ordinary WAV to a location you choose.</li>
@@ -383,7 +388,7 @@
           <p>Resolve every underlined phrase, or select <strong>Keep the remaining wording</strong>. The last choice inserts automatically when the original field is valid. If that destination is gone, use <strong>Choose destination</strong>. Reviews reopened after restarting the app need a new destination selection.</p>
           <p>Remove line breaks/control characters from a manual final draft. If protected saving fails, keep Review open and correct the storage problem before retrying.</p>
           <p>If the app says text was inserted but its saved insertion status could not be updated, check the destination and preserve a copy. Do not insert the same pending item again after restarting. Items marked <strong>Already inserted</strong> have insertion disabled.</p>
-          <p>Before final insertion, the app briefly waits for the remembered original field to regain focus. It keeps that destination; if the exact original field cannot be confirmed, insertion stays paused and your text remains in Review.</p>
+          <p>Automatic completion and the final wording choice use the validated original destination. Explicit <strong>Insert</strong> uses a fresh capture of the external cursor you selected. A click in Review's editor activates Review; click back into the destination before Insert. Unsupported, protected or elevated fields may still refuse placement. Your text stays protected if validation fails.</p>
           <p>Some editors temporarily leave pasted text selected. The app waits briefly for the original field's text and cursor to settle; it does not send a second paste while checking. Both must match exactly, apart from the specific Outlook line-break case below. If the field cannot confirm insertion, inspect it before retrying. Compatibility still depends on the destination application's accessibility support.</p>
         </details>
         <details>
@@ -439,7 +444,7 @@
       </section>
 
       <footer>
-        <p>Local Dictation · Windows client · Guide updated 12 November 2026</p>
+        <p>Local Dictation · Windows client · Guide updated 13 November 2026</p>
         <p>Labels in this guide match the current English interface. Model quality and cursor compatibility should be checked with your own recordings and destination apps.</p>
       </footer>
     </main>

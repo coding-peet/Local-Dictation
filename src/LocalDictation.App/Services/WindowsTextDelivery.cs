@@ -55,6 +55,35 @@ public sealed class WindowsTextDelivery : ITextDelivery
             DiagnosticJournal.Append("capture-metadata.jsonl",new{Time=DateTimeOffset.UtcNow,ProcessId=Environment.ProcessId,
                 Stage="provider-shape",shape.FrameworkId,shape.ClassName,shape.ControlTypeId});
     }
+    /// <summary>
+    /// Reuses a known live draft only when a fresh selected-caret capture proves
+    /// the exact same field, complete baseline and owned end. Memory reads only.
+    /// The controller serializes adoption with native work and checks its epoch.
+    /// </summary>
+    public bool TryAdoptOwnedRangeFrom(WindowsTextDelivery previous)
+    {
+        ArgumentNullException.ThrowIfNull(previous);
+        // Applied state is monotonic. These checks also prevent reciprocal lock
+        // acquisition: only an applied previous lease can feed an unwritten one.
+        if (guard.HasApplied || !previous.guard.HasApplied) return false;
+        lock (previous.lifecycleGate)
+        lock (lifecycleGate)
+        {
+            if (invalid != 0 || operating != 0 || previous.operating != 0 ||
+                transportFailure != 0 || previous.transportFailure != 0 ||
+                pendingPaste is not null || previous.pendingPaste is not null ||
+                confirmedReceipts.Current is not null || previous.confirmedReceipts.Current is not null ||
+                window == 0 || window != previous.window || capturedProvider is null ||
+                capturedProvider != previous.capturedProvider)
+                return false;
+
+            // A previous lease may have stopped on an old snapshot mismatch.
+            // Only the fresh capture's exact current proof can authorize adoption;
+            // this never revives that lease or relaxes its automatic-delivery guard.
+            return guard.TryAdoptOwnedRangeFrom(previous.guard);
+        }
+    }
+
     public void Invalidate()
     {
         lock(lifecycleGate){invalidationVersion++;Interlocked.Exchange(ref invalid,1);pendingPaste=null;}
@@ -580,7 +609,7 @@ public sealed class WindowsTextDelivery : ITextDelivery
             var element = AutomationElement.FocusedElement;
             var current = InspectOwned(element,observeInspection);
             if(!guard.CanResume(Identity(element),current.Text))
-                return Stop("The original field was edited. Its contents were left untouched; choose a destination for the reviewed text.");
+                return Stop("The original field no longer matches the saved text. Its contents were left untouched; select a destination cursor and click Insert.");
             if(current.Caret!=guard.Caret)
             {
                 selectionMade=true;OwnedEnd(current.Pattern).Select();

@@ -55,6 +55,17 @@ public sealed class ReviewDocument
         Provenance=value;
     }
 
+    public void CompletePendingVerificationProvenance(ReviewProvenance value)
+    {
+        // A post-hoc pass pins its original recording before inference; only the
+        // still-unknown second revision may be completed by the actual response.
+        if(Provenance is {ComparisonId:null,Verification:{Revision:null}} pending&&
+            pending.Verification.Id==value.Verification?.Id&&PrimaryModel==value.Primary.Id&&VerificationModel==value.Verification?.Id&&
+            (pending with{Verification=value.Verification,ComparisonId=value.ComparisonId})==value)
+        {Provenance=value;return;}
+        AttachProvenance(value);
+    }
+
     void Remember()
     {
         History.Add(new(new(Choices), ManualFinalDraft));

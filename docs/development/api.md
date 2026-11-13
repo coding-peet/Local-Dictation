@@ -32,6 +32,36 @@ returns a conflict. A new primary can cooperatively stop optional verification;
 admission stays held until its worker and cleanup finish.
 
 
+## Verify a saved original recording
+
+~~~text
+POST /v1/audio/verifications
+~~~
+
+Send multipart/form-data with Content-Length and these fields:
+
+- file: original mono 16 kHz PCM16 WAV, within the 600-second recording limit.
+- model: installed, compatible, runtime-tested verifier ID.
+- primary: the exact already received primary text, up to 64 KiB UTF-8.
+- primary_model: original primary model ID; it need not remain installed.
+- primary_revision: known original revision, or omit when unknown.
+- language: effective language, or auto.
+- preferred_languages: optional nonempty JSON array of Auto language codes.
+  Omit this field when there are no preferences; do not send an empty array.
+
+The verifier must differ from the primary and support the requested language.
+Only the verifier runs; the primary is not transcribed again. The response has
+primary, verification, ordered pieces, comparison_id, both model IDs/revisions,
+language/language_mode and duration. These use the same exact-string comparison
+contract as verification.completed below.
+
+The route uses verification admission and releases its model after completion,
+failure or disconnection. A new primary can preempt it cooperatively. Wait for
+ready and idle before uploading a replay; admission remains held through cleanup.
+Validation errors return 400, unavailable/busy/cancelled work returns 409, and
+inference/cleanup failures return 500. Errors do not include transcript content.
+
+
 ## Duplex audio
 
 Connect a native WebSocket client to:

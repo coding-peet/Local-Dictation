@@ -67,6 +67,8 @@ public sealed class AppController : IDisposable
     readonly SemaphoreSlim deliveryGate=new(1,1);
     bool deliveryBusy;
     readonly AutomationWorker automation=new();
+    readonly Func<nint> insertionForegroundWindow=()=>WindowsTextDelivery.ForegroundWindow;
+    readonly Func<CancellationToken,ITextDelivery> captureInsertionTarget=token=>WindowsTextDelivery.Capture(token);
     readonly GlobalInput input;
     readonly Forms.NotifyIcon tray;
     readonly Forms.ToolStripMenuItem clipboardRecoveryAction;
@@ -109,7 +111,7 @@ public sealed class AppController : IDisposable
         ?JsonSerializer.Serialize(diagnostic,new JsonSerializerOptions{WriteIndented=true})
         :"No delivery metadata is available in this session.";
     public bool CanRestoreClipboard=>!IsBusy&&!IsApplyingReview&&inserting.Count==0&&!restoringClipboard&&ClipboardRecovery.HasPending;
-    public bool ShowBanner => ClipboardRecovery.HasPending&&Volatile.Read(ref clipboardRecoveryVersion)>dismissedClipboardRecoveryVersion||active is {DestinationChecked:true}||BannerReview!=null||DateTimeOffset.Now<hideAt;
+    public bool ShowBanner => ClipboardRecovery.HasPending&&Volatile.Read(ref clipboardRecoveryVersion)>dismissedClipboardRecoveryVersion||active is {DestinationChecked:true}||BannerReview is {InsertedAt:null}||DateTimeOffset.Now<hideAt;
     public string MicrophoneLabel=>active?.Capture.DeviceName??"Microphone";
     public string ModelLabel=>Models.FirstOrDefault(m=>m.Id==(active?.Settings.PrimaryModel??Settings.PrimaryModel))?.Name??Settings.PrimaryModel;
     string BannerModelId=>active is {Verifying:true,Settings.VerificationModel:{} verifier}?verifier:
@@ -230,6 +232,100 @@ public sealed class AppController : IDisposable
         Changed?.Invoke();
         // Record owns and clears this private replay copy. Original history stays protected.
         await Record(run,pcm.ToArray());
+    }
+
+    VerificationWindow? verificationWindow;
+    string VerificationLanguage(ReviewDocument document)=>document.Language is {Length:>0} actual?actual:
+        document.RequestedLanguage.Length>0?document.RequestedLanguage:Settings.Language;
+    List<ModelInfo> VerificationChoices(ReviewDocument document)
+    {
+        var language=VerificationLanguage(document);
+        var primary=Models.FirstOrDefault(m=>m.Id==document.PrimaryModel)??new ModelInfo{Id=document.PrimaryModel,Languages=language=="auto"?new[]{"auto"}.Concat(Settings.PreferredLanguages.Count>0?Settings.PreferredLanguages:LanguagePolicy.Available(Models).Select(l=>l.Code)).ToArray():[language]};
+        return Models.Where(m=>m.Id!=document.PrimaryModel&&m.Compatible&&ModelEligibility.CanVerify(m,language,primary,Settings.PreferredLanguages)).ToList();
+    }
+    public bool CanVerifyReview(ReviewDocument document)=>!IsBusy&&!IsApplyingReview&&!ClipboardRecovery.HasPending&&!ClipboardRecovery.HasUnsettledTransaction&&document.Primary.Length>0&&
+        History.Any(e=>e.Id==document.Id)&&VerificationChoices(document).Count>0;
+    public void ShowReviewVerification(ReviewDocument document)
+    {
+        if(verificationWindow!=null){verificationWindow.Activate();return;}
+        document=CanonicalReview(document);
+        if(!CanVerifyReview(document)){ConnectionMessage="Finish the current operation and choose a saved recording with an eligible second model.";Changed?.Invoke();return;}
+        verificationWindow=new VerificationWindow(VerificationChoices(document),Settings.VerificationModel,model=>StartSavedVerification(document,model));
+        verificationWindow.Closed+=(_,_)=>verificationWindow=null;verificationWindow.Show();
+    }
+    string? StartSavedVerification(ReviewDocument document,ModelInfo verifier)
+    {
+        if(!CanVerifyReview(document)||!VerificationChoices(document).Any(m=>m.Id==verifier.Id))return "The recording or second model is no longer available.";
+        byte[]? wave=null,pcm=null;
+        try
+        {
+            document=CanonicalReview(document);
+            wave=HistoryAudio(document.Id);pcm=RecordedAudio.PcmFromWave(wave);
+            var source=JsonSerializer.Deserialize<ReviewDocument>(JsonSerializer.Serialize(document))!;
+            var settings=JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(Settings))!;
+            settings.PrimaryModel=source.PrimaryModel;settings.VerificationModel=verifier.Id;settings.VerifyAfterRecording=true;settings.Live=false;
+            settings.Language=VerificationLanguage(source);
+            var run=new Run(settings){Review=SavedVerification.Begin(source,verifier.Id),Recording=false,Verifying=true,
+                DestinationChecked=true,PrimaryFinal=true,AutoInsertBlocked=true,ReplayBytes=pcm.Length,Text=source.Primary};
+            run.CompletionGate.BeginFinish();run.CompletionGate.ConfirmOriginalField(false);
+            compactReviewWindow?.Close();reviewWindow?.Close();bannerProgress=null;placementReview=null;
+            active=run;input.SessionActive=true;StateLabel="Verifying";hideAt=DateTimeOffset.MinValue;
+            TrackRecording(VerifySavedRecording(run,source,wave,pcm));wave=pcm=null;
+            Changed?.Invoke();banner.Refresh();return null;
+        }
+        catch(Exception error) when(error is ArgumentException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {return "The original recording could not be opened. "+error.Message;}
+        finally
+        {
+            if(wave!=null)System.Security.Cryptography.CryptographicOperations.ZeroMemory(wave);
+            if(pcm!=null)System.Security.Cryptography.CryptographicOperations.ZeroMemory(pcm);
+        }
+    }
+    async Task VerifySavedRecording(Run run,ReviewDocument source,byte[] wave,byte[] pcm)
+    {
+        try
+        {
+            run.Stage="second transcript";
+            using var api=new ApiClient(run.Settings,TimeSpan.FromMinutes(11));
+            await api.WaitForIdle(run.Cancel.Token);
+            var result=await api.VerifyRecording(wave,source,run.Settings.VerificationModel!,run.Settings.Language,run.Settings.PreferredLanguages,run.Cancel.Token);
+            run.Cancel.Token.ThrowIfCancellationRequested();
+            SavedVerification.Complete(run.Review,source,result);run.Completed=true;run.NormalCompletion=true;
+        }
+        catch(OperationCanceledException) when(run.Cancel.IsCancellationRequested)
+        {run.Review.Reason="Second-model verification stopped. The original transcript and recording are preserved.";}
+        catch(Exception error)
+        {Diagnostics.Error("saved recording verification",error);run.Review.Reason="The second transcript could not finish. The original text and recording are preserved.";}
+        finally
+        {
+            run.Closing=true;run.Cancel.Cancel();
+            try
+            {
+                historyStore.Add(run.Review,pcm);History=historyStore.Load();SaveReview(run.Review);
+            }
+            catch(Exception error)
+            {Diagnostics.Error("saved verification history",error);SaveReview(run.Review);ConnectionMessage="The comparison is kept in Review; its audio copy could not be saved.";}
+            try{await run.Stream.DisposeAsync();await run.Capture.DisposeAsync();}
+            finally
+            {
+                try
+                {
+                    if(run.LanguageSelection is {} selection)await selection.Task;
+                    if(active==run&&run.RetrySettings!=null&&!exiting)await ReplayAtOriginalDestination(run,pcm);
+                    else if(active==run)
+                    {
+                        active=null;input.SessionActive=false;lastTranscript=run.Text;
+                        if(!exiting)ShowBannerReview(run.Review,true);
+                        Changed?.Invoke();banner.Refresh();
+                    }
+                }
+                finally
+                {
+                    System.Security.Cryptography.CryptographicOperations.ZeroMemory(wave);System.Security.Cryptography.CryptographicOperations.ZeroMemory(pcm);
+                    run.Cancel.Dispose();
+                }
+            }
+        }
     }
 
     public event Action? Changed;
@@ -523,14 +619,59 @@ public sealed class AppController : IDisposable
         finally{deliveryBusy=false;deliveryGate.Release();}
     }
 
-    async Task<ReviewInsertionResult> AcceptReview(ReviewDocument document,bool restoreFocus=true,DestinationStamp? automaticStamp=null)
+    public async Task<ReviewInsertionResult> InsertReviewAtSelectedCursor(ReviewDocument document)
+    {
+        DrainConfirmedPastes();document=CanonicalReview(document);
+        if(document.InsertedAt!=null)return new(true,"This Review was already inserted.");
+        if(ClipboardRecovery.HasPending||ClipboardRecovery.HasUnsettledTransaction)return new(false,"Resolve the previous clipboard operation before inserting.");
+        if(!document.CanInsert)return new(false,"Resolve the remaining choices before inserting.");
+        if(exiting||IsBusy||deliveryBusy||inserting.Count>0||!inserting.Add(document.Id))return new(false,"Finish the current operation, then try Insert again.");
+        ITextDelivery? selected=null;var published=false;
+        try
+        {
+            Changed?.Invoke();SaveReview(document);
+            if(pending.UnsavedIds.Contains(document.Id))return new(false,"Protected saving failed. Your text is preserved; fix storage before inserting.");
+            destinations.TryGetValue(document.Id,out var previous);
+            if(previous?.HasTransportFailure==true||previous is WindowsTextDelivery {HasPendingAcknowledgement:true})
+                return new(false,"The earlier insertion is not settled. Inspect that destination and resolve recovery before inserting again.");
+            var stamp=input.Epoch.Capture((long)insertionForegroundWindow());
+            selected=await automation.Run(captureInsertionTarget);
+            if(!input.Epoch.CanAdopt(stamp,(long)insertionForegroundWindow()))
+                return new(false,"The selected cursor changed. Select the destination field and try Insert again.");
+            // Exact same-field/whole-text/owned-end proof permits replacement of a
+            // live draft. Otherwise this explicit action inserts at the new caret;
+            // earlier live text elsewhere is left untouched.
+            var adopted=selected is WindowsTextDelivery fresh&&previous is WindowsTextDelivery old&&fresh.TryAdoptOwnedRangeFrom(old);
+            previous?.Invalidate();DrainConfirmedPastes();
+            if(document.InsertedAt!=null)return new(true,"The earlier insertion was confirmed. Nothing was inserted again.");
+            if(ClipboardRecovery.HasPending||ClipboardRecovery.HasUnsettledTransaction)return new(false,"Resolve the previous clipboard operation before inserting.");
+            destinations[document.Id]=selected;published=true;
+            var result=await AcceptReviewCore(document,false,stamp,true);
+            if(result.Success&&previous?.InsertedText.Length>0&&!adopted)
+                lastDeliveryMessage=DetailLabel="Inserted at the selected cursor. Earlier live text at another position was left untouched.";
+            return result;
+        }
+        catch(InvalidOperationException)
+        {return new(false,"Click the editable destination field first, then click Insert. Your text is preserved.");}
+        catch(Exception error)
+        {Diagnostics.Error("selected cursor insertion",error);return new(false,"The selected field could not be validated. Your text is preserved; select a cursor and try Insert again.");}
+        finally
+        {
+            if(!published)selected?.Invalidate();
+            inserting.Remove(document.Id);Changed?.Invoke();
+        }
+    }
+
+    Task<ReviewInsertionResult> AcceptReview(ReviewDocument document,bool restoreFocus=true,DestinationStamp? automaticStamp=null)=>
+        AcceptReviewCore(document,restoreFocus,automaticStamp,false);
+    async Task<ReviewInsertionResult> AcceptReviewCore(ReviewDocument document,bool restoreFocus,DestinationStamp? automaticStamp,bool reservationHeld)
     {
         DrainConfirmedPastes();
         document=CanonicalReview(document);
         if(document.InsertedAt!=null)return new(true,"This Review was already inserted.");
         if(ClipboardRecovery.HasPending)return new(false,ClipboardRecovery.Message);
         if(!document.CanInsert)return new(false,"Resolve the remaining choices before inserting.");
-        if(exiting||IsBusy||deliveryBusy||!inserting.Add(document.Id))return new(false,"Finish the current operation, then try Accept again.");
+        if(exiting||IsBusy||deliveryBusy||(!reservationHeld&&!inserting.Add(document.Id)))return new(false,"Finish the current operation, then try Accept again.");
         try
         {
             Changed?.Invoke();
@@ -542,7 +683,7 @@ public sealed class AppController : IDisposable
             lastDeliveryTarget=target;
             try{inserted=await automation.Run(token=>
             {
-                if(automaticStamp is {} stamp&&!input.Epoch.CanAdopt(stamp,(long)WindowsTextDelivery.ForegroundWindow))return false;
+                if(automaticStamp is {} stamp&&!input.Epoch.CanAdopt(stamp,(long)insertionForegroundWindow()))return false;
                 return target.Apply(document.OutputText,token,restoreFocus?DeliveryIntent.ExplicitFinal:DeliveryIntent.AutomaticFinal);
             },TimeSpan.FromSeconds(5));}
             catch(Exception){inserted=false;}
@@ -552,7 +693,7 @@ public sealed class AppController : IDisposable
             RecordSuccessfulInsertion(document,target.Reason);
             return new(true,target.Reason.Length>0?target.Reason:"Reviewed text inserted.");
         }
-        finally{inserting.Remove(document.Id);Changed?.Invoke();}
+        finally{if(!reservationHeld)inserting.Remove(document.Id);Changed?.Invoke();}
     }
 
     void RecordSuccessfulInsertion(ReviewDocument document,string deliveryWarning)
@@ -640,14 +781,16 @@ public sealed class AppController : IDisposable
         await ApplyBannerReview();
     }
 
-    public async Task ApplyBannerReview()
+    public Task ApplyBannerReview()=>ApplyBannerReviewCore(false);
+    public Task ApplyBannerReviewAtSelectedCursor()=>ApplyBannerReviewCore(true);
+    async Task ApplyBannerReviewCore(bool selectedCursor)
     {
         if(IsBusy||IsApplyingReview||BannerReview is not {} document||!document.CanInsert)return;
         applyingBannerId=document.Id;
         try
         {
             Changed?.Invoke();
-            var result=await AcceptReview(document);
+            var result=selectedCursor?await InsertReviewAtSelectedCursor(document):await AcceptReview(document);
             if(!result.Success&&BannerReview?.Id==document.Id)
             {document.Reason=result.Message;StateLabel="Review";SaveReview(document);}
         }
@@ -685,23 +828,9 @@ public sealed class AppController : IDisposable
 
     async Task InsertAtChosenDestination(ReviewDocument document)
     {
-        if(deliveryBusy||inserting.Count>0)return;
-        var stamp=input.Epoch.Capture((long)WindowsTextDelivery.ForegroundWindow);
-        try
-        {
-            var target=await automation.Run(token=>WindowsTextDelivery.Capture(token));
-            if(!input.Epoch.CanAdopt(stamp,(long)WindowsTextDelivery.ForegroundWindow))
-            {target.Invalidate();throw new InvalidOperationException();}
-            if(destinations.TryGetValue(document.Id,out var previous))previous.Invalidate();
-            DrainConfirmedPastes();
-            if(document.InsertedAt!=null){target.Invalidate();placementReview=null;return;}
-            destinations[document.Id]=target;
-            var result=await AcceptReview(document);
-            if(result.Success){reviewWindow?.Close();placementReview=null;}
-            else{document.Reason=result.Message;OpenReview(document);}
-        }
-        catch(Exception)
-        {document.Reason="That field could not be validated. Choose an editable destination and try again.";OpenReview(document);}
+        var result=await InsertReviewAtSelectedCursor(document);
+        if(result.Success){reviewWindow?.Close();compactReviewWindow?.Close();placementReview=null;}
+        else{document.Reason=result.Message;SaveReview(document);OpenReview(document);}
     }
 
     public void RecheckShortcut()
@@ -850,7 +979,7 @@ public sealed class AppController : IDisposable
         catch(ArgumentException error){ConnectionMessage=error.Message;ShowSettings();Changed?.Invoke();return;}
         if(snapshot.VerifyAfterRecording&&!Models.Any(m=>m.Id==snapshot.VerificationModel&&ModelEligibility.CanVerify(m,snapshot.Language,model,snapshot.PreferredLanguages)&&m.Id!=model.Id))
         {ConnectionMessage="Choose an installed, runtime-tested verification model distinct from Dictation.";ShowSettings();Changed?.Invoke();return;}
-        languageWindow?.Close();
+        languageWindow?.Close();verificationWindow?.Close();
         if(active?.Verifying==true)active.Cancel.Cancel();
         var destination=input.Epoch.Capture((long)WindowsTextDelivery.ForegroundWindow);
         bannerAnchor=(nint)destination.Window;
@@ -1204,7 +1333,8 @@ public sealed class AppController : IDisposable
             if(open.ReviewId==document.Id){open.Show();open.ShowStatus(document.Reason);if(activate)open.Activate();return;}
             open.Close();
         }
-        var window=new ReviewWindow(document,SaveReview,DismissReview,doc=>AcceptReview(doc),ChooseReviewDestination){ShowActivated=activate};
+        var window=new ReviewWindow(document,SaveReview,DismissReview,doc=>InsertReviewAtSelectedCursor(doc),ChooseReviewDestination){ShowActivated=activate};
+        window.SetVerificationAction(ShowReviewVerification,CanVerifyReview(document));
         reviewWindow=window;window.Closed+=(_,_)=>{if(reviewWindow==window)reviewWindow=null;};
         window.Show();if(activate)window.Activate();
     }
@@ -1252,7 +1382,7 @@ public sealed class AppController : IDisposable
 
     async Task<bool> PrepareForExit()
     {
-        languageWindow?.Close();
+        languageWindow?.Close();verificationWindow?.Close();
         if(ClipboardBlocksExit())return false;
         exiting=true;
         EmergencyReview();active?.Capture.Stop();

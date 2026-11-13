@@ -1,7 +1,5 @@
 """Loopback-only ASGI transport. Inference never runs on the event loop."""
 import asyncio
-from email import policy
-from email.parser import BytesParser
 import json
 import os
 import threading
@@ -16,6 +14,8 @@ from .config import RuntimeConfig
 from .sessions import AudioSession, Admission, BusyError
 from .workers import run_worker, join
 from .installation import supports_language
+from .uploads import read_multipart
+from .saved_verification import create_verification_endpoint
 from language_policy import normalize_language, preferred_for_model
 
 def error(message, status=400):
@@ -151,30 +151,8 @@ def create_app(config, engine, catalog=None):
             async with admission.own("primary",cancelled):
                 tested_model=None
                 try:
-                    length=int(request.headers.get("content-length","0"))
-                    if request.headers.get("transfer-encoding") or not 0<length<=26*1024*1024:
-                        raise ValueError("Send Content-Length and at most 26 MiB.")
-                    content_type=request.headers.get("content-type","")
-                    if not content_type.lower().startswith("multipart/form-data;"):
-                        raise ValueError("Expected multipart/form-data.")
-                    body=bytearray()
-                    async for part in request.stream():
-                        body.extend(part)
-                        if len(body)>length: raise ValueError("Upload exceeded Content-Length.")
-                    if len(body)!=length: raise ValueError("Incomplete upload.")
-                    msg=BytesParser(policy=policy.default).parsebytes(
-                        ("Content-Type: "+content_type+"\r\nMIME-Version: 1.0\r\n\r\n").encode("ascii")+body)
-                    if not msg.is_multipart() or msg.defects: raise ValueError("Invalid multipart upload.")
-                    fields,files={},[]
-                    for part in msg.iter_parts():
-                        name=part.get_param("name",header="content-disposition")
-                        value=part.get_payload(decode=True)
-                        if value is None: raise ValueError("Invalid form data.")
-                        if name=="file": files.append(value)
-                        elif name in ("model","language","prompt","response_format","preferred_languages"):
-                            if name in fields or len(value)>16384: raise ValueError("Duplicate or oversized field.")
-                            fields[name]=value.decode("utf-8")
-                    if len(files)!=1 or not files[0]: raise ValueError("Exactly one audio file is required.")
+                    fields,audio=await read_multipart(request,{name:16384 for name in
+                        ("model","language","prompt","response_format","preferred_languages")})
                     model=catalog.require(fields.get("model",""))
                     requested=normalize_language(fields.get("language","auto")) or "auto"
                     language=supports_language(model,requested)
@@ -182,7 +160,7 @@ def create_app(config, engine, catalog=None):
                         json.loads(fields["preferred_languages"]) if "preferred_languages" in fields else None,requested=="auto")
                     fmt=fields.get("response_format","json")
                     if fmt not in ("json","text","verbose_json"): raise ValueError("Unsupported response format.")
-                    arguments=(files[0],fields.get("prompt",""),model["id"],language,cancelled)
+                    arguments=(audio,fields.get("prompt",""),model["id"],language,cancelled)
                     if language=="auto" and preferred is not None:arguments+= (preferred,)
                     result=await run_worker(engine.transcribe,*arguments,
                         cancelled=cancelled,timeout=config.inference_timeout_seconds)
@@ -204,6 +182,7 @@ def create_app(config, engine, catalog=None):
 
     routes=[Route("/health",health),Route("/v1/models",models),
             Route("/v1/audio/transcriptions",batch,methods=["POST"]),
+            Route("/v1/audio/verifications",create_verification_endpoint(config,engine,catalog,admission,ready,error),methods=["POST"]),
             Route("/v1/models/test",batch,methods=["POST"]),
             WebSocketRoute("/v1/audio/sessions",socket)]
     from .imports import Imports

@@ -48,6 +48,29 @@ public sealed class TargetGuard(string identity, string text, int caret)
         return Valid&&currentIdentity==Identity&&currentText==current.Text&&
             selectionStart==current.Caret&&selectionEnd==current.Caret;
     }
+    /// <summary>
+    /// Transfers a proven existing draft only into a fresh capture at its exact
+    /// owned end. No text changes here; a different caret stays a new insertion.
+    /// </summary>
+    public bool TryAdoptOwnedRangeFrom(TargetGuard previous)
+    {
+        ArgumentNullException.ThrowIfNull(previous);
+        var fresh = range;
+        var owned = previous.range;
+        if (!Valid || !previous.Valid || fresh.HasApplied || fresh.Owned.Length != 0 ||
+            fresh.Start != fresh.Caret || !owned.HasApplied || owned.Owned.Length == 0 ||
+            Identity != previous.Identity || fresh.Text != owned.Text || fresh.Caret != owned.Caret ||
+            owned.Start < 0 || owned.Start > owned.Text.Length ||
+            owned.Owned.Length > owned.Text.Length - owned.Start ||
+            owned.Caret != owned.Start + owned.Owned.Length ||
+            !owned.Text.AsSpan(owned.Start, owned.Owned.Length).SequenceEqual(owned.Owned.AsSpan()))
+            return false;
+
+        // HasApplied remains true, retiring initial empty-provider projections.
+        range = owned;
+        return true;
+    }
+
     public string ReplacedText(string next)
     {
         var current=range;
@@ -82,4 +105,12 @@ public sealed class TargetGuard(string identity, string text, int caret)
         range=new(observedText,0,observedCaret,inserted,true);
         return true;
     }
+}
+
+/// <summary>Only the explicit Insert mouse gesture may preserve external focus.</summary>
+public static class SelectedCaretActivationPolicy
+{
+    public static bool ShouldPreserveExternalFocus(bool windowActive, bool insertEnabled,
+        bool insertVisible, bool pointerOverInsert) =>
+        !windowActive && insertEnabled && insertVisible && pointerOverInsert;
 }

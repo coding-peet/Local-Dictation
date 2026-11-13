@@ -36,6 +36,18 @@ These final review corrections passed 379 Core tests and 38 windowless checks;
 the backend passed 132 synthetic tests. They were not deployed during this Git
 task. See [pre-commit verification](docs/development/pre-commit-verification-20261113.md).
 
+## Prepared selected-cursor and Review update
+
+Version `0.1.0-review.20261113.1` is prepared separately; it is not yet the
+installed client. Explicit Insert uses the external cursor selected immediately
+before the click. Review can compare the original audio with a second model,
+and History provides Play/Pause/Stop, seeking, time and an amplitude waveform.
+
+Validation: 421 Core tests, 149 backend tests and 50 windowless controller/UI
+checks passed. Release publish succeeded. No desktop control or sound was used;
+native OpenAI/Outlook and audio-device acceptance remain manual checks.
+See [selected-cursor and Review validation](docs/development/selected-cursor-review-20261113.md).
+
 ## Start here
 
 - [Current product requirements](docs/PRODUCT_REQUIREMENTS.md): user input and

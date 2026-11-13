@@ -140,14 +140,18 @@ punctuation, whitespace, and Unicode must be preserved.
 - Only replace the app's owned draft in the validated original field. Preserve
   surrounding text. Switching focus pauses delivery; returning to the same
   unchanged field resumes it, including after a click within that field.
-- Before an explicit Insert action, restore only the captured original window
-  and exact field identity. Allow activation up to 100 ms to restore that identity itself;
-  if it is already ready, avoid a redundant provider SetFocus. Otherwise request
-  focus on the captured original field once and allow up to 500 ms for that exact
-  identity. Do not adopt another field or queue input/clipboard replacement while
-  waiting. Cancellation, invalidation, input generation and foreground changes
-  still stop the operation. Preserve acceptance-key release, full-text ownership,
-  exact caret and paste-acknowledgment checks.
+- Explicit Insert places ready Review text at a freshly selected external caret.
+  Keep the compact Review reachable above the destination. Clicking its Insert
+  must preserve that external focus; ordinary editing and wording choices may
+  activate Review normally. Capture and validate the selected field after the
+  click, with an insertion reservation before asynchronous work. Refuse input
+  or foreground changes during capture, unsupported fields, and unsettled pastes.
+  Do not reuse a permanently rejected original lease for explicit retries.
+- When a fresh capture proves the exact original field, complete document and
+  owned draft ending at the selected caret, replace that owned draft. Otherwise
+  insert at the chosen caret and leave earlier text elsewhere intact. Never
+  guess ownership or delete text from another destination. Preserve exact
+  readback, clipboard recovery, durable receipts and duplicate-click protection.
 - At Finish, latch whether the exact original field is still current without
   activating anything. If it is elsewhere, preserve the result for explicit Insert;
   a later return must not start delayed automatic insertion. Automatic completion
@@ -264,7 +268,7 @@ punctuation, whitespace, and Unicode must be preserved.
   During verification, only the banner holds the withdrawn first transcript.
   Agreement inserts the final result at the original validated cursor and closes
   the banner; differences open separate Review.
-- Open ordinary Review in its own small window. Keep the recording banner minimal.
+- Open ordinary Review in its own small floating window. Keep the recording banner minimal.
   Underline disputed
   phrases; clicking one shows two exact alternatives without model/source names.
   The live wording comes first, the verifier's wording second.
@@ -287,8 +291,19 @@ punctuation, whitespace, and Unicode must be preserved.
 - Cancelled, interrupted, or failed verification keeps text pending for explicit
   action. Failed insertion waits for explicit retry. Closing/reopening a pending
   item must not insert it automatically.
-- Use Choose destination when no destination was captured or its lease is lost,
-  including after restart. Approval must return text without manual copy/paste.
+- For explicit placement, select a destination cursor and click Insert. Keep
+  Choose destination plus the recording shortcut as an alternative, including
+  after restart. Neither route requires manual copy/paste.
+- Offer Second transcript in compact Review and Details when protected original
+  audio and an eligible different model are available. Transcribe that audio
+  only with the chosen verifier; preserve the primary output, edits, source
+  recording identity and model revisions. Create a separate comparison without
+  changing the source item or its insertion receipt. Show the complete second
+  transcript read-only, alongside phrase choices. Agreement in this post-hoc
+  workflow still waits for explicit Insert; it must not replace earlier text.
+- Preserve cancelled/failed second transcripts for recovery, including source
+  provenance. Escape cancels; a language correction reuses the same recording
+  through the guarded replay path. Never start the microphone for these actions.
 - Keep insertion receipts durable where possible and recover them across History
   and Pending Review. Older snapshots must not overwrite current edits or clear
   an existing receipt. Already inserted items are read-only in compact Review.
@@ -299,8 +314,13 @@ punctuation, whitespace, and Unicode must be preserved.
   history transcript and audio when adding a 21st item.
 - Protect saved transcripts and audio for the current Windows account with
   DPAPI. Pending Review is separate and must not be evicted by the history limit.
-- Provide playback, text copy, Review, explicit WAV export, and deletion.
-  Exported audio is an ordinary user-selected file.
+- Provide Play, Pause and Stop icons, elapsed/total time, a seekable timeline
+  with a round thumb, and the recording amplitude waveform below it. Support
+  keyboard seeking. Stop returns to the beginning; Pause retains position.
+  Load/render/seek before Play must not open an audio output device. Retire the
+  previous output safely before replay, seeking or changing recordings.
+- Preserve text copy, Review, explicit WAV export, and deletion. Exported audio
+  is an ordinary user-selected file.
 - Preserve unsaved text in memory and show saving failures. Skip/report malformed
   individual pending files without deleting them or blocking valid recovery.
 - Normal application Exit must await recording cleanup and protected saving.
