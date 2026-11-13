@@ -9,38 +9,26 @@ from this repository; model weights and personal data are stored separately.
 
 ## Latest installed build: 13 November 2026
 
-Version `0.1.0-history.20261113.1` is installed in C:\Git\Local-Dictation\app.
-The complete Recent dictations workspace lives in the main History section;
-the tray History action opens that same section. It includes the transcript,
-Play/Pause/Stop icons, a seekable timeline and the recording amplitude waveform.
+Version `0.1.0-usability.20261113.1` is installed and running in
+C:\Git\Local-Dictation\app, with session API 48125 ready.
 
-Explicit Insert captures the external cursor selected immediately before the
-click, including after an old destination failed. Automatic Finish retains its
-original-field guards. Review offers a second-model pass over the protected
-original recording and shows the complete second transcript.
+Models has separate Installed models and Add model cards. Test and Remove use
+the installed table selection. Removal is limited to app-owned managed files;
+shared TypeWhisper originals are retained. Unfinished Review text appears in
+History with status, including text-only recovery beyond the audio limit.
 
-Validation: 421 Core tests and 58 windowless controller/UI checks passed.
-The backend passed 149 synthetic tests before the preceding source publication.
-All 17 installed files and their backups were hash-verified; settings stayed
-byte-identical. Session API 48125 is ready and exposes saved-audio verification.
-The separate TypeWhisper service on 8123 was already stopped and was not started.
-
-No desktop control, microphone capture or audio playback was used for this
-update. Native OpenAI/Outlook insertion and audio-device acceptance remain
-manual checks. See [integrated History validation](docs/development/integrated-history-20261113.md)
-and [selected-cursor and Review validation](docs/development/selected-cursor-review-20261113.md).
-
-## Prepared usability update
-
-The next candidate simplifies Models into installed management and adding cards,
-adds guarded app-managed removal, merges unfinished Review into History, and
-places text actions above a compact player with a faint fixed-scale RMS waveform.
-The protected recovery store remains independent from the 20-recording limit.
+Text actions sit above a compact player. Its faint RMS waveform uses a fixed
+scale so isolated loud bursts do not shrink the rest of the recording.
 
 Validation: 443 Core tests, 175 backend tests and 68 windowless UI/controller
-checks passed. Source review findings were reproduced and corrected. No actual
-model removal, microphone, playback, real inference or desktop control was used.
-See [usability validation](docs/development/usability-20261113.md).
+checks passed. All 17 installed files and backups were hash-verified; current
+settings stayed byte-identical. The client startup version and new API routes/
+capability metadata were confirmed without removing a model or running inference.
+The separate TypeWhisper API on 8123 was preserved.
+
+No desktop control, microphone capture or playback was used for this update.
+Native insertion and actual device playback remain manual acceptance checks.
+See [usability validation and deployment](docs/development/usability-20261113.md).
 
 ## Start here
 
