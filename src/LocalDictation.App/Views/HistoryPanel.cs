@@ -14,21 +14,26 @@ public sealed class HistoryPanel : UserControl,IDisposable
     readonly HistoryAudioPlayerControl playback=new();
     bool refreshing,active,disposed;
     string? loadedAudioId;
-    IReadOnlyList<HistoryEntry>? shown;
+    IReadOnlyList<DictationItem>? shown;
+    readonly List<Button> audioActions=[];
     public HistoryPanel(AppController controller)
     {
         this.controller=controller;
-        var root=new DockPanel{MinHeight=560,Height=560};root.SetResourceReference(Panel.BackgroundProperty,"Canvas");
+        var root=new DockPanel{MinHeight=500,Height=500};root.SetResourceReference(Panel.BackgroundProperty,"Canvas");
         var header=new StackPanel();header.Children.Add(Ui.Text("Recent dictations",24));
-        header.Children.Add(Ui.Text("The latest 20 dictations and recordings, protected for your Windows account.",14));
+        header.Children.Add(Ui.Text("Recent recordings and text that needs review.",14));
         DockPanel.SetDock(header,Dock.Top);root.Children.Add(header);
         var footer=new StackPanel{Margin=new(0,16,0,0)};
-        playback.Margin=new(0,0,0,8);playback.PlaybackError+=text=>message.Text=text;footer.Children.Add(playback);
+        playback.Margin=new(0,8,0,0);playback.PlaybackError+=text=>message.Text=text;
         var actions=new WrapPanel();
         foreach(var button in new[]{Ui.Button("Copy text",Copy),Ui.Button("Open Review",OpenReview),
             Ui.Button("Change language…",()=>{if(Selected is {} entry)controller.ShowInputLanguage(entry.Document);}),
-            Ui.Button("Save audio…",Export),Ui.Button("Delete",Delete)}){button.Margin=new(0,0,8,8);actions.Children.Add(button);}
-        footer.Children.Add(actions);footer.Children.Add(message);DockPanel.SetDock(footer,Dock.Bottom);root.Children.Add(footer);
+            Ui.Button("Save audio…",Export),Ui.Button("Delete",Delete)})
+        {
+            button.Margin=new(0,0,8,8);actions.Children.Add(button);
+            if(button.Content?.ToString() is "Change language…" or "Save audio…")audioActions.Add(button);
+        }
+        footer.Children.Add(actions);footer.Children.Add(playback);footer.Children.Add(message);DockPanel.SetDock(footer,Dock.Bottom);root.Children.Add(footer);
         var body=new Grid{MinHeight=200};body.ColumnDefinitions.Add(new(){Width=new(220)});body.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});
         body.RowDefinitions.Add(new(){Height=new(1,GridUnitType.Star)});
         var list=Ui.Card(items);list.Padding=new(0);list.Margin=new(0,8,16,0);body.Children.Add(list);
@@ -43,7 +48,7 @@ public sealed class HistoryPanel : UserControl,IDisposable
             var compact=ActualWidth<600;
             // A finite surface lets the list and transcript scroll internally.
             // Only a viewport smaller than the comfortable layout scrolls the page.
-            root.MinHeight=compact?700:560;root.Height=Math.Max(root.MinHeight,ActualHeight);
+            root.MinHeight=compact?640:500;root.Height=Math.Max(root.MinHeight,ActualHeight);
             if(stacked==compact)return;stacked=compact;
             body.MinHeight=compact?330:200;
             body.ColumnDefinitions[0].Width=compact?new(1,GridUnitType.Star):new(220);
@@ -71,29 +76,37 @@ public sealed class HistoryPanel : UserControl,IDisposable
         if(disposed)return;disposed=true;active=false;controller.Changed-=Refresh;
         playback.Dispose();loadedAudioId=null;
     }
-    HistoryEntry? Selected=>items.SelectedItem as HistoryEntry;
+    DictationItem? Selected=>items.SelectedItem as DictationItem;
     void Refresh()
     {
-        if(disposed||!active||ReferenceEquals(shown,controller.History))return;shown=controller.History;
-        var id=Selected?.Id;refreshing=true;
+        if(disposed||!active)return;
+        var next=controller.Dictations;
+        if(shown!=null&&shown.SequenceEqual(next)){UpdateText();return;}
+        shown=next;var id=Selected?.Id;refreshing=true;
         try
         {
-            items.ItemsSource=controller.History;
-            items.SelectedItem=controller.History.FirstOrDefault(e=>e.Id==id)??controller.History.FirstOrDefault();
+            items.ItemsSource=next;
+            items.SelectedItem=next.FirstOrDefault(e=>e.Id==id)??next.FirstOrDefault();
         }
         finally{refreshing=false;}
         Select();
     }
     void Select()
     {
-        message.Text="";transcript.Text=Selected?.Document.OutputText??"";
-        detail.Text=Selected is {} e?$"{e.Document.PrimaryModel} · {e.DurationSeconds:0.0} seconds · {LanguagePolicy.Label(e.Document.RequestedLanguage,e.Document.Language,e.Document.LanguageMode,null)}":"No dictations saved yet.";
+        message.Text="";UpdateText();
+        playback.Visibility=Selected?.HasAudio==true?Visibility.Visible:Visibility.Collapsed;
+        foreach(var button in audioActions)button.IsEnabled=Selected?.HasAudio==true;
         if(!active||disposed)return;
-        if(Selected is {} current&&current.Id==loadedAudioId)return;
+        if(Selected is {HasAudio:true} current&&current.Id==loadedAudioId)return;
         playback.Clear();loadedAudioId=null;
-        if(Selected is not {} entry)return;
+        if(Selected is not {HasAudio:true} entry)return;
         try{playback.LoadAudio(controller.HistoryAudio(entry.Id));loadedAudioId=entry.Id;}
         catch(Exception){playback.Clear();message.Text="The original recording could not be opened.";}
+    }
+    void UpdateText()
+    {
+        transcript.Text=Selected?.Document.OutputText??"";
+        detail.Text=Selected is {} e?$"{e.State} · {e.Document.PrimaryModel} · {(e.HasAudio?$"{e.DurationSeconds:0.0} seconds":"Text only")} · {LanguagePolicy.Label(e.Document.RequestedLanguage,e.Document.Language,e.Document.LanguageMode,null)}":"No dictations saved yet.";
     }
     void Copy(){if(Selected is not {} entry)return;try{Clipboard.SetText(entry.Document.OutputText);message.Text="Copied.";}catch(Exception){message.Text="Clipboard unavailable. Select and copy the text manually.";}}
     void OpenReview(){if(Selected is {} entry)controller.OpenReview(entry.Document);}
@@ -111,7 +124,7 @@ public sealed class HistoryPanel : UserControl,IDisposable
     void Delete()
     {
         if(Selected is not {} entry)return;
-        if(MessageBox.Show(Window.GetWindow(this),"Delete this transcript and recording from History? Pending Review is kept separately.","Delete dictation",MessageBoxButton.YesNo,MessageBoxImage.Question)!=MessageBoxResult.Yes)return;
-        playback.Clear();loadedAudioId=null;try{controller.DeleteHistory(entry.Id);message.Text="Deleted.";}catch(Exception){message.Text="Could not delete this history item.";}
+        if(MessageBox.Show(Window.GetWindow(this),"Delete this dictation, its recording and saved review choices?","Delete dictation",MessageBoxButton.YesNo,MessageBoxImage.Question)!=MessageBoxResult.Yes)return;
+        playback.Clear();loadedAudioId=null;try{controller.DeleteDictation(entry.Id);message.Text="Deleted.";}catch(Exception){message.Text="Could not delete this history item.";}
     }
 }

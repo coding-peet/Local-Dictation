@@ -140,10 +140,12 @@ static class ReviewWorkflowChecks
         BitConverter.GetBytes(16).CopyTo(wave,16);BitConverter.GetBytes((short)1).CopyTo(wave,20);BitConverter.GetBytes((short)1).CopyTo(wave,22);BitConverter.GetBytes(16000).CopyTo(wave,24);
         BitConverter.GetBytes(32000).CopyTo(wave,28);BitConverter.GetBytes((short)2).CopyTo(wave,32);BitConverter.GetBytes((short)16).CopyTo(wave,34);"data"u8.CopyTo(wave.AsSpan(36));BitConverter.GetBytes(samples.Length*2).CopyTo(wave,40);Buffer.BlockCopy(samples,0,wave,44,samples.Length*2);
         var outputs=0;using var playback=new HistoryAudioPlayback(_=>{outputs++;return new Output();});playback.Load(wave);playback.Seek(TimeSpan.FromSeconds(1.6));
-        using var player=new HistoryAudioPlayerControl(playback);Layout(player,680,200);
+        using var player=new HistoryAudioPlayerControl(playback);
+        player.Measure(new Size(680,double.PositiveInfinity));var playerHeight=(int)Math.Ceiling(player.DesiredSize.Height);
+        Require(playerHeight<=112,"History player is still taller than the compact transport.");Layout(player,680,playerHeight);
         Require(outputs==0&&playback.Peaks.Any(p=>p>0),"Rendering opened audio hardware or lost the original-audio waveform.");
         Require(Find<Slider>(player).Single().Maximum==4,"Seek slider duration does not match the recording.");
-        Save(player,680,200,Path.Combine(output,"history-audio-player-"+theme+".png"));checks.Add("silent seekable History waveform player "+theme);
+        Save(player,680,playerHeight,Path.Combine(output,"history-audio-player-"+theme+".png"));checks.Add("silent seekable History waveform player "+theme);
     }
     static void Layout(FrameworkElement root,int width,int height){root.Measure(new Size(width,height));root.Arrange(new Rect(0,0,width,height));root.UpdateLayout();}
     static void Save(FrameworkElement root,int width,int height,string path)

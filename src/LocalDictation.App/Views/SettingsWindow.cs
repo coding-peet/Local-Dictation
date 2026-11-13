@@ -2,6 +2,8 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Data;
+using DataGridTextColumn=System.Windows.Controls.DataGridTextColumn;
 using MaterialDesignThemes.Wpf;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -15,7 +17,7 @@ public sealed class SettingsWindow : Window
     readonly AppController controller;
     readonly ListBox navigation=new(){Margin=new(0,8,16,0),VerticalAlignment=VerticalAlignment.Stretch};
     HistoryPanel? historyPanel;
-    public void SelectHistory()=>navigation.SelectedIndex=3;
+    public void SelectHistory()=>navigation.SelectedIndex=2;
     readonly TextBlock connection=Ui.Text(""), shortcut=Ui.Text(""), message=Ui.Text(""), importStatus=Ui.Text(""), modelStatus=Ui.Text(""), verificationStatus=Ui.Text(""), saveStatus=Ui.Text("");
     readonly TextBox endpoint=new(), repository=new();
     readonly TextBox shortcutValue=new();
@@ -28,11 +30,15 @@ public sealed class SettingsWindow : Window
         verify=Ui.Switch("Verify after recording"),insert=Ui.Switch("Insert live text at the cursor"),
         shortcutEnabled=Ui.Switch("Enable keyboard shortcut");
     readonly ListBox catalogModels=new(){MinHeight=96,MaxHeight=160,DisplayMemberPath="Label",SelectedValuePath="Id"};
+    readonly StackPanel catalogChoice=new();
+    readonly DataGrid installedModels=new(){AutoGenerateColumns=false,IsReadOnly=true,CanUserAddRows=false,CanUserDeleteRows=false,
+        SelectionMode=DataGridSelectionMode.Single,SelectionUnit=DataGridSelectionUnit.FullRow,HeadersVisibility=DataGridHeadersVisibility.Column,
+        MinHeight=110,MaxHeight=230,RowHeight=48,Margin=new(0,8,0,8),HorizontalScrollBarVisibility=ScrollBarVisibility.Auto};
+    readonly TextBlock installedEmpty=Ui.Text("",13),removalReason=Ui.Text("",12),modelActionStatus=Ui.Text("",13);
     readonly StackPanel verificationDetails=new(){Margin=new(0,8,0,0)};
     readonly TextBlock compatibility=Ui.Text("",12);
-    Button inspectCatalog=null!,resetCompatibility=null!;
-    readonly ListBox reviews=new(){MinHeight=70,MaxHeight=170,DisplayMemberPath="Reason"};
-    Button download=null!,cancelDownload=null!;
+    Button resetCompatibility=null!;
+    Button download=null!,cancelDownload=null!,checkModel=null!,testModel=null!,removeModel=null!;
     readonly Button record,recovery;
     readonly ProgressBar progress=new(){Minimum=0,Maximum=100,Height=6,Margin=new(0,6,0,8)};
     readonly DispatcherTimer poll=new(){Interval=TimeSpan.FromSeconds(1)};
@@ -41,6 +47,9 @@ public sealed class SettingsWindow : Window
     readonly Dictionary<TextBox,string> textErrors=[];
     string selectionError="",saveError="",microphoneWarning="",verificationWarning="";
     string? inspection,job,missingMicrophoneId;
+    string? downloadEndpoint;
+    static readonly Dictionary<string,string> activeDownloads=new(StringComparer.OrdinalIgnoreCase);
+    bool modelActionBusy,inspecting,closed;
     bool loading,updating,polling,selectionPending,microphoneEnumerationFailed;
     public SettingsWindow(AppController controller)
     {
@@ -77,14 +86,14 @@ public sealed class SettingsWindow : Window
         actions.VerticalAlignment=VerticalAlignment.Center;DockPanel.SetDock(actions,Dock.Right);footer.Children.Add(actions);
         var notes=new StackPanel{Margin=new(0,0,12,0)};
         message.SetResourceReference(TextBlock.ForegroundProperty,"Warning");notes.Children.Add(message);
-        notes.Children.Add(Ui.Text("Latest 20 dictations saved locally · 10-minute recording limit",12));
+        notes.Children.Add(Ui.Text("20 recent recordings · Unfinished text kept until reviewed",12));
         footer.Children.Add(notes);DockPanel.SetDock(footer,Dock.Bottom);root.Children.Add(footer);
         // A desktop navigation rail keeps destinations stable while their forms scroll independently.
         var shell=new Grid();var navigationColumn=new ColumnDefinition{Width=new(216)};
         shell.ColumnDefinitions.Add(navigationColumn);shell.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});
         navigation.SetResourceReference(Control.BackgroundProperty,"Canvas");
-        var destinations=new[]{("Dictation",PackIconKind.Microphone),("Models",PackIconKind.CubeOutline),("Pending Review",PackIconKind.TextBoxCheckOutline),("History",PackIconKind.History),("Settings",PackIconKind.CogOutline)};
-        var pages=new[]{DictationPage(),ModelsPage(),ReviewPage(),HistoryPage(),PreferencesPage()};
+        var destinations=new[]{("Dictation",PackIconKind.Microphone),("Models",PackIconKind.CubeOutline),("History",PackIconKind.History),("Settings",PackIconKind.CogOutline)};
+        var pages=new[]{DictationPage(),ModelsPage(),HistoryPage(),PreferencesPage()};
         var pageHost=new ContentControl{Content=pages[0],HorizontalContentAlignment=HorizontalAlignment.Stretch,VerticalContentAlignment=VerticalAlignment.Stretch};
         var labels=new List<TextBlock>();
         foreach(var (label,icon) in destinations)
@@ -100,14 +109,14 @@ public sealed class SettingsWindow : Window
         navigation.SelectionChanged+=(_,_)=>
         {
             if(navigation.SelectedIndex<0)return;
-            historyPanel?.SetActive(navigation.SelectedIndex==3);
+            historyPanel?.SetActive(navigation.SelectedIndex==2);
             pageHost.Content=pages[navigation.SelectedIndex];NavigationContrast();
         };
         navigation.SelectedIndex=0;Grid.SetColumn(pageHost,1);shell.Children.Add(navigation);shell.Children.Add(pageHost);root.Children.Add(shell);Content=root;
         SizeChanged+=(_,_)=>{var compact=ActualWidth<840;navigationColumn.Width=new(compact?96:216);foreach(var label in labels)label.Visibility=compact?Visibility.Collapsed:Visibility.Visible;};
         controller.Changed+=Refresh;
         Closing+=(_,_)=>CommitTextEdits();
-        Closed+=(_,_)=>{controller.Changed-=Refresh;ThemeManager.Changed-=NavigationContrast;poll.Stop();saveDelay.Stop();historyPanel?.Dispose();};
+        Closed+=(_,_)=>{closed=true;controller.Changed-=Refresh;ThemeManager.Changed-=NavigationContrast;poll.Stop();saveDelay.Stop();historyPanel?.Dispose();};
         poll.Tick+=(_,_)=>_ = PollDownload();
         foreach(var box in new[]{microphone,primary,verifier,language,theme})box.SelectionChanged+=(_,_)=>SelectionChanged(box);
         foreach(var check in new[]{live,verify,insert,shortcutEnabled})
@@ -120,6 +129,7 @@ public sealed class SettingsWindow : Window
         saveDelay.Tick+=(_,_)=>CommitTextEdits();
         repository.TextChanged+=(_,_)=>{inspection=null;download.IsEnabled=false;};
         Refresh(true);UpdateSaveStatus();
+        ResumeDownload();
     }
 
     static void ApplyNavigationContrast(ListBox navigation,bool highContrast)
@@ -220,38 +230,61 @@ public sealed class SettingsWindow : Window
     UIElement ModelsPage()
     {
         var page=new StackPanel{Margin=new(0,8,8,0)};
-        page.Children.Add(Ui.Text("Original models",18,true));
-        page.Children.Add(Ui.Text("The Dictation dropdown lists installed models and the initial checked catalog. Runtime-tested and quality-checked are separate states.",13));
-        page.Children.Add(Ui.Text("Test the selected Dictation model with a local audio file before using it for Verification. Testing sends audio only to this loopback API.",13));
-        page.Children.Add(Ui.Button("Test selected model with audio…",()=>_ = TestModel()));
-        page.Children.Add(Ui.Text("Install or repair a catalog model",18,true));
-        page.Children.Add(Ui.Text("Select a missing model, inspect its pinned download and size, then use Download. Installed models are preserved.",13));
-        page.Children.Add(catalogModels);
-        inspectCatalog=Ui.Button("Inspect selected catalog model",()=>_ = InspectCatalog());
-        page.Children.Add(inspectCatalog);
-        catalogModels.SelectionChanged+=(_,_)=>inspectCatalog.IsEnabled=catalogModels.SelectedItem is ModelInfo m&&m.CanInstall;
-        page.Children.Add(Ui.Text("Add a public Hugging Face model",18,true));
-        Ui.Label(page,"Repository URL or owner/name",repository,"Built-in Whisper Transformers models with original safetensors only. Private, gated and remote-code models are rejected.");
-        page.Children.Add(Ui.Button("_Inspect compatibility and size",()=>_ = InspectModel()));
-        var start=Ui.Button("_Download inspected model",()=>_ = DownloadModel(),true);
+        var installed=new StackPanel();installed.Children.Add(Ui.Text("Installed models",18,true));
+        installedModels.Columns.Add(new DataGridTextColumn{Header="Model",Binding=new Binding(nameof(InstalledModelRow.Name)),Width=new DataGridLength(1,DataGridLengthUnitType.Star),MinWidth=140});
+        installedModels.Columns.Add(new DataGridTextColumn{Header="Test",Binding=new Binding(nameof(InstalledModelRow.Test)),Width=new DataGridLength(1,DataGridLengthUnitType.Star),MinWidth=110});
+        installedModels.Columns.Add(new DataGridTextColumn{Header="Live",Binding=new Binding(nameof(InstalledModelRow.Live)),Width=new DataGridLength(120),MinWidth=100});
+        System.Windows.Automation.AutomationProperties.SetName(installedModels,"Installed models");
+        installedModels.SelectionChanged+=(_,_)=>UpdateModelActions();
+        installed.Children.Add(installedModels);installed.Children.Add(installedEmpty);
+        testModel=Ui.Button("Test selected model with audio…",()=>_ = TestModel());
+        removeModel=Ui.Button("Remove selected model",()=>_ = RemoveModel());
+        var installedActions=new WrapPanel();installedActions.Children.Add(testModel);installedActions.Children.Add(removeModel);installed.Children.Add(installedActions);
+        removalReason.SetResourceReference(TextBlock.ForegroundProperty,"Muted");installed.Children.Add(removalReason);
+        System.Windows.Automation.AutomationProperties.SetLiveSetting(modelActionStatus,System.Windows.Automation.AutomationLiveSetting.Polite);
+        installed.Children.Add(modelActionStatus);page.Children.Add(Ui.Card(installed));
+
+        var add=new StackPanel();add.Children.Add(Ui.Text("Add model",18,true));
+        Ui.Label(catalogChoice,"Available models",catalogModels);add.Children.Add(catalogChoice);
+        catalogModels.SelectionChanged+=(_,_)=>
+        {
+            if(loading)return;
+            inspection=null;download.IsEnabled=false;
+            if(catalogModels.SelectedItem is ModelInfo model)repository.Text="https://huggingface.co/"+model.Id;
+        };
+        Ui.Label(add,"Public Hugging Face URL",repository);
+        checkModel=Ui.Button("Check size and compatibility",()=>_ = CheckModel());
+        var start=Ui.Button("Download model",()=>_ = DownloadModel(),true);
         start.IsEnabled=false;download=start;
         var cancel=Ui.Button("Cancel download",()=>_ = CancelDownload());cancel.IsEnabled=false;cancelDownload=cancel;
-        page.Children.Add(Ui.Row(start,cancel));page.Children.Add(progress);page.Children.Add(importStatus);
-        page.Children.Add(Ui.Text("Downloading does not prove transcription quality or live performance. A new model starts in after-recording mode. Closing this window does not cancel its download.",12));
+        var addActions=new WrapPanel();addActions.Children.Add(checkModel);addActions.Children.Add(start);addActions.Children.Add(cancel);
+        add.Children.Add(addActions);add.Children.Add(progress);add.Children.Add(importStatus);page.Children.Add(Ui.Card(add));
         return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,MaxWidth=880,HorizontalAlignment=HorizontalAlignment.Stretch};
     }
 
-    UIElement ReviewPage()
+    sealed record InstalledModelRow(ModelInfo Model)
     {
-        var page=new StackPanel{Margin=new(0,8,8,0)};
-        page.Children.Add(Ui.Text("Pending Review",18,true));
-        page.Children.Add(Ui.Text("Unfinished text and choices are protected for this Windows user. The latest 20 dictations and their audio are also available in History.",13));
-        page.Children.Add(reviews);
-        reviews.MouseDoubleClick+=(_,_)=>OpenSelected();
-        page.Children.Add(Ui.Button("_Open selected Review",OpenSelected));
-        page.Children.Add(Ui.Text("Copy and Close keep an item. Use Dismiss inside Review to remove it.",12));
-        return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,MaxWidth=880,HorizontalAlignment=HorizontalAlignment.Stretch};
+        public string Id=>Model.Id;
+        public string Name=>string.IsNullOrWhiteSpace(Model.Name)?Model.Id:Model.Name;
+        public string Test=>Model.RuntimeTested?"Tested":"Not tested";
+        public string Live=>Model.LiveReady?"Ready":Model.LiveSupported?"Available":"After recording";
     }
+
+    ModelInfo? SelectedInstalledModel()=>(installedModels.SelectedItem as InstalledModelRow)?.Model;
+
+    void UpdateModelActions()
+    {
+        var model=SelectedInstalledModel();
+        testModel.IsEnabled=model!=null&&controller.Connected&&!controller.IsBusy&&!modelActionBusy;
+        removeModel.IsEnabled=model?.CanRemove==true&&controller.Connected&&!controller.IsBusy&&!modelActionBusy&&job==null;
+        removalReason.Text=model==null?"Select an installed model.":
+            !model.CanRemove?string.IsNullOrWhiteSpace(model.RemovalRestriction)?"This model cannot be removed here.":model.RemovalRestriction:
+            job!=null?"Wait for the download to finish before removing a model.":
+            controller.IsBusy?"Wait for the current recording or transcription to finish.":
+            !controller.Connected?"Reconnect to manage this model.":"";
+        removalReason.Visibility=removalReason.Text.Length>0?Visibility.Visible:Visibility.Collapsed;
+    }
+
     UIElement HistoryPage()=>historyPanel=new HistoryPanel(controller){Margin=new(0,8,8,0)};
 
     static FrameworkElement Section(FrameworkElement content)
@@ -319,13 +352,21 @@ public sealed class SettingsWindow : Window
             }
             UpdateModelChoices(false);
             UpdateSaveStatus();
+            var selectedInstalled=SelectedInstalledModel()?.Id;
+            var installed=controller.Models.Where(m=>m.Installed).Select(m=>new InstalledModelRow(m)).ToList();
+            installedModels.ItemsSource=installed;
+            installedModels.SelectedItem=installed.FirstOrDefault(m=>m.Id==selectedInstalled)??installed.FirstOrDefault(m=>m.Id==controller.Settings.PrimaryModel)??installed.FirstOrDefault();
+            installedEmpty.Text=controller.Connected?"No models installed.":"Reconnect to view installed models.";
+            installedEmpty.Visibility=installed.Count==0?Visibility.Visible:Visibility.Collapsed;
+            UpdateModelActions();
             var selectedCatalog=catalogModels.SelectedValue as string;
-            catalogModels.ItemsSource=controller.Models;
-            catalogModels.SelectedValue=selectedCatalog??controller.Models.FirstOrDefault(m=>m.CanInstall)?.Id??controller.Models.FirstOrDefault()?.Id;
-            inspectCatalog.IsEnabled=catalogModels.SelectedItem is ModelInfo item&&item.CanInstall;
-            var selectedReview=(reviews.SelectedItem as ReviewDocument)?.Id;
-            reviews.ItemsSource=controller.Pending;
-            reviews.SelectedItem=controller.Pending.FirstOrDefault(p=>p.Id==selectedReview)??controller.Pending.FirstOrDefault();
+            var available=controller.Models.Where(m=>!m.Installed&&m.CanInstall).ToList();
+            catalogModels.ItemsSource=available;
+            catalogModels.SelectedValue=available.FirstOrDefault(m=>m.Id==selectedCatalog)?.Id??available.FirstOrDefault()?.Id;
+            catalogChoice.Visibility=available.Count>0?Visibility.Visible:Visibility.Collapsed;
+            repository.Text=ModelRepositorySelection.AfterRefresh(repository.Text,selectedCatalog,(catalogModels.SelectedItem as ModelInfo)?.Id);
+            checkModel.IsEnabled=!inspecting&&job==null;
+
         }
         finally{loading=false;updating=false;}
     }
@@ -500,58 +541,96 @@ public sealed class SettingsWindow : Window
         }
         catch(Exception ex){message.Text=ex is ArgumentException?ex.Message:"Cannot connect to the session API.";}
     }
-    void OpenSelected(){if(reviews.SelectedItem is ReviewDocument review)controller.OpenReview(review);}
 
     async Task TestModel()
     {
-        if(primary.SelectedItem is not ModelInfo model||!model.Installed){message.Text="Select an installed Dictation model.";return;}
+        if(SelectedInstalledModel() is not ModelInfo model){modelActionStatus.Text="Select an installed model.";return;}
+        if(modelActionBusy||controller.IsBusy)return;
         var picker=new Microsoft.Win32.OpenFileDialog{Title="Test a local recording",Filter="Audio files|*.wav;*.mp3;*.m4a;*.flac;*.ogg;*.opus;*.webm|All files|*.*"};
         if(picker.ShowDialog(this)!=true)return;
-        message.Text="Testing the original model…";try
+        modelActionBusy=true;UpdateModelActions();
+        modelActionStatus.Text=$"Testing {model.Name}…";try
         {
             using var api=new ApiClient(controller.Settings);
             using var cancellation=new CancellationTokenSource(TimeSpan.FromMinutes(5));
-            await api.TestModel(model,picker.FileName,language.SelectedItem as string??"auto",cancellation.Token);
-            message.Text="Runtime test passed. Transcription quality and live behavior still need a separate check.";
+            var requested=language.SelectedItem as string??"auto";
+            var testLanguage=model.Languages.Contains(requested)?requested:model.Languages.Contains("auto")?"auto":model.Languages.FirstOrDefault()??"auto";
+            await api.TestModel(model,picker.FileName,testLanguage,cancellation.Token);
+            modelActionStatus.Text=$"{model.Name}: test passed.";
             await controller.RefreshConnection();Refresh();
         }
-        catch(Exception ex){message.Text=ex is InvalidOperationException?ex.Message:"The runtime test did not finish. Your existing model selection was preserved.";}
+        catch(Exception ex){modelActionStatus.Text=ex is InvalidOperationException?ex.Message:"The model test did not finish. Try again.";}
+        finally{modelActionBusy=false;UpdateModelActions();}
     }
 
-    async Task InspectCatalog()
+    async Task RemoveModel()
     {
-        if(catalogModels.SelectedItem is not ModelInfo model||!model.CanInstall)return;
-        repository.Text="https://huggingface.co/"+model.Id+"/tree/"+model.Revision;
-        await InspectModel(model.Id);
+        if(SelectedInstalledModel() is not ModelInfo model||!model.CanRemove||modelActionBusy||controller.IsBusy||job!=null)return;
+        if(MessageBox.Show(this,$"Remove {model.Name}?\n\nIts downloaded model files will be deleted. Saved dictations will be kept.","Remove model",MessageBoxButton.YesNo,MessageBoxImage.Warning,MessageBoxResult.No)!=MessageBoxResult.Yes)return;
+        modelActionBusy=true;UpdateModelActions();modelActionStatus.Text=$"Removing {model.Name}…";
+        try
+        {
+            using var api=new ApiClient(controller.Settings);
+            var result=await api.RemoveModel(model.Id);
+            modelActionStatus.Text=string.IsNullOrWhiteSpace(result.Message)?result.Removed?"Model removed.":"The model could not be removed.":result.Message;
+            if(result.CleanupPending)modelActionStatus.Text+=" Some model files still need cleanup.";
+            await controller.RefreshConnection();Refresh();
+        }
+        catch(Exception ex){modelActionStatus.Text=ex is InvalidOperationException?ex.Message:"The model could not be removed. Reconnect and try again.";}
+        finally{modelActionBusy=false;UpdateModelActions();}
+    }
+
+    async Task CheckModel()
+    {
+        var selected=catalogModels.SelectedItem as ModelInfo;
+        var value=repository.Text.Trim().TrimEnd('/');
+        var catalogId=selected!=null&&(value.Length==0||value=="https://huggingface.co/"+selected.Id)?selected.Id:null;
+        await InspectModel(catalogId);
     }
 
     async Task InspectModel(string? catalogId=null)
     {
-        importStatus.Text="Inspecting public repository metadata…";download.IsEnabled=false;
+        if(inspecting||job!=null)return;
+        var value=repository.Text.Trim();
+        if(value.Length==0&&catalogId==null){importStatus.Text="Enter a public Hugging Face model URL.";return;}
+        inspection=null;inspecting=true;checkModel.IsEnabled=false;
+        importStatus.Text="Checking model…";download.IsEnabled=false;
         try
         {
             using var api=new ApiClient(controller.Settings);
-            var result=await api.Post("/v1/model-imports/inspect",new{repository=repository.Text.Trim(),catalog_model_id=catalogId});
+            var result=await api.Post("/v1/model-imports/inspect",new{repository=value,catalog_model_id=catalogId});
+            if(repository.Text.Trim()!=value)return;
             inspection=result.GetProperty("inspection_id").GetString();
             var bytes=result.GetProperty("download_bytes").GetInt64();
-            importStatus.Text=$"Compatible original Whisper model · {bytes/1048576.0:0.0} MiB\nPinned commit: {result.GetProperty("revision").GetString()}\nNot runtime-tested or quality-checked.";
+            importStatus.Text=$"Compatible · {bytes/1073741824.0:0.00} GiB download";
             download.IsEnabled=true;
         }
-        catch(Exception ex){importStatus.Text=ex is InvalidOperationException?ex.Message:"Model inspection failed. Check the URL and network connection.";}
+        catch(Exception ex){importStatus.Text=ex is InvalidOperationException?ex.Message:"The model could not be checked. Check the URL and connection.";}
+        finally{inspecting=false;checkModel.IsEnabled=job==null;}
     }
 
     async Task DownloadModel()
     {
-        if(inspection==null)return;
-        download.IsEnabled=false;
+        if(inspection==null||job!=null)return;
+        download.IsEnabled=false;checkModel.IsEnabled=false;
+        var settings=Snapshot();downloadEndpoint=settings.Endpoint;
         try
         {
-            using var api=new ApiClient(controller.Settings);
+            using var api=new ApiClient(settings);
             var result=await api.Post("/v1/model-imports",new{inspection_id=inspection});
-            job=result.GetProperty("id").GetString();cancelDownload.IsEnabled=true;poll.Start();
-            await PollDownload();
+            job=result.GetProperty("id").GetString();inspection=null;
+            if(job!=null)activeDownloads[downloadEndpoint]=job;
+            cancelDownload.IsEnabled=true;UpdateModelActions();
+            if(!closed){poll.Start();await PollDownload();}
         }
-        catch(Exception ex){importStatus.Text=ex is InvalidOperationException?ex.Message:"Download could not start.";}
+        catch(Exception ex){importStatus.Text=ex is InvalidOperationException?ex.Message:"Download could not start.";checkModel.IsEnabled=true;}
+    }
+
+    void ResumeDownload()
+    {
+        if(!activeDownloads.TryGetValue(controller.Settings.Endpoint,out var active))return;
+        downloadEndpoint=controller.Settings.Endpoint;job=active;checkModel.IsEnabled=false;cancelDownload.IsEnabled=true;
+        UpdateModelActions();poll.Start();_ = PollDownload();
     }
 
     async Task PollDownload()
@@ -559,7 +638,8 @@ public sealed class SettingsWindow : Window
         if(job==null||polling)return;polling=true;
         try
         {
-            using var api=new ApiClient(controller.Settings);
+            var settings=Snapshot();settings.Endpoint=downloadEndpoint??settings.Endpoint;
+            using var api=new ApiClient(settings);
             var result=await api.Get("/v1/model-imports/"+job);
             var done=result.GetProperty("downloaded_bytes").GetInt64();
             var total=result.GetProperty("total_bytes").GetInt64();
@@ -569,8 +649,10 @@ public sealed class SettingsWindow : Window
             if(state is "completed" or "cancelled" or "failed")
             {
                 poll.Stop();cancelDownload.IsEnabled=false;
+                if(downloadEndpoint!=null&&activeDownloads.GetValueOrDefault(downloadEndpoint)==job)activeDownloads.Remove(downloadEndpoint);
+                job=null;checkModel.IsEnabled=true;UpdateModelActions();
                 if(result.TryGetProperty("message",out var detail))importStatus.Text+="\n"+detail.GetString();
-                if(state=="completed"){importStatus.Text+="\nInstalled. Select the model and run a transcription test.";await controller.RefreshConnection();Refresh();}
+                if(state=="completed"){importStatus.Text+="\nModel installed.";await controller.RefreshConnection();Refresh();}
             }
         }
         catch(Exception){importStatus.Text="Download status unavailable. Reconnect to the API to check it.";}
@@ -580,7 +662,8 @@ public sealed class SettingsWindow : Window
     async Task CancelDownload()
     {
         if(job==null)return;
-        using var api=new ApiClient(controller.Settings);
+        var settings=Snapshot();settings.Endpoint=downloadEndpoint??settings.Endpoint;
+        using var api=new ApiClient(settings);
         try{await api.Post("/v1/model-imports/"+job+"/cancel",new{});await PollDownload();}
         catch(Exception){importStatus.Text="Could not request cancellation. Check the API before starting another download.";}
     }

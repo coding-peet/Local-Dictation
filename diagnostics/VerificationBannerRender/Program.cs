@@ -99,6 +99,7 @@ static class Program
                 ThemeManager.Apply(theme);
                 ReviewWorkflowChecks.Render(theme,output,checks);
                 HistoryIntegrationChecks.Run(theme,output,checks);
+                ModelsUsabilityChecks.Run(theme,output,checks);
                 Render(theme,true,false,true,"Toto je prvý prepis. Po kontrole sa vráti na pôvodný kurzor.","verifying-short");
                 Render(theme,true,false,true,string.Join(" ",Enumerable.Repeat("Dlhší prvý prepis zostáva počas overovania iba v náhľade bannera.",12)),"verifying-long");
                 Render(theme,true,false,false,"Prvý model ešte dokončuje poslednú vetu.","finishing");

@@ -1,6 +1,9 @@
 """Backend-owned registry. Capability and quality evidence are separate."""
 import json
 import os
+import shutil
+import stat
+import uuid
 from pathlib import Path
 import threading
 from .installation import validate_installation
@@ -35,15 +38,7 @@ class Catalog:
         self.entries={}
         self.validations={}
         for model in BUILTINS:
-            entry={**model,"path":str(config.model_root/model["folder"]),"installed":False,
-                   "compatible":True,"runtime_tested":False,"quality_verified":False}
-            self.check(entry)
-            pinned=entry.get("installed_revision")==model["revision"]
-            # A new profile's pinned files are not runtime or quality evidence.
-            prevalidated=model.get("prevalidated",True)
-            entry.update(runtime_tested=entry["installed"] and pinned and prevalidated,
-                         quality_verified=entry["installed"] and pinned and prevalidated)
-            self.entries[model["id"]]=entry
+            self.entries[model["id"]]=self.builtin_entry(model)
         if self.file.exists():
             for model in json.loads(self.file.read_text(encoding="utf-8")):
                 builtin=next((b for b in BUILTINS if b["id"]==model["id"]),None)
@@ -55,6 +50,17 @@ class Catalog:
                     model={**model,**builtin,"path":str(path)}
                 self.check(model)
                 self.entries[model["id"]]=model
+
+    def builtin_entry(self,model):
+        entry={**model,"path":str(self.config.model_root/model["folder"]),"installed":False,
+               "compatible":True,"runtime_tested":False,"quality_verified":False}
+        self.check(entry)
+        pinned=entry.get("installed_revision")==model["revision"]
+        # Only the original prevalidated profile retains its existing evidence.
+        prevalidated=model.get("prevalidated",True)
+        entry.update(runtime_tested=entry["installed"] and pinned and prevalidated,
+                     quality_verified=entry["installed"] and pinned and prevalidated)
+        return entry
 
     @property
     def managed_root(self):return (self.config.data_root.parent/"models").resolve()
@@ -105,9 +111,115 @@ class Catalog:
     def models(self):
         with self.lock:
             for entry in self.entries.values():self.check(entry)
-            return [{"object":"model","owned_by":"local",**m,"can_install":not m["installed"],
-                     "verification_eligible":m["installed"] and m["runtime_tested"]}
-                    for m in self.entries.values()]
+            models=[]
+            for entry in self.entries.values():
+                restriction=self.removal_restriction(entry)
+                models.append({"object":"model","owned_by":"local",**entry,
+                    "can_install":not entry["installed"],"can_remove":restriction is None,
+                    "removal_restriction":restriction,
+                    "verification_eligible":entry["installed"] and entry["runtime_tested"]})
+            return models
+
+    @staticmethod
+    def plain_path(path):
+        """Reject Windows junctions/reparse points as well as ordinary symlinks."""
+        for candidate in (path,*path.parents):
+            info=os.lstat(candidate)
+            if stat.S_ISLNK(info.st_mode) or getattr(info,"st_file_attributes",0)&0x400:
+                raise ValueError("Linked or reparse-point model paths cannot be removed.")
+
+    @staticmethod
+    def plain_tree(path):
+        def failed(exc):raise exc
+        for current,directories,files in os.walk(path,followlinks=False,onerror=failed):
+            for name in (*directories,*files):
+                info=os.lstat(Path(current)/name)
+                if stat.S_ISLNK(info.st_mode) or getattr(info,"st_file_attributes",0)&0x400:
+                    raise ValueError("Linked or reparse-point model files cannot be removed.")
+                if stat.S_ISREG(info.st_mode) and info.st_nlink>1:
+                    raise ValueError("Hard-linked model files may be shared and cannot be removed.")
+
+    def removal_target(self,entry):
+        if not entry.get("installed"):
+            raise ValueError("This model is not installed. Repair an incomplete installation before removing it.")
+        if not entry.get("managed"):
+            raise ValueError("Shared model files are preserved. Only models downloaded by Local Dictation can be removed.")
+        raw=Path(entry["path"])
+        if not raw.is_absolute() or ".." in raw.parts:
+            raise ValueError("The model path is unsafe for removal.")
+        raw_root=(self.config.data_root.parent/"models").absolute()
+        root=raw_root.resolve()
+        path=raw.resolve()
+        if path.parent!=root or path.name.startswith(".") or not path.is_dir():
+            raise ValueError("Only an owned model directory directly inside managed storage can be removed.")
+        self.plain_path(raw_root)
+        self.plain_path(raw)
+        for other in self.entries.values():
+            if other["id"]==entry["id"]:continue
+            other_path=Path(other["path"]).resolve()
+            if other_path==path or other_path.is_relative_to(path) or path.is_relative_to(other_path):
+                raise ValueError("Another registered model shares this directory. Its files are preserved.")
+        self.plain_tree(path)
+        manifest=json.loads((path/"local-manifest.json").read_text(encoding="utf-8"))
+        if manifest.get("repo")!=entry["id"] or manifest.get("revision")!=entry.get("revision"):
+            raise ValueError("The model installation ownership manifest does not match the registry.")
+        return path
+
+    def removal_restriction(self,entry):
+        try:self.removal_target(entry)
+        except ValueError as exc:return str(exc)
+        except (OSError,KeyError,TypeError):return "The model installation cannot be safely removed. Check its managed files."
+        return None
+
+    def remove(self,model,before_remove=None):
+        """Quarantine an explicitly selected owned installation, then commit the registry."""
+        with self.lock:
+            ident=canonical_model_id(model)
+            previous=self.entries.get(ident)
+            if previous is None:raise ValueError("Unknown model. Select an installed model from Models.")
+            self.check(previous)
+            source=self.removal_target(previous)
+            root=self.managed_root
+            quarantine_root=root/".removing"
+            quarantine_root.mkdir(exist_ok=True)
+            self.plain_path(quarantine_root)
+            if quarantine_root.resolve().parent!=root:
+                raise ValueError("The model recovery directory is unsafe.")
+            quarantine=quarantine_root/str(uuid.uuid4())
+            if quarantine.exists():raise ValueError("The model recovery directory is already occupied.")
+            if before_remove:before_remove(ident)
+            # Revalidate immediately before the move, including links and shared ownership.
+            source=self.removal_target(previous)
+            os.replace(source,quarantine)
+            self.validations.pop(ident,None)
+            builtin=next((item for item in BUILTINS if item["id"]==ident),None)
+            try:
+                if builtin:self.entries[ident]=self.builtin_entry(builtin)
+                else:self.entries.pop(ident)
+                self.save() # Atomic os.replace: registry points at either the old or new state.
+            except Exception:
+                self.entries[ident]=previous
+                self.validations.pop(ident,None)
+                # Rollback never overwrites a newly occupied source directory.
+                if source.exists():
+                    raise RuntimeError("Removal rollback needs attention. The previous model is preserved in the managed recovery directory.") from None
+                self.plain_path(quarantine)
+                os.replace(quarantine,source)
+                raise
+            try:
+                self.plain_path(quarantine)
+                if quarantine.resolve().parent!=quarantine_root.resolve():
+                    raise ValueError("The model recovery path changed.")
+                self.plain_tree(quarantine)
+                shutil.rmtree(quarantine)
+                cleanup_pending=False
+            except (OSError,ValueError):cleanup_pending=True
+            message="Model removed."
+            if builtin and self.entries[ident]["installed"]:
+                message="Managed installation removed. A shared model copy remains available and has been preserved."
+            if cleanup_pending:
+                message+=" Some files remain in the managed recovery directory; cleanup needs attention."
+            return {"model_id":ident,"removed":True,"cleanup_pending":cleanup_pending,"message":message}
 
     def require(self,model):
         with self.lock:

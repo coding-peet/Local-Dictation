@@ -10,10 +10,13 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 from .downloads import inspect_repository,download_snapshot
 from .installation import validate_installation
+from .sessions import BusyError
+from .workers import run_worker
 
 class Imports:
-    def __init__(self,config,catalog):
+    def __init__(self,config,catalog,admission=None,ready=None,engine=None):
         self.config,self.catalog=config,catalog
+        self.admission,self.ready,self.engine=admission,ready,engine
         self.inspections,self.jobs={},{}
         self.tasks=set()
 
@@ -45,6 +48,8 @@ class Imports:
         data=await request.json()
         spec=self.inspections.get(data.get("inspection_id"))
         if not spec:return JSONResponse({"error":{"message":"Inspect the repository again before downloading."}},400)
+        if self.admission and self.admission.kind=="model_removal":
+            return JSONResponse({"error":{"message":"A model is being removed. Wait before downloading."}},409)
         if any(j["state"] in ("queued","downloading") for j in self.jobs.values()):
             return JSONResponse({"error":{"message":"A download is already running."}},409)
         try:self.catalog.can_install(spec)
@@ -109,6 +114,30 @@ class Imports:
             if not registered and backed_up and backup.exists():
                 job.update(state="failed",recovery_required=True,message="Repair rollback needs attention. The previous directory is preserved in .replaced.")
 
+    async def remove(self,request):
+        cancelled=threading.Event()
+        try:
+            data=await request.json()
+            if not isinstance(data,dict) or not isinstance(data.get("model_id"),str) or not data["model_id"]:
+                raise ValueError("Select an installed model to remove.")
+            if not self.admission or not self.ready or not self.ready():
+                raise BusyError("The API is preparing or unavailable. Wait before removing a model.")
+            if any(job["state"] in ("queued","downloading") for job in self.jobs.values()):
+                raise BusyError("A model download is running. Wait or cancel it before removing a model.")
+            async with self.admission.own("model_removal",cancelled):
+                def forget(model):
+                    try:
+                        if hasattr(self.engine,"forget_model"):self.engine.forget_model(model)
+                    except Exception:
+                        self.admission.unavailable=True
+                        raise
+                result=await run_worker(self.catalog.remove,data["model_id"],forget,cancelled=cancelled)
+                return JSONResponse(result)
+        except BusyError as exc:return JSONResponse({"error":{"message":str(exc)}},409)
+        except ValueError as exc:return JSONResponse({"error":{"message":str(exc)}},400)
+        except Exception:
+            return JSONResponse({"error":{"message":"Model removal failed. Check the managed installation and recovery directory before trying again."}},500)
+
     async def status(self,request):
         job=self.jobs.get(request.path_params["job"])
         if not job:return JSONResponse({"error":{"message":"Unknown download."}},404)
@@ -121,7 +150,8 @@ class Imports:
         return JSONResponse(self.public(job))
 
     def routes(self):
-        return [Route("/v1/model-imports/inspect",self.inspect,methods=["POST"]),
+        return [Route("/v1/models/remove",self.remove,methods=["POST"]),
+                Route("/v1/model-imports/inspect",self.inspect,methods=["POST"]),
                 Route("/v1/model-imports",self.start,methods=["POST"]),
                 Route("/v1/model-imports/{job}",self.status),
                 Route("/v1/model-imports/{job}/cancel",self.cancel,methods=["POST"])]

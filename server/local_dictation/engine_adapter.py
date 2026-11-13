@@ -50,5 +50,11 @@ class EngineAdapter:
     def unload(self):
         self.engine.unload()
 
+    def forget_model(self,model):
+        import model_engine
+        self.engine.forget_model(model)
+        model_engine.MODELS.pop(model,None)
+        model_engine.MODEL_LANGUAGES.pop(model,None)
+
     def status(self):
         return self.engine.status()

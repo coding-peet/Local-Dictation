@@ -62,6 +62,23 @@ Validation errors return 400, unavailable/busy/cancelled work returns 409, and
 inference/cleanup failures return 500. Errors do not include transcript content.
 
 
+## Remove an app-managed model
+
+~~~text
+POST /v1/models/remove
+{"model_id":"owner/model"}
+~~~
+
+Model discovery exposes can_remove and removal_restriction. Only a verified
+app-owned managed installation can be removed. Shared originals stay in place.
+Removal is serialized with inference and downloads; unsafe paths, links and
+overlapping ownership are refused. Owned files are quarantined before atomic
+registry persistence, with rollback if persistence fails. The response contains
+model_id, removed, cleanup_pending and message. Cleanup leftovers are reported
+without falsely restoring the model to the installed list. This endpoint is an
+explicit user action; ordinary inspection/tests must not call it on real models.
+
+
 ## Duplex audio
 
 Connect a native WebSocket client to:

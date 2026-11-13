@@ -30,6 +30,18 @@ update. Native OpenAI/Outlook insertion and audio-device acceptance remain
 manual checks. See [integrated History validation](docs/development/integrated-history-20261113.md)
 and [selected-cursor and Review validation](docs/development/selected-cursor-review-20261113.md).
 
+## Prepared usability update
+
+The next candidate simplifies Models into installed management and adding cards,
+adds guarded app-managed removal, merges unfinished Review into History, and
+places text actions above a compact player with a faint fixed-scale RMS waveform.
+The protected recovery store remains independent from the 20-recording limit.
+
+Validation: 443 Core tests, 175 backend tests and 68 windowless UI/controller
+checks passed. Source review findings were reproduced and corrected. No actual
+model removal, microphone, playback, real inference or desktop control was used.
+See [usability validation](docs/development/usability-20261113.md).
+
 ## Start here
 
 - [Current product requirements](docs/PRODUCT_REQUIREMENTS.md): user input and

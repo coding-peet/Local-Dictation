@@ -252,7 +252,7 @@
         <p>Automatic delivery currently accepts a single paragraph. Pasted line breaks or control characters stay preserved for correction; remove them before approval. Already inserted transcripts remain read-only.</p>
         <div class="callout info">
           <strong>Review has its own compact window.</strong>
-          <p>No large editor opens automatically. Pending items remain available for later. In the optional Details editor, <strong>Close</strong> and <strong>Copy reviewed text</strong> keep the item; <strong>Dismiss</strong> removes pending Review. Retained History is separate.</p>
+          <p>No large editor opens automatically. Pending items remain available for later. In the optional Details editor, <strong>Close</strong> and <strong>Copy reviewed text</strong> keep the item; <strong>Dismiss</strong> removes the saved unfinished Review; a retained recording remains in History.</p>
         </div>
         <p>Automatic insertion accepts <strong>single-paragraph text</strong>. Remove added line breaks/control characters before insertion. Rejection leaves the field unchanged and keeps the text available.</p>
       </section>
@@ -286,16 +286,19 @@
           </table>
         </div>
 
-        <h3>Install or test a model</h3>
+        <h3>Manage installed models</h3>
+        <p>Open <strong>Models → Installed models</strong>. The table shows your local models, their test status and live mode. Actions below the table use the row you select.</p>
         <ol>
-          <li>Open the <strong>Models</strong> section.</li>
-          <li>Use <strong>Inspect selected catalog model</strong>, or enter a public repository URL/<code>owner/name</code> and <strong>Inspect compatibility and size</strong>.</li>
-          <li>Check the size, then <strong>Download inspected model</strong>.</li>
-          <li>Select the installed Dictation model and <strong>Test selected model with audio…</strong>.</li>
+          <li>Select a row, then <strong>Test selected model with audio…</strong> to try a local recording.</li>
+          <li>To uninstall an app-managed model, choose <strong>Remove selected model</strong> and confirm its name. Shared model files are kept; the reason appears below the table.</li>
         </ol>
-        <p>Imports support compatible built-in Whisper Transformers models with original safetensors; private, gated, and remote-code models are rejected. New imports start after-recording. Closing Settings does not stop downloading; use <strong>Cancel download</strong>.</p>
-        <p>A note below <strong>Dictation model</strong> appears when it needs a runtime test, is missing, works after recording only, or may have slow live previews. Support and measured low-latency readiness are separate. The three named Turbo/Large-v3 profiles support live; other newly imported profiles still start without live capability.</p>
-        <p><strong>Installed</strong>, <strong>runtime-tested</strong>, <strong>quality-checked</strong>, and <strong>live-ready</strong> are separate states. A successful runtime test proves the model can transcribe; check its accuracy and live performance separately. Verification needs a different, installed, runtime-tested model supporting your language.</p>
+        <h3>Add a model</h3>
+        <ol>
+          <li>In <strong>Add model</strong>, choose an available model or paste a public Hugging Face URL.</li>
+          <li>Select <strong>Check size and compatibility</strong>.</li>
+          <li>Review the download size, then select <strong>Download model</strong>.</li>
+        </ol>
+        <p>Use <strong>Cancel download</strong> to stop a download. Closing the window does not cancel it. Installed models stay in the upper table. A different eligible model that has passed an audio test can be selected for Verification.</p>
         <p>The small banner language indicator shows the actual result, such as <strong>Auto · SK</strong> or <strong>Auto · EN</strong>. Before detection it shows <strong>Auto · …</strong>. A fixed language shows its code, such as <strong>SK</strong> or <strong>ES</strong>.</p>
         <p>Under <strong>Preferred Auto languages (supported by installed models)</strong>, use <strong>+</strong> to add a language supported by installed models, or remove a tag with its ×. With tags selected, Auto chooses only among those supported by the selected model, and the banner correction picker offers only your preferred languages. Remove all tags to use and offer every supported language. The initial SK and EN tags exclude Russian, Serbian and Czech. This restriction is not a confidence or accuracy guarantee.</p>
         <p>The small model name beside the phase identifies the Dictation model while recording and the Verification model during Verify. Hover the name to see its full identity and role.</p>
@@ -306,18 +309,18 @@
 
       <section id="history" aria-labelledby="history-title">
         <h2 id="history-title">History and original audio</h2>
-        <p>Select <strong>History</strong> in the main window. <strong>History</strong> in the notification-area menu opens this same section. The list, selected transcript, audio player and actions are all here; there is no separate History window.</p>
+        <p>Select <strong>History</strong> in the main window. <strong>History</strong> in the notification-area menu opens this same section. The list includes recordings and text marked Needs review. Text-only items remain available even when their original audio is gone.</p>
         <ul>
           <li>The <strong>Play</strong>, <strong>Pause</strong> and <strong>Stop</strong> icons control the selected original recording. Pause keeps your position; Stop returns to the beginning.</li>
-          <li>Drag the round timeline thumb to seek. Elapsed/total time and the amplitude waveform show your position. With the slider focused, Left/Right move one second; Page Up/Page Down move five seconds. Selecting a recording does not play it.</li>
+          <li>Drag the round timeline thumb to seek. Elapsed/total time show your position. The faint waveform behind the slider shows RMS energy on a fixed scale; loud isolated peaks do not shrink the rest of the recording. With the slider focused, Left/Right move one second; Page Up/Page Down move five seconds. Selecting a recording does not play it.</li>
           <li><strong>Copy text</strong> copies the current transcript.</li>
           <li><strong>Open Review</strong> opens the item's current text in the separate compact Review window. Select <strong>Details</strong> for its original wordings and recording information. Reopening an item does not insert it.</li>
           <li><strong>Save audio…</strong> exports an ordinary WAV to a location you choose.</li>
-          <li><strong>Delete</strong> removes the selected history transcript and audio after confirmation.</li>
+          <li><strong>Delete</strong> removes the selected dictation, recording and saved review choices after confirmation.</li>
         </ul>
         <div class="callout">
           <strong>History keeps the latest 20 dictations with audio.</strong>
-          <p>The next saved item removes the oldest transcript and audio. Pending Review is separate. A recording with captured audio can be retained even when no words were recognized; use Change language… to try that audio again.</p>
+          <p>The next saved recording removes the oldest recording from this list. Text marked Needs review is retained independently and may remain as a Text only item. A recording with captured audio can be retained even when no words were recognized; use Change language… to try that audio again.</p>
         </div>
         <h3>Insert a saved pending result</h3>
         <ol>
@@ -330,7 +333,7 @@
         <p>Choose <strong>Open Review → Second transcript…</strong> and select an eligible different model to compare the original recording. It creates a separate comparison, keeps the source and your edits, and shows the full second transcript. This action waits for explicit Insert even when both models agree. A saved original recording and an eligible installed, runtime-tested verifier are required; see <a href="#review">Review</a>.</p>
         <p>Use <strong>Change language…</strong> in History to transcribe the same audio in another supported language. It creates a new Review without starting the microphone or changing text previously inserted elsewhere.</p>
         <p>An item marked <strong>Already inserted</strong> shows the saved text with insertion and phrase editing disabled. Its original choices and recording information remain available through <strong>Details</strong>. Use <strong>Copy text</strong> if you want to reuse that text manually.</p>
-        <p>At narrower sizes, the list moves above the selected transcript; scroll the page to reach playback and actions. Leaving History or closing the main window stops playback. Returning keeps the selected dictation and does not play it automatically.</p>
+        <p>Text actions sit above the compact player. At narrower sizes, the list moves above the selected transcript; scroll the page to reach the actions and player. Leaving History or closing the main window stops playback. Returning keeps the selected dictation and does not play it automatically.</p>
         <p>History is protected for your Windows account. Exported WAV files are ordinary, unencrypted audio; export recordings you need beyond the limit.</p>
       </section>
 
@@ -380,7 +383,7 @@
             <li>Reconnect the microphone and select <strong>Refresh microphones</strong> on the <strong>Dictation</strong> section.</li>
             <li>Select the intended input device and check the automatic saving status. <strong>System default microphone</strong> follows the Windows default capture device.</li>
             <li>Check Windows microphone access and the input level. Watch whether the banner's waveform reacts while you speak.</li>
-            <li>Retry after correcting the device or service issue. Check Pending Review for text already received.</li>
+            <li>Retry after correcting the device or service issue. Check History for text marked Needs review.</li>
           </ol>
         </details>
         <details>
@@ -389,7 +392,7 @@
         </details>
         <details>
           <summary>The app switched to Review or will not resume at the cursor</summary>
-          <p>If only the beginning of a dictation appeared, the full transcript remains saved in Pending Review. A live correction must validate the text already inserted before replacing it. A range warning means delivery stopped; inspect the partial text before choosing another destination so it is not inserted twice.</p>
+          <p>If only the beginning of a dictation appeared, the full transcript remains in History with its review status. A live correction must validate the text already inserted before replacing it. A range warning means delivery stopped; inspect the partial text before choosing another destination so it is not inserted twice.</p>
           <p>A slow accessibility check can temporarily pause delivery. Once that check has ended, fresh live updates can resume in the same unchanged field. An uncertain paste still waits for confirmation or clipboard recovery; it is never repeated automatically.</p>
           <p>Return to the original field and leave its text unchanged. The destination must expose reliable editable text and selection access. A protected, elevated, unsupported, closed, or manually edited field cannot be used automatically. Continue through Review and <strong>Choose destination</strong>.</p>
           <p><strong>Record in banner</strong> starts from the app window and needs a destination selection. For preview-only dictation with an automatic final return, turn off <strong>Insert live text at the cursor</strong> and start with the shortcut from the destination field.</p>
@@ -426,11 +429,11 @@
         </details>
         <details>
           <summary>Local Dictation is already running</summary>
-          <p>Open the existing app from its Windows notification-area icon instead of launching another copy. The notification-area menu also offers Settings, Pending Review, History, and Exit.</p>
+          <p>Open the existing app from its Windows notification-area icon instead of launching another copy. The notification-area menu also offers Settings, History, and Exit.</p>
         </details>
         <details>
           <summary>A recording is missing from History or will not play</summary>
-          <p>History contains the latest 20 retained recordings, including recordings where no words were recognized. Earlier items may have been removed by the limit or explicitly deleted. Check your playback device if a saved item will not play. A pending Review can outlive its history audio; it is not an unlimited recording archive. If History saving fails, the transcript is kept in Pending Review, but audio recovery is unavailable.</p>
+          <p>History contains the latest 20 retained recordings, including recordings where no words were recognized. Earlier items may have been removed by the limit or explicitly deleted. Check your playback device if a saved item will not play. A pending Review can outlive its history audio; it is not an unlimited recording archive. If audio saving fails, the transcript remains as a Text only item in History.</p>
         </details>
       </section>
 
@@ -443,13 +446,13 @@
             <thead><tr><th scope="col">What</th><th scope="col">Typical location</th></tr></thead>
             <tbody>
               <tr><td>Application</td><td><code>C:\Git\Local-Dictation\app\LocalDictation.exe</code></td></tr>
-              <tr><td>Settings, protected history, and pending Review</td><td><code>C:\AI\LocalDictation\data</code></td></tr>
+              <tr><td>Settings, protected history, and unfinished text</td><td><code>C:\AI\LocalDictation\data</code></td></tr>
               <tr><td>Diagnostic logs</td><td><code>C:\AI\LocalDictation\logs</code></td></tr>
               <tr><td>Existing original model storage</td><td><code>C:\AI\PalaNote-ASR\models</code></td></tr>
             </tbody>
           </table>
         </div>
-        <p>Data locations can differ in a custom installation. History metadata, history audio, and pending Review are protected with Windows DPAPI for the current user. Keep that account and its recovery arrangements in mind when backing up or moving data. Settings and explicit audio exports are ordinary files.</p>
+        <p>Data locations can differ in a custom installation. History metadata, history audio, and unfinished text are protected with Windows DPAPI for the current user. Keep that account and its recovery arrangements in mind when backing up or moving data. Settings and explicit audio exports are ordinary files.</p>
         <p>Cursor insertion uses a temporary paste while preserving supported previous clipboard formats. Dictation payloads are marked to stay out of Windows clipboard history and cloud synchronization. Unsupported clipboard formats stop delivery before changing the clipboard.</p>
         <p class="top-link"><a href="#top">Back to the top</a></p>
       </section>

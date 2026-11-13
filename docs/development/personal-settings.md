@@ -39,7 +39,8 @@ History window is opened.
 - Use the Play, Pause and Stop icons. Pause keeps the current position; Stop
   returns to the beginning.
 - Drag the round timeline thumb to seek. Elapsed/total time and the amplitude
-  waveform show the position. Left/Right seek one second; Page Up/Page Down
+  faint waveform under the slider show the position. The waveform uses a fixed
+  RMS energy scale, so a loud burst does not shrink the rest of the recording. Left/Right seek one second; Page Up/Page Down
   seek five seconds while the slider is focused.
 - Copy the current transcript or open it in Review. For a pending result,
   resolve/edit the text, click a destination cursor, then click Insert.
@@ -47,14 +48,16 @@ History window is opened.
   different model. History Change language reprocesses that same audio in
   another supported language. Both preserve the source and create a new Review.
 - Save audio exports an ordinary WAV to your chosen location.
-- Delete removes that history item and its audio.
+- Delete removes that dictation, its audio and saved review choices after
+  confirmation. Its open Review editors close first.
 
 The client keeps the latest 20 retained recordings, including audio with no
 recognized words. After the 21st is saved, the oldest transcript and audio are removed.
-Pending Review is stored separately and is not removed by this limit.
+Unfinished text is stored independently and remains in History with Needs review
+or Not saved status, even after its audio expires. These entries show Text only.
 
 On a narrow window, the list moves above the transcript; scroll the page to
-reach the player and actions. Leaving History stops playback and clears its
+reach text actions above the compact player. Leaving History stops playback and clears its
 loaded audio. Returning keeps selection without automatically playing.
 
 History is under C:\AI\LocalDictation\data\history, or the corresponding

@@ -223,6 +223,14 @@ class WhisperEngine:
         if previous is not None:
             LOG.info("GPU model released: %s", previous)
 
+    def forget_model(self, model_id):
+        """Drop idle cached weights before an explicitly requested installation removal."""
+        if self.loaded_model_id == model_id:
+            self.unload()
+        if model_id == FAST_MODEL_ID:
+            self._discard_fast_cache()
+            gc.collect()
+
     def _load_model(self, model_id):
         if model_id == self.loaded_model_id and self.model is not None:
             return 0.0

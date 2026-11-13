@@ -53,7 +53,7 @@ def create_app(config, engine, catalog=None):
         return not admission.unavailable and (not hasattr(engine,"status") or engine.status().get("ready",True))
 
     async def models(request):
-        return JSONResponse({"object":"list","data":catalog.models()})
+        return JSONResponse({"object":"list","data":await asyncio.to_thread(catalog.models)})
 
     def validate(options):
         if options.get("type") != "start" or options.get("protocol_version") != 1:
@@ -89,6 +89,7 @@ def create_app(config, engine, catalog=None):
         try:
             raw = await asyncio.wait_for(ws.receive_text(),timeout=10)
             if len(raw)>8192: raise ValueError("Start message is too large.")
+            if admission.kind=="model_removal":raise BusyError("A model is being removed. Wait before recording.")
             options=validate(json.loads(raw))
             if not ready(): raise BusyError("The API is preparing or unavailable. Wait for /health ready before recording.")
             session=AudioSession(config,engine,options,ws.send_json,admission)
@@ -186,12 +187,13 @@ def create_app(config, engine, catalog=None):
             Route("/v1/models/test",batch,methods=["POST"]),
             WebSocketRoute("/v1/audio/sessions",socket)]
     from .imports import Imports
-    imports=Imports(config,catalog)
+    imports=Imports(config,catalog,admission,ready,engine)
     routes.extend(imports.routes())
     if hasattr(engine,"catalog"):
         engine.catalog=catalog
     app=Starlette(routes=routes)
     app.state.catalog,app.state.admission=catalog,admission
+    app.state.imports=imports
     app.state.validate=validate
     app.state.engine=engine
     return LoopbackGuard(app)

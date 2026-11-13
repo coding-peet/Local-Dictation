@@ -1,4 +1,3 @@
-using System.Buffers.Binary;
 using System.Security.Cryptography;
 
 namespace LocalDictation.Core;
@@ -31,6 +30,7 @@ public sealed class HistoryAudioPlayback(Func<byte[],IHistoryAudioOutput> output
     public HistoryPlaybackState State {get;private set;}=HistoryPlaybackState.Empty;
     public TimeSpan Position {get;private set;}
     public TimeSpan Duration {get;private set;}
+    /// <summary>Display-scaled RMS envelope; retained Peaks name for player compatibility.</summary>
     public IReadOnlyList<float> Peaks=>peaks;
 
     public void Load(byte[] wave)
@@ -41,13 +41,7 @@ public sealed class HistoryAudioPlayback(Func<byte[],IHistoryAudioOutput> output
         {
             pcm=RecordedAudio.PcmFromWave(wave);
             var samples=pcm.Length/2;
-            peaks=new float[Math.Min(256,samples)];
-            for(var i=0;i<samples;i++)
-            {
-                var bucket=(int)((long)i*peaks.Length/samples);
-                var amplitude=Math.Abs((int)BinaryPrimitives.ReadInt16LittleEndian(pcm.AsSpan(i*2,2)))/32768f;
-                peaks[bucket]=Math.Max(peaks[bucket],amplitude);
-            }
+            peaks=HistoryAudioEnvelope.Create(pcm);
             Duration=TimeSpan.FromSeconds(samples/16000d);audio=wave;
             State=HistoryPlaybackState.Stopped;
         }

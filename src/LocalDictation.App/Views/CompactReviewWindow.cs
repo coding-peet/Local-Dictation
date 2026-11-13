@@ -43,7 +43,7 @@ public sealed class CompactReviewWindow : Window
         verify.IsEnabled=document!=null&&controller.CanVerifyReview(document);
         verify.ToolTip=verify.IsEnabled?"Transcribe the original recording with another model":"A saved recording and an eligible second model are required.";
         insert.IsEnabled=document is {CanInsert:true}&&!controller.IsApplyingReview&&!controller.IsBusy;
-        status.Text=controller.IsApplyingReview?"Inserting…":document==null?"Your pending text is kept in Settings → Pending Review.":document.InsertedAt!=null?"Previously inserted. Its original recording can still be compared with another model.":"Select a destination cursor, then click Insert. Closing keeps your text and choices.";
+        status.Text=controller.IsApplyingReview?"Inserting…":document==null?"Your pending text is kept in History.":document.InsertedAt!=null?"Previously inserted. Its original recording can still be compared with another model.":"Select a destination cursor, then click Insert. Closing keeps your text and choices.";
         if(IsVisible&&(document==null||!openedInserted&&document.InsertedAt!=null)&&!controller.IsApplyingReview)Close();
     }
 }

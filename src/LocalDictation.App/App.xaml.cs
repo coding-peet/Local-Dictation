@@ -30,7 +30,7 @@ public partial class App : System.Windows.Application
         {
             args.Handled=true;
             controller?.EmergencyReview();
-            MessageBox.Show("An operation failed. Check pending Review and Settings. If protected saving failed, copy the text before closing.",
+            MessageBox.Show("An operation failed. Check History and Settings. If protected saving failed, copy the text before closing.",
                             "Local Dictation",MessageBoxButton.OK,MessageBoxImage.Warning);
         };
         try

@@ -52,7 +52,7 @@ public sealed class ClipboardRecoveryWindow : Window
         recheck.IsEnabled=controller.HasAcknowledgedClipboardBackup&&!controller.IsCheckingClipboard;
         explanation.Text=controller.HasAcknowledgedClipboardBackup
             ?"The insertion was confirmed, but Windows has not restored the previous clipboard yet. Its backup is still kept."
-            :"A paste was sent but its result has not been confirmed. Your transcript is kept in Pending Review, and the previous clipboard is held in memory.";
+            :"A paste was sent but its result has not been confirmed. Your transcript is kept in History, and the previous clipboard is held in memory.";
         status.Text=controller.IsCheckingClipboard?"Checking clipboard recovery…":controller.IsBusy?"Finish the current recording with Ctrl+Shift before restoring.":controller.HasClipboardRecovery?controller.ClipboardRecoveryStatus:controller.ConnectionMessage;
         details.Text=controller.ClipboardRecoveryDetails;
         if(IsVisible&&!controller.HasClipboardRecovery)Close();

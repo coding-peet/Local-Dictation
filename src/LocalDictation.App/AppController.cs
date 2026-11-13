@@ -83,6 +83,7 @@ public sealed class AppController : IDisposable
     public Settings Settings {get;private set;}
     public List<ModelInfo> Models {get;private set;}=[];
     public IReadOnlyList<ReviewDocument> Pending => pending.Documents.Where(p=>p.Id!=active?.Review.Id||active?.Completed==true).ToList();
+    public IReadOnlyList<DictationItem> Dictations=>DictationLibrary.Merge(History,Pending,pending.UnsavedIds);
     public bool Connected {get;private set;}
     public string ConnectionMessage {get;private set;}="Checking the local API…";
     public string ShortcutMessage {get;private set;}="";
@@ -356,7 +357,6 @@ public sealed class AppController : IDisposable
         var menu=new Forms.ContextMenuStrip();
         menu.Items.Add("Start / stop dictation",null,(_,_)=>Toggle());
         menu.Items.Add("Settings",null,(_,_)=>ShowSettings());
-        menu.Items.Add("Pending Review",null,(_,_)=>OpenLatestReview());
         menu.Items.Add("History",null,(_,_)=>ShowHistory());
         clipboardRecoveryAction=(Forms.ToolStripMenuItem)menu.Items.Add("Resolve clipboard recovery…",null,(_,_)=>ShowClipboardRecoveryDetails());
         clipboardRecoveryAction.Enabled=CanRestoreClipboard;
@@ -703,7 +703,7 @@ public sealed class AppController : IDisposable
         SaveReview(document);
         if(BannerReview?.Id==document.Id)bannerProgress=null;
         if(pending.UnsavedIds.Contains(document.Id))
-            ConnectionMessage="Text was inserted, but its receipt could not be saved. Pending Review is preserved; do not insert it again after restarting.";
+            ConnectionMessage="Text was inserted, but its receipt could not be saved. Saved text is preserved; do not insert it again after restarting.";
         else
         {
             try{DismissReview(document.Id);}
@@ -994,7 +994,7 @@ public sealed class AppController : IDisposable
         catch(Exception ex)
         {
             Diagnostics.Error("recording cleanup",ex);
-            ConnectionMessage="Recording cleanup did not finish. Check pending Review before exiting.";
+            ConnectionMessage="Recording cleanup did not finish. Check History before exiting.";
         }
         finally{recordingTasks.Remove(recording);}
     }
@@ -1113,8 +1113,8 @@ public sealed class AppController : IDisposable
             catch(Exception)
             {
                 run.NeedsReview=true;
-                run.Review.Reason="History could not save this recording. The transcript is kept in pending Review; audio recovery is unavailable.";
-                ConnectionMessage="History could not be saved. Check pending Review before exiting.";
+                run.Review.Reason="History could not save this recording. The text is kept in History; audio recovery is unavailable.";
+                ConnectionMessage="History could not be saved. Check History before exiting.";
             }
             try
             {
@@ -1301,7 +1301,7 @@ public sealed class AppController : IDisposable
         if(History.Any(e=>e.Id==document.Id))
         {
             try{historyStore.Update(document);History=historyStore.Load();}
-            catch(Exception){ConnectionMessage="History changes could not be saved. Pending Review is kept separately.";}
+            catch(Exception){ConnectionMessage="History changes could not be saved. Your saved Review text is preserved.";}
         }
         if(!pending.Save(document))
             ConnectionMessage="Protected saving failed. Review is in memory only: copy it before exiting.";
@@ -1353,6 +1353,14 @@ public sealed class AppController : IDisposable
     }
     public byte[] HistoryAudio(string id)=>historyStore.ReadAudio(id);
     public void DeleteHistory(string id){historyStore.Delete(id);History=historyStore.Load();Changed?.Invoke();}
+    public void DeleteDictation(string id)
+    {
+        if(IsBusy||IsApplyingReview||reviewWindow?.IsApplying==true||inserting.Count>0)throw new InvalidOperationException("Finish the current operation before deleting this dictation.");
+        if(reviewWindow?.ReviewId==id)reviewWindow.Close();
+        if(BannerReview?.Id==id)compactReviewWindow?.Close();
+        if(placementReview?.Id==id)placementReview=null;
+        historyStore.Delete(id);History=historyStore.Load();DismissReview(id);canonicalReviews.Remove(id);
+    }
     public void ShowHistory()
     {
         ShowSettings();settingsWindow!.SelectHistory();
@@ -1400,7 +1408,7 @@ public sealed class AppController : IDisposable
         {ConnectionMessage="Wait for the insertion check before exiting.";Changed?.Invoke();return;}
         try{if(!await PrepareForExit())return;}
         catch(Exception)
-        {exiting=false;ConnectionMessage="Recording cleanup did not finish. Check pending Review before exiting.";Changed?.Invoke();return;}
+        {exiting=false;ConnectionMessage="Recording cleanup did not finish. Check History before exiting.";Changed?.Invoke();return;}
         if(pending.UnsavedIds.Count>0)
         {
             exiting=false;

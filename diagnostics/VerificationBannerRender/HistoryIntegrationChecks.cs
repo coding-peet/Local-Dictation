@@ -35,6 +35,7 @@ static class HistoryIntegrationChecks
             old.SetPrimary("Earlier synthetic recording with a wrapped label for a complete twenty-item history.");store.Add(old,pcm);
         }
         Set(controller,"historyStore",store);Property(controller,"History",store.Load());
+        var pending=new PendingReviews(new ReviewStore(Path.Combine(directory,"pending")));Set(controller,"pending",pending);
         // Only invoke the real page factory: never construct SettingsWindow, enumerate
         // microphones, install hooks, create HWNDs, or touch the actual user's history.
         var settings=(SettingsWindow)RuntimeHelpers.GetUninitializedObject(typeof(SettingsWindow));Set(settings,"controller",controller);
@@ -60,7 +61,12 @@ static class HistoryIntegrationChecks
             var selected=list.SelectedItem;
             Property(controller,"History",store.Load());
             ((Action?)typeof(AppController).GetField("Changed",Fields)!.GetValue(controller))?.Invoke();
-            Require((list.SelectedItem as HistoryEntry)?.Id==(selected as HistoryEntry)?.Id,"History refresh lost the selected dictation.");
+            Require((list.SelectedItem as DictationItem)?.Id==(selected as DictationItem)?.Id,"History refresh lost the selected dictation.");
+            pending.Save(first);store.Delete(first.Id);Property(controller,"History",store.Load());
+            ((Action?)typeof(AppController).GetField("Changed",Fields)!.GetValue(controller))?.Invoke();
+            Require((list.SelectedItem as DictationItem) is {HasAudio:false,NeedsReview:true},"Evicted audio hid its unfinished text.");
+            Require(!playback.HasAudio&&player.Visibility==Visibility.Collapsed,"Text-only recovery retained stale playback audio.");
+            checks.Add("text-only recovery replaces evicted audio "+theme);
             Activate(false);Require(!playback.HasAudio&&playback.State==HistoryPlaybackState.Empty,"Leaving History retained its loaded audio.");
             Activate(true);Layout(page,448,420);
             var viewport=(ScrollViewer)page.GetType().GetProperty("Content")!.GetValue(page)!;
@@ -71,6 +77,18 @@ static class HistoryIntegrationChecks
             Require(!playback.HasAudio,"Closing the main window retained History audio.");
             Activate(true);Require(!playback.HasAudio,"Disposed History reloaded protected audio.");
             checks.Add("embedded History dispose is final "+theme);
+            Set(controller,"inserting",new HashSet<string>());Set(controller,"destinations",new Dictionary<string,LocalDictation.App.Services.ITextDelivery>());
+            Set(controller,"canonicalReviews",new Dictionary<string,ReviewDocument>{{first.Id,first}});
+            var details=new ReviewWindow(first,controller.SaveReview,controller.DismissReview,_=>Task.FromResult(new ReviewInsertionResult(false,"Synthetic")),_=>{});
+            var closed=false;details.Closed+=(_,_)=>closed=true;Set(controller,"reviewWindow",details);
+            try
+            {
+                Require(new System.Windows.Interop.WindowInteropHelper(details).Handle==0,"Deletion fixture created a native window.");
+                controller.DeleteDictation(first.Id);Require(closed&&!controller.Dictations.Any(i=>i.Id==first.Id),"Deleting a dictation left its expanded editor alive.");
+                checks.Add("delete closes that dictation editor "+theme);
+            }
+            finally{details.Close();}
+
         }
         finally{(page as IDisposable)?.Dispose();}
     }

@@ -14,6 +14,18 @@ punctuation, whitespace, and Unicode must be preserved.
 
 ## Recording and model selection
 
+- Models has two visual cards: Installed models and Add model. Keep the installed
+  table first, with Test selected model with audio and Remove below it. Both
+  actions operate on the table selection, independently from Dictation settings.
+  Remove introductory implementation prose. The lower card offers missing catalog
+  models or a public Hugging Face URL, Check size and compatibility, Download model
+  and download cancellation. Preserve actionable errors and inspection identity.
+- Expose removal only for verified app-owned managed installations. Preserve
+  shared original TypeWhisper weights; show a concise restriction. Confirm the
+  selected model before removal. Refuse active inference/downloads, unsafe paths
+  and links; preserve registry/files on persistence failure and report incomplete
+  cleanup. Do not perform any real removal during automated tests or rollout.
+
 - Select the microphone, language, and installed Dictation model in Settings.
 - Keep live transcription and insertion of live text as independent options.
   After-recording transcription remains available when live mode is unavailable.
@@ -310,6 +322,14 @@ punctuation, whitespace, and Unicode must be preserved.
 
 ## History and recovery
 
+- Present protected unfinished Review items in History with Needs review or Not
+  saved status, including Text only items whose audio has expired. Deduplicate
+  IDs and preserve current pending edits and durable insertion receipts. Remove
+  the separate Pending Review navigation and use History's Open Review route.
+  Storage lifetimes remain independent: the 20-recording limit never evicts
+  protected unfinished text. Explicit Delete removes the selected dictation and
+  closes its matching editors before deleting audio/text/choices.
+
 - Embed the complete Recent dictations workspace in the main window's History
   section: list, selected transcript/model/language, player and existing actions.
   History in the notification-area menu opens that same section and main window.
@@ -324,7 +344,10 @@ punctuation, whitespace, and Unicode must be preserved.
 - Protect saved transcripts and audio for the current Windows account with
   DPAPI. Pending Review is separate and must not be evicted by the history limit.
 - Provide Play, Pause and Stop icons, elapsed/total time, a seekable timeline
-  with a round thumb, and the recording amplitude waveform below it. Support
+  with a round thumb, and a faint RMS waveform under the slider. Keep the
+  transport approximately 108 DIPs tall and text actions above it. Use a fixed
+  -54 to -12 dBFS RMS display scale, never per-recording maximum normalization.
+  This is an energy aid rather than speech/noise classification. Support
   keyboard seeking. Stop returns to the beginning; Pause retains position.
   Load/render/seek before Play must not open an audio output device. Retire the
   previous output safely before replay, seeking or changing recordings.

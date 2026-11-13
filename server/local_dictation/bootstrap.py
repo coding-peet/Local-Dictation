@@ -28,3 +28,5 @@ class PreparingEngine:
     def transcribe(self,*args):return self.require().transcribe(*args)
     def unload(self):
         if self.adapter is not None:self.adapter.unload()
+    def forget_model(self,model):
+        self.require().forget_model(model)

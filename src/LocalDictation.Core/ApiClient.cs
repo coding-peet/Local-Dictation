@@ -13,6 +13,8 @@ public sealed record ModelInfo
     public string Revision { get; init; } = "";
     public bool Installed { get; init; }
     public bool CanInstall {get;init;}
+    public bool CanRemove {get;init;}
+    public string? RemovalRestriction {get;init;}
     public bool Compatible { get; init; }
     public bool RuntimeTested { get; init; }
     public bool QualityVerified { get; init; }
@@ -22,6 +24,14 @@ public sealed record ModelInfo
     public string[] Languages { get; init; } = [];
     [JsonIgnore] public string Label => (Name.Length>0?Name:Id) + (!Installed ? " · not installed" : "");
     public override string ToString()=>Label;
+}
+
+public sealed record ModelRemovalResult
+{
+    public string ModelId {get;init;}="";
+    public bool Removed {get;init;}
+    public bool CleanupPending {get;init;}
+    public string Message {get;init;}="";
 }
 
 public static class Protocol
@@ -71,6 +81,15 @@ public sealed class ApiClient : IDisposable
     }
     public async Task<List<ModelInfo>> Models(CancellationToken token = default) =>
         (await Get("/v1/models", token)).GetProperty("data").Deserialize<List<ModelInfo>>(Protocol.Json) ?? [];
+
+    public async Task<ModelRemovalResult> RemoveModel(string modelId,CancellationToken token=default)
+    {
+        var result=(await Post("/v1/models/remove",new {model_id=modelId},token))
+            .Deserialize<ModelRemovalResult>(Protocol.Json);
+        if(result is null||!result.Removed||result.ModelId!=modelId)
+            throw new InvalidDataException("The API did not confirm removal of the selected model.");
+        return result;
+    }
 
     public async Task WaitForIdle(CancellationToken token,TimeSpan? timeout=null,TimeSpan? pollDelay=null)
     {

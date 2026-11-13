@@ -70,7 +70,7 @@ public sealed class ReviewWindow : Window
         foreach(var button in new[]{acceptButton,destinationButton,verifyButton,copy,undo,keep,close,remove}) { button.Margin=new(0,0,8,8); buttons.Children.Add(button); }
         footer.Children.Add(buttons);
         footer.Children.Add(note);
-        footer.Children.Add(Ui.Text("Accept inserts the reviewed text and closes this window. Close keeps the pending Review for later.",12));
+        footer.Children.Add(Ui.Text("Accept inserts the reviewed text and closes this window. Close keeps your saved text for later.",12));
         DockPanel.SetDock(footer,Dock.Bottom);root.Children.Add(footer);
 
         var working=new StackPanel();
@@ -261,7 +261,7 @@ public sealed class ReviewWindow : Window
     {note.Text=message;note.SetResourceReference(TextBlock.ForegroundProperty,"Warning");}
     void Dismiss()
     {
-        if(MessageBox.Show(this,"Remove this pending Review? A saved recording, if available, remains in History.",
+        if(MessageBox.Show(this,"Remove these saved review choices? A saved recording, if available, remains in History.",
             "Dismiss Review",MessageBoxButton.YesNo,MessageBoxImage.Question)!=MessageBoxResult.Yes)return;
         dismiss(document.Id);Close();
     }
