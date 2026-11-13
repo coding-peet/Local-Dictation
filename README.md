@@ -9,26 +9,32 @@ from this repository; model weights and personal data are stored separately.
 
 ## Latest installed build: 13 November 2026
 
-Version `0.1.0-usability.20261113.1` is installed and running in
+Version `0.1.0-layout.20261113.1` is installed and running in
 C:\Git\Local-Dictation\app, with session API 48125 ready.
 
-Models has separate Installed models and Add model cards. Test and Remove use
-the installed table selection. Removal is limited to app-owned managed files;
-shared TypeWhisper originals are retained. Unfinished Review text appears in
-History with status, including text-only recovery beyond the audio limit.
+The selected second History design keeps a compact header and named side menu.
+Short list previews leave more room for the selected transcript. Open Review,
+Copy text and More actions belong to the detail; playback spans both columns.
+Change language, Save audio and Delete are in More. The menu keeps its labels
+at narrow widths, where the History list stacks above the transcript.
 
-Text actions sit above a compact player. Its faint RMS waveform uses a fixed
-scale so isolated loud bursts do not shrink the rest of the recording.
+Models retains separate Installed models and Add model cards. Test and Remove
+use the installed table selection. Removal is limited to app-owned managed
+files; shared TypeWhisper originals are retained. Unfinished Review text appears
+in History with status, including text-only recovery beyond the audio limit.
+The compact player retains its fixed-scale RMS waveform.
 
-Validation: 443 Core tests, 175 backend tests and 68 windowless UI/controller
-checks passed. All 17 installed files and backups were hash-verified; current
-settings stayed byte-identical. The client startup version and new API routes/
-capability metadata were confirmed without removing a model or running inference.
-The separate TypeWhisper API on 8123 was preserved.
+Layout validation: 443 Core tests and 78 windowless UI/controller checks passed.
+All 17 installed files and backups were hash-verified. Current settings stayed
+byte-identical after launch, and the startup version was confirmed. Both API
+listener states were preserved; no API restart or model operation was needed.
+The earlier usability update passed 175 backend tests; this layout update does
+not change backend or transcription behavior.
 
 No desktop control, microphone capture or playback was used for this update.
 Native insertion and actual device playback remain manual acceptance checks.
-See [usability validation and deployment](docs/development/usability-20261113.md).
+See [named-menu layout validation](docs/development/named-menu-layout-20261113.md)
+and [earlier usability validation](docs/development/usability-20261113.md).
 
 ## Start here
 

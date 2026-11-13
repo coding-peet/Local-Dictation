@@ -4,6 +4,7 @@ public sealed record DictationItem(ReviewDocument Document,double? DurationSecon
     bool NeedsReview,bool IsUnsaved,string Preview)
 {
     public string Id=>Document.Id;
+    public string DurationLabel=>HasAudio?TimeSpan.FromSeconds(Math.Max(0,DurationSeconds??0)).ToString(@"m\:ss"):"Text only";
     public string State=>IsUnsaved?"Not saved":Document.InsertedAt!=null?"Inserted":NeedsReview?"Needs review":Document.OutputText.Length==0?"No text":"Saved";
     public string Label=>$"{Document.Created.LocalDateTime:g} · {(HasAudio?$"{DurationSeconds:0}s":"Text only")} · {State}\n{Preview}";
 }

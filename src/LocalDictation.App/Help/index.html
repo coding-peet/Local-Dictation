@@ -303,7 +303,7 @@
         <p>Under <strong>Preferred Auto languages (supported by installed models)</strong>, use <strong>+</strong> to add a language supported by installed models, or remove a tag with its ×. With tags selected, Auto chooses only among those supported by the selected model, and the banner correction picker offers only your preferred languages. Remove all tags to use and offer every supported language. The initial SK and EN tags exclude Russian, Serbian and Czech. This restriction is not a confidence or accuracy guarantee.</p>
         <p>The small model name beside the phase identifies the Dictation model while recording and the Verification model during Verify. Hover the name to see its full identity and role.</p>
         <p>Click the banner language to reprocess the same recording in another language. The choice names any required model switch. While recording, keep dictating and press your usual shortcut to Finish; the new pass then uses the original audio without recording again. Escape also cancels a queued pass. If you change focus after Finish, the result waits for explicit Insert.</p>
-        <p>After the banner closes, use <strong>History → Change language…</strong>. This creates a new Review and preserves the previous transcript and edits. It never automatically replaces text already inserted elsewhere. Audio is retained even when recognition returned no text.</p>
+        <p>After the banner closes, use <strong>History → More actions (⋯) → Change language…</strong>. This creates a new Review and preserves the previous transcript and edits. It never automatically replaces text already inserted elsewhere. Audio is retained even when recognition returned no text.</p>
         <p>KInIT is Slovak-only. For English, use a multilingual model and select <strong>en</strong> or <strong>Auto</strong>. Forcing the wrong language can corrupt wording. The local comparison covered three Slovak recordings with user-supplied or corrected reference wording; it is not a universal accuracy ranking.</p>
       </section>
 
@@ -315,8 +315,8 @@
           <li>Drag the round timeline thumb to seek. Elapsed/total time show your position. The faint waveform behind the slider shows RMS energy on a fixed scale; loud isolated peaks do not shrink the rest of the recording. With the slider focused, Left/Right move one second; Page Up/Page Down move five seconds. Selecting a recording does not play it.</li>
           <li><strong>Copy text</strong> copies the current transcript.</li>
           <li><strong>Open Review</strong> opens the item's current text in the separate compact Review window. Select <strong>Details</strong> for its original wordings and recording information. Reopening an item does not insert it.</li>
-          <li><strong>Save audio…</strong> exports an ordinary WAV to a location you choose.</li>
-          <li><strong>Delete</strong> removes the selected dictation, recording and saved review choices after confirmation.</li>
+          <li><strong>More actions (⋯) → Save audio…</strong> exports an ordinary WAV to a location you choose.</li>
+          <li><strong>More actions (⋯) → Delete…</strong> removes the selected dictation, recording and saved review choices after confirmation.</li>
         </ul>
         <div class="callout">
           <strong>History keeps the latest 20 dictations with audio.</strong>
@@ -331,9 +331,9 @@
         <p>If an earlier attempt left some live text elsewhere, inspect it before choosing a new position. Explicit Insert replaces a live draft only when its exact ownership at the selected cursor can be proven; otherwise earlier text is preserved. An unsettled paste must finish or be resolved before another insertion.</p>
         <h3>Try another model or correct the language</h3>
         <p>Choose <strong>Open Review → Second transcript…</strong> and select an eligible different model to compare the original recording. It creates a separate comparison, keeps the source and your edits, and shows the full second transcript. This action waits for explicit Insert even when both models agree. A saved original recording and an eligible installed, runtime-tested verifier are required; see <a href="#review">Review</a>.</p>
-        <p>Use <strong>Change language…</strong> in History to transcribe the same audio in another supported language. It creates a new Review without starting the microphone or changing text previously inserted elsewhere.</p>
+        <p>Use <strong>More actions (⋯) → Change language…</strong> in History to transcribe the same audio in another supported language. It creates a new Review without starting the microphone or changing text previously inserted elsewhere.</p>
         <p>An item marked <strong>Already inserted</strong> shows the saved text with insertion and phrase editing disabled. Its original choices and recording information remain available through <strong>Details</strong>. Use <strong>Copy text</strong> if you want to reuse that text manually.</p>
-        <p>Text actions sit above the compact player. At narrower sizes, the list moves above the selected transcript; scroll the page to reach the actions and player. Leaving History or closing the main window stops playback. Returning keeps the selected dictation and does not play it automatically.</p>
+        <p>Open Review, Copy text and More actions sit beneath the selected text. The player stays below both columns. History list entries show short previews, while the detail uses the available height. At narrower sizes, the list moves above the selected transcript; scroll the page to reach the actions and player. Leaving History or closing the main window stops playback. Returning keeps the selected dictation and does not play it automatically.</p>
         <p>History is protected for your Windows account. Exported WAV files are ordinary, unencrypted audio; export recordings you need beyond the limit.</p>
       </section>
 
@@ -349,10 +349,10 @@
           <dt>Saving</dt>
           <dd>Valid model, microphone, language, appearance, and toggle changes save automatically. Text settings save after a short pause or focus change. Invalid text shows an error and leaves the previous valid configuration active. During a session, changes apply to the next recording.</dd>
           <dt>Help</dt>
-          <dd><kbd>F1</kbd> or <strong>Help (F1)</strong> in the Settings window opens this local guide in your default browser. <kbd>Ctrl</kbd> + <kbd>F</kbd> searches; the browser's Print command makes a paper/PDF copy.</dd>
+          <dd><kbd>F1</kbd> or <strong>Help</strong> in the main header opens this local guide in your default browser. <kbd>Ctrl</kbd> + <kbd>F</kbd> searches; the browser's Print command makes a paper/PDF copy.</dd>
         </dl>
         <h3>Close Settings or exit the app</h3>
-        <p><strong>Close</strong> closes Settings; the app stays available in the Windows notification area. Choose <strong>Exit</strong> from its notification-area menu to quit.</p>
+        <p>The title-bar <strong>×</strong> closes the main window; the app stays available in the Windows notification area. Choose <strong>Exit</strong> from its notification-area menu to quit.</p>
         <p>If a session is active, Exit asks to stop it, then waits while it saves the received text and original recording before closing. Stopping this way keeps the text for Review and does not complete automatic insertion. Captured audio can appear in History even if recognition returned no text. If protected Review saving fails, the app stays open so you can copy or explicitly dismiss the unsaved text.</p>
         <h3>Local transcription service</h3>
         <p>If offline, use <strong>Start local API</strong>, wait for preparation, then <strong>Reconnect</strong>. Disconnected clients also retry automatically.</p>

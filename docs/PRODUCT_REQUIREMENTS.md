@@ -118,6 +118,12 @@ punctuation, whitespace, and Unicode must be preserved.
 
 ## Banner and live cursor delivery
 
+- Use the selected named-menu desktop layout: an ordinary 64-DIP header and a
+  roughly 160-DIP navigation column with visible Dictation/Models/History/Settings
+  labels. Keep Help in the header and let native title-bar Close close Settings.
+  Empty alerts take no space; connection, saving and recovery errors can wrap
+  and expand. Preserve all autosave, recording and keyboard behavior.
+
 - Use Material Design 3 throughout the WPF application through the compatible
   MaterialDesignInXamlToolkit controls and MaterialDesign3 defaults. Preserve the
   waveform identity, semantic tonal colors, Roboto typography, readable focus and
@@ -330,6 +336,12 @@ punctuation, whitespace, and Unicode must be preserved.
   protected unfinished text. Explicit Delete removes the selected dictation and
   closes its matching editors before deleting audio/text/choices.
 
+- History follows the selected second layout: short date/duration rows, status
+  when useful and at most two preview lines. The selected transcript receives
+  the remaining vertical space. Review/Copy/More sit with the detail; More opens
+  Change language, Save audio and Delete. Playback remains pinned across both
+  History columns. Keep named navigation visible even when detail/list stack.
+  All selected row text uses the semantic selection foreground in high contrast.
 - Embed the complete Recent dictations workspace in the main window's History
   section: list, selected transcript/model/language, player and existing actions.
   History in the notification-area menu opens that same section and main window.

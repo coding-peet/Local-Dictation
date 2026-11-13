@@ -45,11 +45,12 @@ History window is opened.
 - Copy the current transcript or open it in Review. For a pending result,
   resolve/edit the text, click a destination cursor, then click Insert.
 - In Review, Second transcript compares the retained audio with an eligible
-  different model. History Change language reprocesses that same audio in
-  another supported language. Both preserve the source and create a new Review.
-- Save audio exports an ordinary WAV to your chosen location.
-- Delete removes that dictation, its audio and saved review choices after
-  confirmation. Its open Review editors close first.
+  different model. History More actions -> Change language reprocesses that
+  same audio in another supported language. Both preserve the source and create a new Review.
+- More actions (...) -> Save audio exports an ordinary WAV to your chosen
+  location.
+- More actions (...) -> Delete removes that dictation, its audio and saved
+  review choices after confirmation. Its open Review editors close first.
 
 The client keeps the latest 20 retained recordings, including audio with no
 recognized words. After the 21st is saved, the oldest transcript and audio are removed.
@@ -57,8 +58,9 @@ Unfinished text is stored independently and remains in History with Needs review
 or Not saved status, even after its audio expires. These entries show Text only.
 
 On a narrow window, the list moves above the transcript; scroll the page to
-reach text actions above the compact player. Leaving History stops playback and clears its
-loaded audio. Returning keeps selection without automatically playing.
+reach the detail actions and player. Review/Copy/More stay with the selected
+text; playback spans both columns. The named main menu remains visible.
+Leaving History stops playback and clears its loaded audio. Returning keeps selection without automatically playing.
 
 History is under C:\AI\LocalDictation\data\history, or the corresponding
 LOCAL_DICTATION_HOME data directory. Text metadata and WAV audio are protected
@@ -82,8 +84,8 @@ is scripts/Create-IconOptions.ps1.
 ## Offline Help
 
 Press F1 anywhere in the Settings window, including while a text field has
-focus, or select Help (F1). The bundled Help.html opens in the Windows default
-HTML viewer, normally a browser. Opening Help does not save settings.
+focus, or select Help in the compact main header. The bundled Help.html
+opens in the Windows default HTML viewer, normally a browser. Opening Help does not save settings.
 
 The guide is self-contained and requires no network connection. Use Ctrl+F
 in the browser to find a topic. Source: src/LocalDictation.App/Help/index.html.

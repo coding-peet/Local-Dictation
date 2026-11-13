@@ -4,7 +4,6 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using DataGridTextColumn=System.Windows.Controls.DataGridTextColumn;
-using MaterialDesignThemes.Wpf;
 using System.Windows.Input;
 using System.Windows.Threading;
 using LocalDictation.Core;
@@ -15,7 +14,7 @@ namespace LocalDictation.App.Views;
 public sealed class SettingsWindow : Window
 {
     readonly AppController controller;
-    readonly ListBox navigation=new(){Margin=new(0,8,16,0),VerticalAlignment=VerticalAlignment.Stretch};
+    readonly ListBox navigation=new(){VerticalAlignment=VerticalAlignment.Stretch};
     HistoryPanel? historyPanel;
     public void SelectHistory()=>navigation.SelectedIndex=2;
     readonly TextBlock connection=Ui.Text(""), shortcut=Ui.Text(""), message=Ui.Text(""), importStatus=Ui.Text(""), modelStatus=Ui.Text(""), verificationStatus=Ui.Text(""), saveStatus=Ui.Text("");
@@ -62,61 +61,16 @@ public sealed class SettingsWindow : Window
         };
         Title="Local Dictation";Width=1040;Height=820;MinWidth=640;MinHeight=620;
         WindowStartupLocation=WindowStartupLocation.CenterScreen;
-        var root=new DockPanel{Margin=new(24)};
-        var header=new StackPanel();
-        var titleRow=new DockPanel();
         record=Ui.Button("Record in banner",RecordInBanner,true);
-        record.HorizontalAlignment=HorizontalAlignment.Right;record.Margin=new(16,0,0,0);
-        DockPanel.SetDock(record,Dock.Right);titleRow.Children.Add(record);
-        var title=Ui.Text("Local Dictation",22,true);title.Margin=new(0);title.VerticalAlignment=VerticalAlignment.Center;
-        titleRow.Children.Add(title);header.Children.Add(titleRow);
-        var statusRow=new Grid{Margin=new(0,8,0,12)};
-        statusRow.ColumnDefinitions.Add(new(){Width=new GridLength(3,GridUnitType.Star)});
-        statusRow.ColumnDefinitions.Add(new(){Width=new GridLength(2,GridUnitType.Star)});
-        connection.SetResourceReference(TextBlock.ForegroundProperty,"Muted");connection.FontSize=13;connection.Margin=new(0);statusRow.Children.Add(connection);
-        saveStatus.FontSize=13;saveStatus.Margin=new(12,0,0,0);saveStatus.TextAlignment=TextAlignment.Right;
-        System.Windows.Automation.AutomationProperties.SetLiveSetting(saveStatus,System.Windows.Automation.AutomationLiveSetting.Polite);
-        Grid.SetColumn(saveStatus,1);statusRow.Children.Add(saveStatus);header.Children.Add(statusRow);
         recovery=Ui.Button("Resolve clipboard recovery",controller.ShowClipboardRecoveryDetails);
-        recovery.HorizontalAlignment=HorizontalAlignment.Left;recovery.Margin=new(0,0,0,8);recovery.Visibility=Visibility.Collapsed;header.Children.Add(recovery);
-        DockPanel.SetDock(header,Dock.Top);root.Children.Add(header);
-
-        var footer=new DockPanel{Margin=new(0,14,0,0)};
-        var actions=Ui.Row(Ui.Button("Help (F1)",OpenHelp),Ui.Button("Close",Close));
-        actions.VerticalAlignment=VerticalAlignment.Center;DockPanel.SetDock(actions,Dock.Right);footer.Children.Add(actions);
-        var notes=new StackPanel{Margin=new(0,0,12,0)};
-        message.SetResourceReference(TextBlock.ForegroundProperty,"Warning");notes.Children.Add(message);
-        notes.Children.Add(Ui.Text("20 recent recordings · Unfinished text kept until reviewed",12));
-        footer.Children.Add(notes);DockPanel.SetDock(footer,Dock.Bottom);root.Children.Add(footer);
-        // A desktop navigation rail keeps destinations stable while their forms scroll independently.
-        var shell=new Grid();var navigationColumn=new ColumnDefinition{Width=new(216)};
-        shell.ColumnDefinitions.Add(navigationColumn);shell.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});
-        navigation.SetResourceReference(Control.BackgroundProperty,"Canvas");
-        var destinations=new[]{("Dictation",PackIconKind.Microphone),("Models",PackIconKind.CubeOutline),("History",PackIconKind.History),("Settings",PackIconKind.CogOutline)};
+        recovery.Visibility=Visibility.Collapsed;
         var pages=new[]{DictationPage(),ModelsPage(),HistoryPage(),PreferencesPage()};
-        var pageHost=new ContentControl{Content=pages[0],HorizontalContentAlignment=HorizontalAlignment.Stretch,VerticalContentAlignment=VerticalAlignment.Stretch};
-        var labels=new List<TextBlock>();
-        foreach(var (label,icon) in destinations)
-        {
-            var caption=Ui.Text(label);caption.ClearValue(TextBlock.ForegroundProperty);caption.Margin=new(0);caption.VerticalAlignment=VerticalAlignment.Center;labels.Add(caption);
-            var item=new ListBoxItem{Content=caption,ToolTip=label,Padding=new(0),Margin=new(0,0,0,8),Width=double.NaN};
-            item.SetResourceReference(FrameworkElement.StyleProperty,"Md3NavigationItem");
-            NavigationDrawerAssist.SetSelectedIcon(item,icon);NavigationDrawerAssist.SetUnselectedIcon(item,icon);
-            System.Windows.Automation.AutomationProperties.SetName(item,label);navigation.Items.Add(item);
-        }
-        void NavigationContrast()=>ApplyNavigationContrast(navigation,SystemParameters.HighContrast);
-        navigation.Loaded+=(_,_)=>NavigationContrast();ThemeManager.Changed+=NavigationContrast;
-        navigation.SelectionChanged+=(_,_)=>
-        {
-            if(navigation.SelectedIndex<0)return;
-            historyPanel?.SetActive(navigation.SelectedIndex==2);
-            pageHost.Content=pages[navigation.SelectedIndex];NavigationContrast();
-        };
-        navigation.SelectedIndex=0;Grid.SetColumn(pageHost,1);shell.Children.Add(navigation);shell.Children.Add(pageHost);root.Children.Add(shell);Content=root;
-        SizeChanged+=(_,_)=>{var compact=ActualWidth<840;navigationColumn.Width=new(compact?96:216);foreach(var label in labels)label.Visibility=compact?Visibility.Collapsed:Visibility.Visible;};
+        var shell=new MainWindowShell(navigation,pages,record,Ui.Button("Help",OpenHelp),
+            connection,saveStatus,message,recovery,index=>historyPanel?.SetActive(index==2));
+        Content=shell;
         controller.Changed+=Refresh;
         Closing+=(_,_)=>CommitTextEdits();
-        Closed+=(_,_)=>{closed=true;controller.Changed-=Refresh;ThemeManager.Changed-=NavigationContrast;poll.Stop();saveDelay.Stop();historyPanel?.Dispose();};
+        Closed+=(_,_)=>{closed=true;controller.Changed-=Refresh;shell.Dispose();poll.Stop();saveDelay.Stop();historyPanel?.Dispose();};
         poll.Tick+=(_,_)=>_ = PollDownload();
         foreach(var box in new[]{microphone,primary,verifier,language,theme})box.SelectionChanged+=(_,_)=>SelectionChanged(box);
         foreach(var check in new[]{live,verify,insert,shortcutEnabled})
@@ -132,27 +86,8 @@ public sealed class SettingsWindow : Window
         ResumeDownload();
     }
 
-    static void ApplyNavigationContrast(ListBox navigation,bool highContrast)
-    {
-        foreach(var item in navigation.Items.OfType<ListBoxItem>())
-        {
-            item.ApplyTemplate();
-            // The pinned toolkit's selection layer is 12% opaque. Pair an opaque
-            // Windows highlight with HighlightText in high contrast, retaining its template.
-            var frame=item.Template?.FindName("border",item) as Border;
-            if(frame!=null)Ui.BindCapsule(frame);
-            if(highContrast&&item.IsSelected)
-            {
-                frame?.SetResourceReference(Border.BackgroundProperty,"Selected");
-                item.SetResourceReference(Control.ForegroundProperty,"SelectedInk");
-            }
-            else
-            {
-                frame?.ClearValue(Border.BackgroundProperty);
-                item.ClearValue(Control.ForegroundProperty);
-            }
-        }
-    }
+    static void ApplyNavigationContrast(ListBox navigation,bool highContrast)=>
+        MainWindowShell.ApplyNavigationContrast(navigation,highContrast);
 
     void OpenHelp()
     {

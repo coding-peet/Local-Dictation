@@ -35,7 +35,7 @@ static class HistoryIntegrationChecks
             old.SetPrimary("Earlier synthetic recording with a wrapped label for a complete twenty-item history.");store.Add(old,pcm);
         }
         Set(controller,"historyStore",store);Property(controller,"History",store.Load());
-        var pending=new PendingReviews(new ReviewStore(Path.Combine(directory,"pending")));Set(controller,"pending",pending);
+        var pending=new PendingReviews(new ReviewStore(Path.Combine(directory,"pending")));Set(controller,"pending",pending);pending.Save(first);
         // Only invoke the real page factory: never construct SettingsWindow, enumerate
         // microphones, install hooks, create HWNDs, or touch the actual user's history.
         var settings=(SettingsWindow)RuntimeHelpers.GetUninitializedObject(typeof(SettingsWindow));Set(settings,"controller",controller);
@@ -56,8 +56,55 @@ static class HistoryIntegrationChecks
             var playerBounds=player.TransformToAncestor(page).TransformBounds(new Rect(0,0,player.ActualWidth,player.ActualHeight));
             Require(playerBounds.Bottom<=page.ActualHeight,"Full History or a long transcript pushes playback below the wide viewport.");
             checks.Add("full History keeps wide playback visible "+theme);
+            Save(page,760,560,Path.Combine(output,"layout-metrics-"+theme+".png"));
+            Require(transcript.ActualHeight>=300,$"The selected transcript still loses height to page chrome and actions: text={transcript.ActualHeight}, player={player.ActualHeight}, page={page.ActualHeight}.");
+            var open=Find<Button>(page).Single(b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Open Review");
+            Require(open.TransformToAncestor(page).Transform(new Point()).X>=transcript.TransformToAncestor(page).Transform(new Point()).X-24,"Review actions are still detached from their selected text.");
+            Require(Find<Button>(page).Any(b=>System.Windows.Automation.AutomationProperties.GetName(b)=="More actions"),"Secondary dictation actions are not grouped in More.");
+            checks.Add("detail-focused text space and actions "+theme);
+            var resources=Application.Current.Resources;var oldAccent=resources["Accent"];var oldSelected=resources["Selected"];var oldInk=resources["SelectedInk"];var normalTemplate=list.ItemTemplate;
+            try
+            {
+                resources["Accent"]=SystemColors.HighlightBrush;resources["Selected"]=SystemColors.HighlightBrush;resources["SelectedInk"]=SystemColors.HighlightTextBrush;
+                // A detached tree has no Window resource invalidation broadcast;
+                // construct its row template under the simulated selection palette.
+                list.ItemTemplate=(DataTemplate)page.GetType().GetMethod("RowTemplate",BindingFlags.Static|BindingFlags.NonPublic)!.Invoke(null,null)!;
+                Layout(page,760,560);
+                var container=(ListBoxItem)list.ItemContainerGenerator.ContainerFromItem(list.SelectedItem);
+                Require(Find<TextBlock>(container).Where(t=>t.Text.Length>0&&t.Visibility==Visibility.Visible).All(t=>t.Foreground is SolidColorBrush brush&&brush.Color==SystemColors.HighlightTextColor),"Selected History text ignores the high-contrast selection foreground: selected="+container.IsSelected+", expected="+SystemColors.HighlightTextColor+", actual="+string.Join(";",Find<TextBlock>(container).Where(t=>t.Text.Length>0&&t.Visibility==Visibility.Visible).Select(t=>t.Text[..Math.Min(10,t.Text.Length)]+"="+t.Foreground)));
+                checks.Add("selected History text retains high contrast "+theme);
+            }
+            finally{resources["Accent"]=oldAccent;resources["Selected"]=oldSelected;resources["SelectedInk"]=oldInk;list.ItemTemplate=normalTemplate;Layout(page,760,560);}
+
             Save(page,760,560,Path.Combine(output,"integrated-history-wide-"+theme+".png"));
             checks.Add("integrated main History content "+theme);
+            var ui=typeof(SettingsWindow).Assembly.GetType("LocalDictation.App.Views.Ui")!;
+            Button Button(string label,bool primary=false)=>(Button)ui.GetMethod("Button",BindingFlags.Static|BindingFlags.Public)!.Invoke(null,[label,(Action)(()=>{}),primary])!;
+            TextBlock Text(string label)=>(TextBlock)ui.GetMethod("Text",BindingFlags.Static|BindingFlags.Public)!.Invoke(null,[label,12d,false])!;
+            var nav=new ListBox();var record=Button("Record in banner",true);var help=Button("Help");
+            var connection=Text("Ready · Local transcription");var saved=Text("Saved automatically");var alert=Text("");
+            var recovery=Button("Resolve clipboard recovery");recovery.Visibility=Visibility.Collapsed;
+            using(var shell=new MainWindowShell(nav,[new Border(),new Border(),page,new Border()],record,help,connection,saved,alert,recovery))
+            {
+                try
+                {
+                    nav.SelectedIndex=2;Layout(shell,1040,760);
+                    Require(shell.Header.ActualHeight<=72&&shell.StatusArea.Visibility==Visibility.Collapsed,"Normal chrome did not collapse to a compact header.");
+                    Require(transcript.ActualHeight>=380,"The selected design did not allocate the gained window height to the transcript.");
+                    Require(nav.Items.OfType<ListBoxItem>().Select(i=>(TextBlock)i.Content).All(t=>t.Visibility==Visibility.Visible)&&nav.ActualWidth>=144,"Named navigation was hidden or collapsed.");
+                    Save(shell,1040,760,Path.Combine(output,"named-menu-shell-wide-"+theme+".png"));checks.Add("named menu and compact real main chrome "+theme);
+                    Layout(shell,640,600);
+                    Require(nav.Items.OfType<ListBoxItem>().Select(i=>(TextBlock)i.Content).All(t=>t.Visibility==Visibility.Visible),"Narrow window hides its menu labels.");
+                    Save(shell,640,600,Path.Combine(output,"named-menu-shell-compact-"+theme+".png"));checks.Add("named menu retained at compact width "+theme);
+                    alert.Text="The previous operation could not finish. Your saved text is preserved; inspect History before retrying.";recovery.Visibility=Visibility.Visible;
+                    connection.Text="The local transcription service is unavailable. Reconnect after checking its status.";saved.Text="Settings could not be saved. The previous valid settings are still active.";
+                    Layout(shell,640,600);
+                    Require(shell.StatusArea.Visibility==Visibility.Visible&&alert.ActualHeight>0&&recovery.ActualHeight>=48&&saved.ActualHeight>0,"Compact chrome hid actionable errors or recovery.");
+                    Save(shell,640,600,Path.Combine(output,"named-menu-shell-errors-"+theme+".png"));checks.Add("compact save and recovery errors remain visible "+theme);
+                }
+                finally{shell.PageHost.Content=null;}
+            }
+
             var selected=list.SelectedItem;
             Property(controller,"History",store.Load());
             ((Action?)typeof(AppController).GetField("Changed",Fields)!.GetValue(controller))?.Invoke();
