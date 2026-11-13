@@ -9,25 +9,33 @@ namespace LocalDictation.App.Views;
 public sealed class HistoryWindow : Window
 {
     readonly AppController controller;
-    readonly ListBox items=new(){DisplayMemberPath="Label",MinHeight=150,MaxHeight=270};
-    readonly TextBox transcript=new(){IsReadOnly=true,AcceptsReturn=true,TextWrapping=TextWrapping.Wrap,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
+    readonly ListBox items=new(){DisplayMemberPath="Label",MinHeight=150};
+    readonly TextBox transcript=new(){IsReadOnly=true,AcceptsReturn=true,TextWrapping=TextWrapping.Wrap,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,VerticalContentAlignment=VerticalAlignment.Top};
     readonly TextBlock detail=Ui.Text(""),message=Ui.Text("");
     WaveOut? player;WaveFileReader? reader;byte[]? audio;
     IReadOnlyList<HistoryEntry>? shown;
     public HistoryWindow(AppController controller)
     {
-        this.controller=controller;Title="Local Dictation · History";Width=800;Height=700;MinWidth=560;MinHeight=500;
+        this.controller=controller;Title="Local Dictation · History";Width=960;Height=740;MinWidth=640;MinHeight=540;
         var root=new DockPanel{Margin=new(24)};
-        var header=new StackPanel();header.Children.Add(Ui.Text("Recent dictations",24,true));
-        header.Children.Add(Ui.Text("The latest 20 dictations and recordings, protected for your Windows account. Older items are removed automatically.",13));
-        header.Children.Add(items);header.Children.Add(detail);DockPanel.SetDock(header,Dock.Top);root.Children.Add(header);
-        var footer=new StackPanel{Margin=new(0,12,0,0)};
+        var header=new StackPanel();header.Children.Add(Ui.Text("Recent dictations",24));
+        header.Children.Add(Ui.Text("The latest 20 dictations and recordings, protected for your Windows account.",14));
+        DockPanel.SetDock(header,Dock.Top);root.Children.Add(header);
+        var footer=new StackPanel{Margin=new(0,16,0,0)};
         var actions=new WrapPanel();
-        foreach(var button in new[]{Ui.Button("Play audio",Play),Ui.Button("Stop",Stop),
+        foreach(var button in new[]{Ui.Button("Play audio",Play,true),Ui.Button("Stop",Stop),
             Ui.Button("Copy text",Copy),Ui.Button("Open Review",OpenReview),
+            Ui.Button("Change language…",()=>{if(Selected is {} entry)controller.ShowInputLanguage(entry.Document);}),
             Ui.Button("Save audio…",Export),Ui.Button("Delete",Delete)}){button.Margin=new(0,0,8,8);actions.Children.Add(button);}
         footer.Children.Add(actions);footer.Children.Add(message);DockPanel.SetDock(footer,Dock.Bottom);root.Children.Add(footer);
-        root.Children.Add(transcript);Content=root;
+        var body=new Grid();body.ColumnDefinitions.Add(new(){Width=new(280)});body.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});
+        var list=Ui.Card(items);list.Padding=new(0);list.Margin=new(0,8,16,0);body.Children.Add(list);
+        var selectedText=new DockPanel();detail.Margin=new(0,0,0,16);detail.SetResourceReference(TextBlock.ForegroundProperty,"Muted");DockPanel.SetDock(detail,Dock.Top);selectedText.Children.Add(detail);selectedText.Children.Add(transcript);
+        var card=Ui.Card(selectedText);card.Margin=new(0,8,0,0);Grid.SetColumn(card,1);body.Children.Add(card);
+        root.Children.Add(body);Content=root;
+        SizeChanged+=(_,_)=>{var compact=ActualWidth<800;body.ColumnDefinitions[0].Width=new(compact?200:280);};
+        System.Windows.Automation.AutomationProperties.SetName(items,"Recent dictations");
+        System.Windows.Automation.AutomationProperties.SetName(transcript,"Selected dictation transcript");
         items.SelectionChanged+=(_,_)=>Select();Closed+=(_,_)=>{Stop();controller.Changed-=Refresh;};
         controller.Changed+=Refresh;Refresh();
     }
@@ -42,7 +50,7 @@ public sealed class HistoryWindow : Window
     void Select()
     {
         Stop();transcript.Text=Selected?.Document.OutputText??"";
-        detail.Text=Selected is {} e?$"{e.Document.PrimaryModel} · {e.DurationSeconds:0.0} seconds":"No dictations saved yet.";
+        detail.Text=Selected is {} e?$"{e.Document.PrimaryModel} · {e.DurationSeconds:0.0} seconds · {LanguagePolicy.Label(e.Document.RequestedLanguage,e.Document.Language,e.Document.LanguageMode,null)}":"No dictations saved yet.";
     }
     void Play()
     {

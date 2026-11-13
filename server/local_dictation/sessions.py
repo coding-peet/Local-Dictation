@@ -62,6 +62,9 @@ class AudioSession:
         self.last_primary_span=None
         self.last_primary_profile=None
         self.last_primary_text=""
+        requested=options.get("language","sk")
+        self.primary_language=None if requested=="auto" else requested
+        self.primary_language_mode=options.get("language_mode") or ("forced" if self.primary_language else None)
 
     @property
     def retained_bytes(self):return len(self.buffer)+len(self.full_audio)
@@ -111,9 +114,27 @@ class AudioSession:
         self.needs_cleanup=True
         self.inference_started=time.monotonic()
         try:
-            return await run_worker(self.engine.transcribe_pcm,pcm,model,self.options.get("language","sk"),
-                self.cancelled,cancelled=self.cancelled,timeout=self.config.inference_timeout_seconds)
+            language=self.options.get("language","sk") if model==self.options["model"] else self.primary_language
+            if language is None:
+                raise ValueError("Primary source language is unavailable for verification.")
+            arguments=(pcm,model,language,self.cancelled)
+            preferred=self.options.get("preferred_languages")
+            if model==self.options["model"] and language=="auto" and preferred is not None:arguments+=(preferred,)
+            result=await run_worker(self.engine.transcribe_pcm,*arguments,
+                cancelled=self.cancelled,timeout=self.config.inference_timeout_seconds)
+            if model==self.options["model"]:
+                self.primary_language=result.get("language",self.primary_language)
+                self.primary_language_mode=result.get("language_mode",self.primary_language_mode or ("detected" if self.primary_language else None))
+            return result
         finally:self.inference_started=None
+
+    def language_metadata(self):
+        return {"language":self.primary_language,"language_mode":self.primary_language_mode}
+
+    def primary_profile(self):
+        preferred=self.options.get("preferred_languages")
+        return (self.options["model"],self.options.get("language","sk"),self.options.get("primary_revision"),
+                None if preferred is None else tuple(sorted(preferred)))
 
     async def cleanup(self):
         if not self.needs_cleanup:return
@@ -160,7 +181,7 @@ class AudioSession:
             self.committed=self.draft=""
             return
         span=(0,self.total_bytes)
-        profile=(self.options["model"],self.options.get("language","sk"),self.options.get("primary_revision"))
+        profile=self.primary_profile()
         if self.last_primary_span==span and self.last_primary_profile==profile:
             text=self.last_primary_text
         else:
@@ -176,6 +197,8 @@ class AudioSession:
         heartbeat=None
         try:
             await self.emit("session.started",max_seconds=self.config.max_seconds,sample_rate=16000,model=self.options["model"],
+                requested_language=self.options.get("requested_language",self.options.get("language","sk")),
+                preferred_languages=self.options.get("preferred_languages"),**self.language_metadata(),
                 model_revision=self.options.get("primary_revision"),verification_model=self.options.get("verification_model"),
                 verification_revision=self.options.get("verification_revision"),session_started_utc=datetime.now(timezone.utc).isoformat())
             heartbeat=asyncio.create_task(self.progress())
@@ -191,16 +214,16 @@ class AudioSession:
             if self.live and not self.cancelled.is_set():await self.refine_primary()
             if self.cancelled.is_set():
                 await self.cleanup()
-                await self.emit("session.cancelled",text=self.snapshot_text(self.draft));return
+                await self.emit("session.cancelled",text=self.snapshot_text(self.draft),**self.language_metadata());return
             primary=self.snapshot_text(self.draft)
             await self.emit("transcript.final",text=primary,audio_received_seconds=self.total_bytes/32000,
-                refined=bool(self.live and self.last_voice))
+                refined=bool(self.live and self.last_voice),**self.language_metadata())
             await self.cleanup()
             verifier=self.options.get("verification_model")
             if verifier and self.full_audio and self.last_voice:
                 self.verifying=True
                 if self.admission:self.admission.kind="verification"
-                await self.emit("verification.started",model=verifier)
+                await self.emit("verification.started",model=verifier,language=self.primary_language)
                 try:
                     result=await self.decode(bytes(self.full_audio),verifier)
                     if self.cancelled.is_set():await self.emit("verification.cancelled",primary=primary)
@@ -213,13 +236,13 @@ class AudioSession:
                     await self.emit("verification.cancelled" if self.cancelled.is_set() else "verification.failed",
                         primary=primary,message="Verification did not finish. Your dictation is preserved.")
                 finally:await self.cleanup()
-            await self.emit("session.completed",text=primary)
+            await self.emit("session.completed",text=primary,**self.language_metadata())
         except asyncio.CancelledError:
             self.cancel();raise
         except Exception:
             if not self.cancelled.is_set() or self.cleanup_failed:raise
             await self.cleanup()
-            await self.emit("session.cancelled",text=self.snapshot_text(self.draft))
+            await self.emit("session.cancelled",text=self.snapshot_text(self.draft),**self.language_metadata())
         finally:
             self.buffer.clear();self.full_audio.clear()
             try:
@@ -256,7 +279,7 @@ class AudioSession:
                 self.next_preview_bytes=3*32000
                 continue
             start=self.buffer_start
-            profile=(self.options["model"],self.options.get("language","sk"),self.options.get("primary_revision"))
+            profile=self.primary_profile()
             result=await self.decode(bytes(self.buffer[:end]),self.options["model"])
             self.last_decode=time.monotonic()
             if self.cancelled.is_set():break
@@ -276,10 +299,10 @@ class AudioSession:
             else:
                 self.draft,self.previous=text,text
                 self.next_preview_bytes=(end//(3*32000)+1)*3*32000
-            snapshot=(self.committed,self.draft)
+            snapshot=(self.committed,self.draft,self.primary_language,self.primary_language_mode)
             if snapshot!=self.last_snapshot:
                 await self.emit("transcript.updated",text=self.snapshot_text(self.draft),
-                    committed_text=self.committed,draft_text=self.draft,
+                    committed_text=self.committed,draft_text=self.draft,**self.language_metadata(),
                     audio_received_seconds=self.total_bytes/32000,decoded_until_seconds=self.decoded_until/32000,
                     pending_audio_seconds=max(0,(self.total_bytes-self.decoded_until)/32000),
                     inference_seconds=result.get("inference_seconds"),load_seconds=result.get("load_seconds"))

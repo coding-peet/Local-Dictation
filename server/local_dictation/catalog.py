@@ -66,8 +66,12 @@ class Catalog:
             path=Path(entry["path"])
             signature=(str(path.resolve()),tuple(sorted(
                 (p.name,p.stat().st_size,p.stat().st_mtime_ns) for p in path.iterdir() if p.is_file())))
-            if self.validations.get(entry["id"])!=signature:
-                validate_installation(path,entry.get("files"))
+            validation=self.validations.get(entry["id"])
+            if validation is None or validation[0]!=signature:
+                languages=validate_installation(path,entry.get("files"))
+                # A Slovak fine-tune retains the multilingual tokenizer, but
+                # that does not make its other language tokens supported.
+                entry["languages"]=["sk"] if entry["id"]==BUILTINS[0]["id"] else languages
                 entry["installed_revision"]=None
                 manifest=path/"local-manifest.json"
                 if entry.get("managed") and not manifest.exists():
@@ -77,7 +81,12 @@ class Catalog:
                     if pinned.get("repo")!=entry["id"] or pinned.get("revision")!=entry.get("revision"):
                         raise ValueError("Installed manifest differs from the pinned model.")
                     entry["installed_revision"]=pinned["revision"]
-                self.validations[entry["id"]]=signature
+                validation=(signature,tuple(entry["languages"]),entry["installed_revision"])
+                self.validations[entry["id"]]=validation
+            # Registry restoration may construct a different entry object for
+            # this same validated path. Reapply metadata even on a cache hit.
+            entry["languages"]=list(validation[1])
+            entry["installed_revision"]=validation[2]
             entry["installed"]=True
         except (OSError,ValueError,KeyError,TypeError):
             entry["installed"]=False

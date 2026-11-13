@@ -230,6 +230,9 @@ internal static class Program
     }
     sealed class FakeDelivery:ITextDelivery
     {
+        public bool HasTransportFailure=>false;
+        public bool IsOriginalFieldCurrent(CancellationToken token){token.ThrowIfCancellationRequested();return !IsConflict;}
+        public bool Apply(string next,CancellationToken token,DeliveryIntent intent)=>Apply(next,token,intent.RestoreFocus);
         public nint Window=>0;public bool IsConflict {get;private set;}public string Reason=>"Synthetic destination";
         public int ApplyCount {get;private set;}public string InsertedText {get;private set;}="";
         public void Invalidate()=>IsConflict=true;public void Suspend(){}public bool OwnsProgrammaticFocus(nint root)=>false;

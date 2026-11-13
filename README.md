@@ -7,6 +7,35 @@ The client uses C# / WPF. The separate Python API uses original Transformers
 Whisper models in FP16. The published EXE and its adjacent files are generated
 from this repository; model weights and personal data are stored separately.
 
+## Latest installed build: 13 November 2026
+
+Version `0.1.0-banner-model.20261113.1` is installed and running in
+C:\Git\Local-Dictation\app, with candidate session API 48125 ready.
+The banner shows actual `Auto · SK` / `Auto · EN` language metadata and a small
+active model name. Preferred-language tags with `+` restrict correction choices;
+clearing all tags restores the full supported language list. Language correction
+reuses the original audio. Verify keeps the first transcript in a read-only
+banner and uses the resolved source language for its second pass.
+
+Validation: 376 Core tests and 36 windowless UI/lifecycle checks passed; Release
+publish had zero warnings/errors. The unchanged backend last passed 132 tests.
+All 17 installed files and backups were hash-verified; settings are byte-identical.
+Both API processes were preserved. No desktop control, recording or playback
+was used for this update. Earlier guarded cursor and pause-worker fixes remain.
+
+See [preferred picker and model caption](docs/development/preferred-picker-model-20261113.md),
+[language and Verify](docs/development/input-language-verification-20261113.md)
+and [banner layout](docs/development/language-banner-layout-20261113.md) for evidence.
+Earlier prepared-Review placement into Outlook through Ctrl+Shift passed a native
+check. Complete live speech-pause and automatic recording-to-Outlook Finish
+acceptance remain unconfirmed; see [native acceptance](docs/development/native-acceptance-20261113.md).
+
+The source prepared for publication also waits for the previous API owner to
+release admission before a language replay and retains duration during Verify.
+These final review corrections passed 379 Core tests and 38 windowless checks;
+the backend passed 132 synthetic tests. They were not deployed during this Git
+task. See [pre-commit verification](docs/development/pre-commit-verification-20261113.md).
+
 ## Start here
 
 - [Current product requirements](docs/PRODUCT_REQUIREMENTS.md): user input and
@@ -89,7 +118,17 @@ History and Pending Review use current-user Windows DPAPI. Deleting source is
 not a data backup or migration. A fresh Git checkout restores source, not model
 weights, environments, recordings, or keys needed by another Windows account.
 
-## Validation status
+## Earlier validation milestones
+
+These dated milestones describe earlier candidates. The installed-build summary,
+current product requirements and pre-commit verification above define the latest
+state and its remaining acceptance limits.
+
+The [earlier live cursor repair](docs/development/live-cursor-value-range-20261112.md)
+addresses empty-field projection and owned-range lookup failures. That snapshot passed
+281 Core tests and Release builds. Current native GREEN is blocked by the
+company ASR rule on the new diagnostic EXE; real application acceptance is pending.
+The first candidate failed Peter's test and its earlier counts are superseded.
 
 The live-quality and cursor-acknowledgement update is installed under
 C:\Git\Local-Dictation\app, with candidate session API 48125. It passed

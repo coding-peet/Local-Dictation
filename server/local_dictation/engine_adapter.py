@@ -14,11 +14,13 @@ class EngineAdapter:
             model_engine.MODELS[model] = entry["path"]
             model_engine.MODEL_LANGUAGES[model] = entry["languages"]
 
-    def _call(self, data, prompt, model, language, cancelled):
+    def _call(self, data, prompt, model, language, cancelled, preferred_languages=None):
         failure=None
         result=None
         try:
-            result=self.engine.transcribe(data,prompt,model,language,cancel_event=cancelled)
+            options={"cancel_event":cancelled}
+            if preferred_languages is not None:options["preferred_languages"]=preferred_languages
+            result=self.engine.transcribe(data,prompt,model,language,**options)
         except ValueError as exc:
             failure=(ValueError,str(exc))
         except Exception:
@@ -29,7 +31,7 @@ class EngineAdapter:
             raise failure[0](failure[1]) from None
         return result
 
-    def transcribe_pcm(self, pcm, model, language, cancelled):
+    def transcribe_pcm(self, pcm, model, language, cancelled, preferred_languages=None):
         if cancelled.is_set():
             raise RuntimeError("Cancelled.")
         stream = BytesIO()
@@ -39,11 +41,11 @@ class EngineAdapter:
             wav.setframerate(16000)
             wav.writeframes(pcm)
         self.register(model)
-        return self._call(stream.getvalue(),"",model,language,cancelled)
+        return self._call(stream.getvalue(),"",model,language,cancelled,preferred_languages)
 
-    def transcribe(self, data, prompt, model, language, cancelled):
+    def transcribe(self, data, prompt, model, language, cancelled, preferred_languages=None):
         self.register(model)
-        return self._call(data,prompt,model,language,cancelled)
+        return self._call(data,prompt,model,language,cancelled,preferred_languages)
 
     def unload(self):
         self.engine.unload()

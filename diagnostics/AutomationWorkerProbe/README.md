@@ -30,6 +30,12 @@ execution, unmodified provider exceptions, bounded noncooperative calls,
 deadline cancellation, and skipping a cancelled queue entry before its
 provider runs. Every blocked synthetic call is released by the fixture.
 
+The worker rejects fresh work while a timed-out operation remains active. After
+that operation actually returns, fresh checks can reuse the same thread. The
+Core test project compiles this exact windowless production source to verify
+recovery, cancellation and skipped expired queue entries without app startup,
+UI Automation queries, clipboard access or audio devices.
+
 Microsoft's [UI Automation threading guidance](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-threading)
 requires a separate windowless MTA thread for a client that can interact with
 its own UI. The clipboard owner uses a different STA thread with its own

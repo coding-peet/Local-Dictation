@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import re
 import struct
+from language_policy import normalize_language
 
 REQUIRED={"config.json","preprocessor_config.json","generation_config.json","tokenizer_config.json"}
 def read_json(path):
@@ -27,11 +28,17 @@ def languages_from_metadata(config,generation):
     if generation.get("is_multilingual") is False or config.get("vocab_size")==51864:
         return ["en"]
     mapping=generation.get("lang_to_id",{})
-    languages=[lang for lang in ("sk","en") if f"<|{lang}|>" in mapping]
+    if not isinstance(mapping,dict):raise ValueError("Whisper language token metadata must be an object.")
+    languages=[]
+    for token,token_id in mapping.items():
+        match=re.fullmatch(r"<\|([a-z]{2,3})\|>",token)
+        if match and isinstance(token_id,int) and not isinstance(token_id,bool) and token_id>=0:
+            languages.append(match.group(1))
     if not languages:raise ValueError("Whisper generation metadata does not identify supported language tokens.")
     return languages+["auto"]
 
 def supports_language(model,language):
+    language=normalize_language(language) or "auto"
     languages=model.get("languages",[])
     explicit=[l for l in languages if l!="auto"]
     if language=="auto" and len(explicit)==1:return explicit[0]

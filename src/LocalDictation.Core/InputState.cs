@@ -28,21 +28,58 @@ public sealed class ModifierChord
 
 public sealed class TargetGuard(string identity, string text, int caret)
 {
+    sealed record OwnedRange(string Text, int Start, int Caret, string Owned, bool HasApplied);
+    OwnedRange range = new(text, caret, caret, "", false);
     public string Identity { get; } = identity;
-    public string ExpectedText { get; private set; } = text;
-    public int Start { get; } = caret;
-    public int Caret { get; private set; } = caret;
-    public string OwnedText { get; private set; } = "";
+    public string ExpectedText => range.Text;
+    public int Start => range.Start;
+    public int Caret => range.Caret;
+    public string OwnedText => range.Owned;
+    public bool HasApplied => range.HasApplied;
     public bool Valid { get; private set; } = true;
+    public bool CanUseInitialEmptyProjection(string? projection,string currentText,int caret) =>
+        Valid&&!HasApplied&&projection is not null&&currentText==projection&&caret==0;
     public void Invalidate() => Valid = false;
     public bool CanResume(string currentIdentity,string currentText)=>
-        Valid&&currentIdentity==Identity&&currentText==ExpectedText;
-    public bool CanReplace(string currentIdentity, string currentText, int selectionStart, int selectionEnd) =>
-        Valid && currentIdentity == Identity && currentText == ExpectedText &&
-        selectionStart == Caret && selectionEnd == Caret;
-    public string ReplacedText(string next) => ExpectedText[..Start] + next + ExpectedText[(Start + OwnedText.Length)..];
+        Valid&&currentIdentity==Identity&&currentText==range.Text;
+    public bool CanReplace(string currentIdentity, string currentText, int selectionStart, int selectionEnd)
+    {
+        var current=range;
+        return Valid&&currentIdentity==Identity&&currentText==current.Text&&
+            selectionStart==current.Caret&&selectionEnd==current.Caret;
+    }
+    public string ReplacedText(string next)
+    {
+        var current=range;
+        return current.Text[..current.Start]+next+current.Text[(current.Start+current.Owned.Length)..];
+    }
     public void Applied(string inserted, string expected, int caretAfter)
     {
-        OwnedText = inserted; ExpectedText = expected; Caret = caretAfter;
+        range=new(expected,range.Start,caretAfter,inserted,true);
+    }
+
+    /// <summary>
+    /// Adopts only the complete payload already observed after one known native paste.
+    /// This is post-input ownership proof, never permission to treat a nonempty field as empty.
+    /// The caller must prove unchanged focus/window/provider and no range selection.
+    /// </summary>
+    public bool TryAcknowledgeFirstPaste(FirstPasteEvidence evidence, string inserted,
+        string observedIdentity, string observedText, int observedCaret)
+    {
+        var current=range;
+        if(!Valid||current.HasApplied||current.Owned!=""||current.Text.Length==0||
+            evidence.Identity!=Identity||observedIdentity!=Identity||evidence.Text!=current.Text||
+            evidence.Caret!=current.Caret||current.Start!=current.Caret||
+            (current.Caret!=0&&current.Caret!=current.Text.Length)||evidence.SelectionMade||
+            !evidence.NativeClipboardPaste||evidence.QueuedInputEvents!=4||
+            !evidence.IsKnownProvider||
+            string.IsNullOrEmpty(inserted)||inserted.Any(char.IsControl)||
+            observedText!=inserted||observedCaret!=inserted.Length||observedText==current.Text)
+            return false;
+
+        // One reference update publishes every part of the rebased ownership together.
+        // HasApplied is monotonic, including after an acknowledged withdrawal.
+        range=new(observedText,0,observedCaret,inserted,true);
+        return true;
     }
 }

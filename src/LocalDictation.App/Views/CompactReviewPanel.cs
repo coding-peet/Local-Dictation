@@ -7,7 +7,7 @@ using LocalDictation.Core;
 
 namespace LocalDictation.App.Views;
 
-/// <summary>The ordinary Review stays inside the recording banner.</summary>
+/// <summary>Phrase-choice and direct-edit content hosted by CompactReviewWindow.</summary>
 public sealed class CompactReviewPanel : Border
 {
     readonly AppController controller;
@@ -28,21 +28,19 @@ public sealed class CompactReviewPanel : Border
     int shownHistory=-1,shownChoiceCount=-1;
     bool editingPhrase,shownInserted,customEnterPending;
     string? editingId;
-    static readonly Brush NormalInk=Brush("#F7F9FC"),NormalMuted=Brush("#BDC8D9"),NormalPink=Brush("#FFADB3"),NormalAmber=Brush("#FFD197"),NormalSelected=Brush("#49343F");
-    static Brush Ink=>SystemParameters.HighContrast?SystemColors.WindowTextBrush:NormalInk;
-    static Brush Muted=>SystemParameters.HighContrast?SystemColors.WindowTextBrush:NormalMuted;
-    static Brush Pink=>SystemParameters.HighContrast?SystemColors.WindowTextBrush:NormalPink;
-    static Brush Amber=>SystemParameters.HighContrast?SystemColors.WindowTextBrush:NormalAmber;
-    static Brush Selected=>SystemParameters.HighContrast?SystemColors.HighlightBrush:NormalSelected;
-    static Brush Surface=>SystemParameters.HighContrast?SystemColors.WindowBrush:Brush("#18202B");
-    static Brush FieldSurface=>SystemParameters.HighContrast?SystemColors.WindowBrush:Brush("#263141");
-    static Brush FieldBorder=>SystemParameters.HighContrast?SystemColors.WindowTextBrush:Brush("#76859A");
-    static SolidColorBrush Brush(string value)=>new((Color)ColorConverter.ConvertFromString(value));
+    static Brush Ink=>Ui.Brush("Ink");
+    static Brush Muted=>Ui.Brush("Muted");
+    static Brush Pink=>Ui.Brush("Accent");
+    static Brush Amber=>Ui.Brush("Warning");
+    static Brush Selected=>Ui.Brush("Selected");
+    static Brush Surface=>Ui.Brush("SurfaceContainer");
+    static Brush FieldSurface=>Ui.Brush("Surface");
+    static Brush FieldBorder=>Ui.Brush("InputBorder");
 
     static Button SmallButton(string text,Action action)
     {
         var button=Ui.Button(text,action);
-        button.FontSize=11.5;button.MinHeight=27;button.Padding=new(5,3,5,3);button.Margin=new(0,0,7,0);
+        button.MinHeight=48;button.Padding=new(12,8,12,8);button.Margin=new(0,0,8,0);
         button.Background=Brushes.Transparent;button.BorderThickness=new(0);button.Foreground=Muted;
         return button;
     }
@@ -50,9 +48,10 @@ public sealed class CompactReviewPanel : Border
     Button WordingButton(string accessibleName,string kind)
     {
         var button=Ui.Button("",()=>controller.ChooseBannerPiece(kind));
-        button.MinHeight=38;button.Padding=new(10,7,10,7);button.Margin=new(0,0,0,6);
+        button.SetResourceReference(FrameworkElement.StyleProperty,"Md3OutlinedButton");
+        button.MinHeight=48;button.Padding=new(16,8,16,8);button.Margin=new(0,0,0,8);
         button.Background=FieldSurface;button.BorderBrush=FieldBorder;button.Foreground=Ink;
-        button.HorizontalContentAlignment=HorizontalAlignment.Left;
+        button.HorizontalContentAlignment=HorizontalAlignment.Left;button.HorizontalAlignment=HorizontalAlignment.Stretch;
         button.PreviewMouseLeftButtonDown+=(_,e)=>
         {
             // A second click belongs to the same gesture, even if the first
@@ -82,8 +81,8 @@ public sealed class CompactReviewPanel : Border
     public CompactReviewPanel(AppController controller)
     {
         this.controller=controller;
-        Margin=new(0,12,0,0);Padding=new(13,11,13,11);CornerRadius=new(10);
-        Background=Surface;MaxHeight=370;Focusable=true;
+        Margin=new(0,16,0,0);Padding=new(16);SetResourceReference(CornerRadiusProperty,"ShapeMedium");
+        Background=Surface;MaxHeight=480;Focusable=true;
         var column=new StackPanel();
         var title=new DockPanel();heading.FontSize=11;heading.FontWeight=FontWeights.SemiBold;heading.Foreground=Muted;
         progress.FontSize=11;progress.Foreground=Muted;progress.HorizontalAlignment=HorizontalAlignment.Right;
@@ -139,10 +138,10 @@ public sealed class CompactReviewPanel : Border
             e.CancelCommand();
         });
         textSurface.Children.Add(directEditor);column.Children.Add(textSurface);
-        useEdited=Ui.Button("Use edited text",()=>_ = controller.ApproveBannerEditedText());
-        useEdited.MinHeight=32;useEdited.Padding=new(10,5,10,5);useEdited.Margin=new(0,0,8,3);
-        useEdited.Background=SystemParameters.HighContrast?SystemColors.HighlightBrush:Ink;
-        useEdited.Foreground=SystemParameters.HighContrast?SystemColors.HighlightTextBrush:Surface;
+        useEdited=Ui.Button("Use edited text",()=>_ = controller.ApproveBannerEditedText(),true);
+        useEdited.MinHeight=48;useEdited.Padding=new(16,8,16,8);useEdited.Margin=new(0,0,8,8);
+        useEdited.SetResourceReference(Control.BackgroundProperty,"Accent");
+        useEdited.SetResourceReference(Control.ForegroundProperty,"OnAccent");
         useEdited.BorderThickness=new(0);useEdited.FontSize=12;useEdited.FontWeight=FontWeights.SemiBold;
         exitText=SmallButton("Back to choices",ExitTextEdit);
         directActions.Children.Add(useEdited);directActions.Children.Add(exitText);column.Children.Add(directActions);
@@ -197,7 +196,7 @@ public sealed class CompactReviewPanel : Border
     {
         var text=value.Length==0?"Remove this text":value;
         button.Content=new TextBlock{Text=text,TextWrapping=TextWrapping.Wrap,TextTrimming=TextTrimming.CharacterEllipsis,
-            FontSize=14,LineHeight=20,MaxHeight=40,Foreground=Ink};
+            FontSize=14,LineHeight=20,MaxHeight=60,Foreground=Ink};
         button.ToolTip=text;
         var order=System.Windows.Automation.AutomationProperties.GetName(button).StartsWith("First",StringComparison.Ordinal)?"First wording":"Second wording";
         System.Windows.Automation.AutomationProperties.SetName(button,order+": "+text);
@@ -313,7 +312,7 @@ public sealed class CompactReviewPanel : Border
                     var resolved=document.Choices.ContainsKey(piece.Id);
                     var link=new Hyperlink(new Run(value.Length==0?"∅":value))
                     {
-                        Foreground=SystemParameters.HighContrast&&piece.Id==selected?SystemColors.HighlightTextBrush:resolved?Muted:Pink,TextDecorations=TextDecorations.Underline,
+                        Foreground=piece.Id==selected?Ui.Brush("SelectedInk"):resolved?Muted:Pink,TextDecorations=TextDecorations.Underline,
                         Background=piece.Id==selected?Selected:Brushes.Transparent,ToolTip="Choose the correct wording",
                         IsEnabled=!controller.IsApplyingReview
                     };

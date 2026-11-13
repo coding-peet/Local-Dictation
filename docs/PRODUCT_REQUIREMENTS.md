@@ -1,7 +1,7 @@
 # Local Dictation product requirements
 
 Status: current input specification, consolidated from Peter's requests on
-10–12 November 2026. Update this document when the user changes a requirement.
+10–13 November 2026. Update this document when the user changes a requirement.
 Older design documents explain decisions; this file defines current behavior.
 
 ## Purpose and scope
@@ -46,6 +46,41 @@ punctuation, whitespace, and Unicode must be preserved.
 - Start/stop with the shortcut, or record in the banner from Settings. Escape
   cancels recording or verification. Stop normally at the 10-minute limit.
 
+## Input language and correction
+
+- Show a discreet language indicator in the banner: `Auto · SK` / `Auto · EN`
+  from the actual primary detector, or the explicit language code. Show `Auto · …`
+  before a result. A fixed Slovak-only model shows `SK`, without claiming detection.
+- Configure preferred Auto languages as removable tags with a `+` add button.
+  Use the heading "Preferred Auto languages (supported by installed models)"
+  without a helper sentence under the tags. Keep removal marks visually quieter
+  than the language codes. Leave enough banner width to display elapsed time
+  and the complete detected language, including a queued correction.
+  Populate choices from installed models' actual supported language metadata.
+  Initial tags are SK and EN; RU, SR and CS are absent. More languages, including
+  ES, can be added when installed models support them. Never silently broaden
+  KInIT's Slovak-only capability based on its tokenizer tokens.
+- With configured preferences, constrain acoustic Auto detection to the selected
+  model's supported preference intersection. Reject a nonempty preference list
+  with no supported intersection before recording or autosave. Allow all tags to
+  be removed; with no preferences, use the model's complete supported language set.
+- The banner correction picker offers only configured preferred languages that
+  installed models support, plus Auto. Preserve tag order. With no preferences,
+  offer all supported languages. Do not silently broaden a configured but
+  unavailable preference set. Use the active recording's settings snapshot.
+  The verifier must support all effective candidates and use the primary's
+  resolved language. A restricted detector still has no accuracy/confidence guarantee.
+- Clicking the language opens an explicit correction picker naming any needed
+  model switch. During recording, continue capture and queue a complete same-audio
+  retranscription after Finish. During verification, cancel that pass and replay
+  the recording with the selected language. Reuse the existing original target
+  and Finish guard; foreign input/focus still blocks automatic insertion.
+- Retranscription never starts the microphone. Retain original text, edits and
+  audio in protected History, including audio from empty recognition. A History
+  retry creates a separate Review and never automatically replaces inserted text.
+- Escape cancels both the current session and any queued retranscription.
+  Transfer destination/receipt ownership to the new Review without aliases.
+
 ## Live transcription quality
 
 - Retain every accepted original sample through the configured recording limit.
@@ -71,34 +106,56 @@ punctuation, whitespace, and Unicode must be preserved.
 
 ## Banner and live cursor delivery
 
-- Use the approved compact native banner and pink waveform icon. Keep spacing,
-  selected states, status text, and controls readable; offer System/Light/Dark.
-- Show live text in the banner as segments arrive, including when cursor
-  delivery pauses. Do not imply character-by-character recognition.
-- The banner must be movable by its header, microphone tile, or waveform.
-  Initial placement should avoid the native caret when available.
+- Use Material Design 3 throughout the WPF application through the compatible
+  MaterialDesignInXamlToolkit controls and MaterialDesign3 defaults. Preserve the
+  waveform identity, semantic tonal colors, Roboto typography, readable focus and
+  selection, System/Light/Dark and Windows high contrast.
+  Action/toggle buttons use true stadium geometry, with semicircular ends and
+  straight sides. Compute each layer from its actual dimensions; never stretch
+  an ellipse. Keep a 48-DIP hit target around the 40-DIP visible body.
+- Keep the movable recording banner minimal: indicator/waveform, short phase,
+  duration, small active model name and small finish/cancel actions. The model
+  name shares the phase row in subdued 11-DIP text; keep the complete time and
+  language line visible. Show Dictation while recording and the verifier during
+  Verify, with the full name and role available on hover. Never take keyboard
+  focus. Do not show a transcript editor, microphone metadata or clipboard-recovery
+  button in the normal banner. Review uses a separate compact window.
+- Close the banner promptly after successful automatic insertion. A protected
+  pending result may expose a small, low-emphasis Insert action.
+- The banner must be movable by its status area or waveform.
+  Initial placement should avoid the native caret when available. Fade its
+  decorative window edge to fully transparent pixels, keeping text and controls
+  sharp. Do not leave an opaque rectangular toolkit window behind it.
 - A shortcut-started session captures the original external destination even
   when live cursor insertion is off. In that case keep partial text in the
-  banner and return the completed text automatically after successful completion
-  and any required word choices.
-- In desktop Outlook, keep live transcription in the banner and insert the
+  recognition pipeline and return the completed text automatically after successful
+  completion and any required word choices, provided Finish occurred in the original field.
+- In desktop Outlook, keep live recognition running and insert the
   complete final text once after Finish and any required verification choices.
   Detect the destination application without reading message content or relying
   on window titles. Keep the original validated caret and surrounding signature.
   This session-specific delivery policy must not disable live recognition or
   overwrite the user's live-insertion preference for other applications. Make
-  the Outlook completion behavior clear in the banner.
+  final-only completion behavior clear in Settings and the short status.
 - Only replace the app's owned draft in the validated original field. Preserve
   surrounding text. Switching focus pauses delivery; returning to the same
   unchanged field resumes it, including after a click within that field.
-- Before final insertion, restore only the captured original window and exact
-  field identity. Allow activation up to 100 ms to restore that identity itself;
+- Before an explicit Insert action, restore only the captured original window
+  and exact field identity. Allow activation up to 100 ms to restore that identity itself;
   if it is already ready, avoid a redundant provider SetFocus. Otherwise request
   focus on the captured original field once and allow up to 500 ms for that exact
   identity. Do not adopt another field or queue input/clipboard replacement while
   waiting. Cancellation, invalidation, input generation and foreground changes
   still stop the operation. Preserve acceptance-key release, full-text ownership,
   exact caret and paste-acknowledgment checks.
+- At Finish, latch whether the exact original field is still current without
+  activating anything. If it is elsewhere, preserve the result for explicit Insert;
+  a later return must not start delayed automatic insertion. Automatic completion
+  also checks the finish-time input epoch and never activates or focuses a target.
+- Remember terminal live transport/ack/range failures by executable name for later
+  sessions. Use final-only delivery there while keeping live recognition enabled.
+  Focus pauses, cancellation and user edits must not blacklist an application.
+  Offer Reset remembered apps in Settings; Outlook remains final-only after reset.
 - Prove that a captured UI Automation field belongs to the captured native window:
   use its nearest native host and require the same root window. Recheck that
   association before activation and insertion. A matching PID or text in another
@@ -123,18 +180,54 @@ punctuation, whitespace, and Unicode must be preserved.
 - When appending at an already validated correct caret, avoid reselecting its
   collapsed UIA range. Select a real owned suffix for replacement and retain
   explicit caret restoration when needed. Keep all exact acknowledgment guards.
+- Pauses in speech must not require a banner action. Continue updating the complete
+  owned live draft, including corrections to earlier wording; Ctrl+Shift finishes
+  and returns the final text automatically. Outlook retains final-only insertion.
+- TextPattern can expose generated placeholder content in an empty editor. Treat
+  an Edit field as empty only when its caret prefix is empty and its own writable
+  ValuePattern independently returns an empty value. Preserve real matching words,
+  whitespace and all nonempty values; an absent pattern is not proof of emptiness.
+  Retire this initial projection after any acknowledged write, including a later
+  withdrawal. Retained dictated text equal to the placeholder must never count as empty.
+- A first ordinary collapsed native paste may remove a Chromium/ProseMirror
+  accessibility placeholder projection. Accept only the exact raw known Edit
+  provider, unchanged pre-input identity/text/edge caret, no range selection or
+  caret-restoration selection, first-ever insertion, a complete four-event paste,
+  complete observed document equal to the entire payload and its exact ending
+  caret. Atomically adopt start zero, actual full document and owned payload.
+  This acknowledges one already issued paste; it never proves emptiness before
+  input, trims text or permits replay. Use the same policy for late readback and
+  retain strict complete-document ownership for every subsequent correction.
+- If a provider cannot construct the owned suffix through character movement,
+  permit a read-only exact backward FindText lookup bounded by the validated caret.
+  Require exact full prefix, suffix, document bounds and end endpoint before
+  selecting it. Preserve all full-text, identity, focus, input and paste checks.
+- A target-check timeout must cancel the waiting operation and refuse fresh work
+  while that operation is still running. Once it actually exits, the same bounded
+  serialized worker must accept fresh checks again; one slow call must not disable
+  cursor delivery for the lifetime of the app. Never replay the expired action.
+  Keep all field, input-generation and uncertain-paste checks in force.
 - A transient post-paste accessibility/selection state may retry only readback
   within a bounded deadline. Keep the original field, full text and exact caret
   requirements; do not issue another paste to obtain acknowledgement.
+- After a fully dispatched but unconfirmed paste, permit read-only late
+  acknowledgement for at most ten monotonic seconds from dispatch. Require the
+  same unchanged foreground field, input generation, clipboard payload/marker
+  and exact complete-document/caret proof. Cancel on focus/input/invalidation;
+  never replay input. Publish and retain a confirmed receipt before clipboard
+  restoration, so a worker timeout cannot lose an already proven insertion.
 - Idle recovery can be hidden with the banner X without discarding protected
   text, a clipboard lease or its backup. Old queued notifications must not undo
   dismissal; a new recovery event or explicit Start/Exit can resurface it.
-- Offer clipboard restoration in the idle banner and tray. One explicit
-  Restore action starts recovery without a second confirmation. Warn in the
-  banner to inspect the destination and stop any delayed paste before restoring:
-  a delayed paste could otherwise insert the previous clipboard contents. Keep
-  recording Finish first, block active/inserting restoration and recheck
-  eligibility before starting. Use one transcript surface in compact Review.
+- Preserve and restore the clipboard automatically on acknowledged delivery.
+  Keep temporary text out of clipboard history/cloud and preserve newly copied
+  content. The normal banner must not expose Restore clipboard. If dispatch or
+  restoration remains uncertain, retain the backup and protected transcript;
+  exceptional Resolve opens a usable recovery window from the banner, Settings
+  or tray. Require explicit destination-inspection acknowledgement before
+  restoring an unconfirmed paste. Offer automatic/manual restoration retry
+  only for an already acknowledged backup. Clear stale recovery status once
+  resolved; repeated notifications for the same lease must not undo X dismissal.
 - Opt-in support journals record PID/build and fixed capture/readback stages,
   never transcript, field names/values/text, audio or clipboard contents. Ordinary
   operation and fixed-stage logging add no UIA queries. Only an opted-in
@@ -161,11 +254,18 @@ punctuation, whitespace, and Unicode must be preserved.
   valid field without opening interactive Review first. Verification agreement
   follows the same path; differences and actionable failures remain in Review.
 
-## Verification and compact Review
+## Verification and separate compact Review
 
 - With Verify after recording enabled, save the received transcript before
   removing the owned live draft from a validated destination for Review.
-- Keep ordinary Review inside the original small banner. Underline disputed
+- After Finish, keep the first-model text in a bounded, read-only preview while
+  final primary processing and verification run. The banner remains nonactivating,
+  movable and scrollable for a long transcript; it is not an editor.
+  During verification, only the banner holds the withdrawn first transcript.
+  Agreement inserts the final result at the original validated cursor and closes
+  the banner; differences open separate Review.
+- Open ordinary Review in its own small window. Keep the recording banner minimal.
+  Underline disputed
   phrases; clicking one shows two exact alternatives without model/source names.
   The live wording comes first, the verifier's wording second.
 - Selecting wording automatically activates the next unresolved phrase.
@@ -175,7 +275,7 @@ punctuation, whitespace, and Unicode must be preserved.
   drafts when changing phrases, closing, or restarting. A held Enter gesture
   must accept only one choice, on release.
 - Allow direct editing of the entire visible transcript in the same compact
-  banner, including common text and punctuation. Keep originals and choices.
+  Review window, including common text and punctuation. Keep originals and choices.
   A manually edited final draft is authoritative and saved as it changes;
   approve it explicitly before insertion so ordinary typing never inserts it.
   Pause phrase alternatives while whole-text edits are authoritative, rather
@@ -207,8 +307,8 @@ punctuation, whitespace, and Unicode must be preserved.
   Do not silently discard text still marked unsaved.
 - If paste was queued but cannot be confirmed, retain its payload and all saved
   clipboard formats in memory. Block new delivery and normal Exit until deliberate
-  recovery or a newer clipboard copy resolves it. Offer Restore previous
-  clipboard in the tray after destination inspection. A crash or forced process
+  recovery or a newer clipboard copy resolves it. Offer Resolve clipboard
+  recovery in the tray, with an explicit destination-inspection checkbox. A crash or forced process
   termination cannot preserve this in-memory clipboard backup.
 - Operational diagnostics must not record actual transcript text or audio.
 - Whisper repetition recovery must re-decode audio using its native generation

@@ -156,3 +156,16 @@ This probe establishes only the local synthetic controls and the observed
 provider/version. It does not establish Outlook, Codex or every Chromium editor's
 compatibility. Operational reports contain technical flags, lengths, error codes
 and native delivery metadata, never actual field or clipboard values.
+
+
+## Read-only placeholder inspection
+
+The synthetic page also contains an empty placeholder editor. The probe accepts
+control=placeholder only with --mode inspect. This mode reads only the exact
+nonce-scoped synthetic field and reports TextPattern length, ValuePattern support
+and value length/equality. It returns before global input observation or paste.
+No real document or clipboard value is logged.
+
+The browser-only accessibility view showed generated words with an empty editable
+value. Native Chrome control was denied, so the native inspect mode is unverified
+and must not be used to work around that denial.

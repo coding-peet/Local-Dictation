@@ -7,7 +7,8 @@ public sealed class AutomationWorker : IDisposable
 {
     readonly BlockingCollection<Action> queue = new(2);
     readonly Thread thread;
-    volatile bool unavailable;
+    readonly object availabilityGate=new();
+    Task? unavailableUntil;
     public AutomationWorker()
     {
         thread = new Thread(() =>
@@ -19,7 +20,14 @@ public sealed class AutomationWorker : IDisposable
     }
     public async Task<T> Run<T>(Func<CancellationToken, T> action, TimeSpan? timeout = null)
     {
-        if (unavailable) throw new InvalidOperationException("The target application's accessibility provider is unavailable.");
+        lock(availabilityGate)
+        {
+            // A deadline ends the caller's wait, not a third-party provider call.
+            // Reuse this same worker only after that call has actually returned.
+            if(unavailableUntil is {IsCompleted:false})
+                throw new InvalidOperationException("The target application's accessibility provider is unavailable.");
+            unavailableUntil=null;
+        }
         using var cancelled = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(2));
         var token = cancelled.Token;
         var source = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -31,7 +39,11 @@ public sealed class AutomationWorker : IDisposable
         try { return await source.Task.WaitAsync(cancelled.Token); }
         catch (OperationCanceledException)
         {
-            unavailable = true;
+            lock(availabilityGate)
+            {
+                if(unavailableUntil is null||unavailableUntil.IsCompleted)
+                    unavailableUntil=source.Task;
+            }
             throw new InvalidOperationException("The target application did not answer its accessibility check. Continue in Review.");
         }
     }

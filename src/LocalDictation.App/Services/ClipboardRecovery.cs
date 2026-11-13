@@ -27,6 +27,15 @@ public static class ClipboardRecovery
             lock(gate)return active?.RecoveryPending==true;
         }
     }
+    public static bool HasAcknowledgedBackup
+    {
+        get
+        {
+            ClipboardTransaction? lease;lock(gate)lease=active;
+            // Never acquire a transaction state lock while holding the registry gate.
+            return lease?.HasAcknowledgedBackup==true&&IsCurrentHeldLease(lease);
+        }
+    }
     public static string Message
     {
         get
@@ -52,18 +61,31 @@ public static class ClipboardRecovery
     }
     public static void Hold(ClipboardTransaction lease)
     {
+        bool notify;
         lock(gate)
         {
             if(active!=null&&!ReferenceEquals(active,lease))throw new InvalidOperationException("Another previous clipboard backup is already retained.");
+            notify=!ReferenceEquals(active,lease)||!lease.RecoveryPending;
             active=lease;lease.RecoveryPending=true;
         }
-        Notify();
+        if(notify)Notify();
     }
     internal static void Release(ClipboardTransaction lease)
     {
         bool notify;
         lock(gate){notify=ReferenceEquals(active,lease);if(notify)active=null;}
         if(notify)Notify();
+    }
+    internal static bool IsCurrentHeldLease(ClipboardTransaction lease)
+    {
+        lock(gate)return ReferenceEquals(active,lease)&&lease.RecoveryPending;
+    }
+    /// <summary>Retries restoration only after the original paste was positively acknowledged.</summary>
+    public static bool TryRestoreAcknowledged()
+    {
+        _=HasPending;
+        ClipboardTransaction? lease;lock(gate)lease=active;
+        return lease is null||IsCurrentHeldLease(lease)&&lease.TryRestoreAcknowledged();
     }
     public static ClipboardRecoveryResult RestoreAfterInspection()
     {

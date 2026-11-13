@@ -13,8 +13,8 @@ public sealed class ReviewWindow : Window
     readonly Action<string> dismiss;
     readonly Func<ReviewDocument,Task<ReviewInsertionResult>> accept;
     readonly Action<ReviewDocument> chooseDestination;
-    readonly RichTextBox transcript = new() { IsReadOnly=true, VerticalScrollBarVisibility=ScrollBarVisibility.Auto,
-        MinHeight=210, BorderThickness=new(0), Padding=new(8), FontSize=16 };
+    readonly RichTextBox transcript = new() { IsReadOnly=true, VerticalScrollBarVisibility=ScrollBarVisibility.Auto, VerticalContentAlignment=VerticalAlignment.Top,
+        MinHeight=210, BorderThickness=new(0), Padding=new(16), FontSize=16 };
     readonly TextBox primary = Ui.Box(false,64), verification = Ui.Box(false,64), custom = Ui.Box(true,62), manual = Ui.Box(true,130);
     readonly TextBlock counter=Ui.Text(""), note=Ui.Text(""), sourceLabel=Ui.Text("");
     readonly Button copy,acceptButton,destinationButton,undo,rebuild,restore;
@@ -36,6 +36,7 @@ public sealed class ReviewWindow : Window
         Title="Review · Local Dictation"; Width=1080; Height=740; MinWidth=650; MinHeight=540;
         WindowStartupLocation=WindowStartupLocation.CenterScreen;
         var root=new DockPanel { Margin=new(24) };
+        System.Windows.Automation.AutomationProperties.SetName(transcript,"Working transcript with phrase choices");
         var header=new StackPanel();
         header.Children.Add(Ui.Text("Review your dictation",22,true));
         header.Children.Add(Ui.Text(document.Reason,13));
@@ -167,7 +168,7 @@ public sealed class ReviewWindow : Window
         refreshing=true;
         try
         {
-            var flow=new FlowDocument { PagePadding=new(4), FontFamily=new("Segoe UI"), FontSize=16 };
+            var flow=new FlowDocument { PagePadding=new(4), FontFamily=(FontFamily)System.Windows.Application.Current.FindResource("MaterialDesignFont"), FontSize=16 };
             var paragraph=new Paragraph { LineHeight=27 };
             foreach(var piece in document.Pieces)
             {
@@ -180,7 +181,7 @@ public sealed class ReviewWindow : Window
                 {
                     TextDecorations=TextDecorations.Underline, ToolTip="Compare phrase "+(index+1)
                 };
-                link.SetResourceReference(TextElement.ForegroundProperty,"Ink");
+                link.SetResourceReference(TextElement.ForegroundProperty,index==selected?"SelectedInk":"DifferenceInk");
                 link.SetResourceReference(TextElement.BackgroundProperty,index==selected?"Selected":"Difference");
                 link.Click+=(_,_)=>Select(index);paragraph.Inlines.Add(link);
             }

@@ -22,7 +22,7 @@ public sealed record DeliveryDiagnostic(string Phase,bool Final,int QueuedInputE
     string Provider,int? ClipboardFormatCount,bool? ClipboardRestored,bool? ClipboardSuperseded,bool Conflict,string? FailureType=null,int? FailureCode=null,bool ClipboardRecoveryPending=false,
     int ReadbackRetries=0,string? LastReadbackStage=null,string? LastReadbackFailureType=null,int? LastReadbackFailureCode=null,
     string? LastInterruptionStage=null,DeliveryTextMismatch? TextMismatch=null,bool OutlookParagraphProjection=false,
-    DeliveryFocusMismatch? FocusMismatch=null,int FocusRestoreChecks=0,bool? ProviderFocusRequested=null,string InputMethod="ClipboardPaste",int InputChunks=0)
+    DeliveryFocusMismatch? FocusMismatch=null,int FocusRestoreChecks=0,bool? ProviderFocusRequested=null,string InputMethod="ClipboardPaste",int InputChunks=0,string? OwnedRangeStrategy=null)
 {
     public static DeliveryFocusMismatch? DescribeFocusMismatch(string? expectedIdentity,string? observedIdentity,
         nint expectedWindow,nint observedWindow)

@@ -21,6 +21,7 @@
   <ItemGroup>
     <ProjectReference Include="../LocalDictation.Core/LocalDictation.Core.csproj" />
     <PackageReference Include="NAudio" Version="3.3.0" />
+    <PackageReference Include="MaterialDesignThemes" Version="5.4.0" />
   </ItemGroup>
   <ItemGroup><Using Remove="System.Windows.Forms" /><Using Remove="System.Drawing" /></ItemGroup>
 </Project>

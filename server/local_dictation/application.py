@@ -16,6 +16,7 @@ from .config import RuntimeConfig
 from .sessions import AudioSession, Admission, BusyError
 from .workers import run_worker, join
 from .installation import supports_language
+from language_policy import normalize_language, preferred_for_model
 
 def error(message, status=400):
     return JSONResponse({"error":{"message":message,"type":"invalid_request_error"}},status_code=status)
@@ -68,13 +69,17 @@ def create_app(config, engine, catalog=None):
             if not verified["runtime_tested"]:
                 raise ValueError("Test this verification model with an audio file before using it.")
             if verifier == model["id"]: raise ValueError("Choose a different verification model.")
-        language=options.get("language","sk")
-        if language not in ("sk","en","auto"): raise ValueError("Select sk, en or auto.")
-        language=supports_language(model,language)
+        requested=normalize_language(options.get("language","sk")) or "auto"
+        preferred=preferred_for_model(model["languages"],options.get("preferred_languages"),requested=="auto")
+        language=supports_language(model,requested)
         if verifier:
-            supports_language(verified,language)
+            candidates=preferred if language=="auto" and preferred is not None else [l for l in model["languages"] if l!="auto"] if language=="auto" else [language]
+            if any(candidate not in verified["languages"] for candidate in candidates):
+                raise ValueError("The verification model must support every candidate source language.")
         return {**options,"model":model["id"],"verification_model":verifier,
-                "live":live,"language":language,"primary_revision":model.get("installed_revision",model.get("revision")),
+                "live":live,"language":language,"requested_language":requested,"preferred_languages":preferred,
+                "language_mode":"model_fixed" if len([l for l in model["languages"] if l!="auto"])==1 else "forced" if language!="auto" else None,
+                "primary_revision":model.get("installed_revision",model.get("revision")),
                 "verification_revision":verified.get("installed_revision",verified.get("revision")) if verifier else None}
 
     async def socket(ws):
@@ -166,16 +171,21 @@ def create_app(config, engine, catalog=None):
                         value=part.get_payload(decode=True)
                         if value is None: raise ValueError("Invalid form data.")
                         if name=="file": files.append(value)
-                        elif name in ("model","language","prompt","response_format"):
+                        elif name in ("model","language","prompt","response_format","preferred_languages"):
                             if name in fields or len(value)>16384: raise ValueError("Duplicate or oversized field.")
                             fields[name]=value.decode("utf-8")
                     if len(files)!=1 or not files[0]: raise ValueError("Exactly one audio file is required.")
                     model=catalog.require(fields.get("model",""))
-                    language=supports_language(model,fields.get("language","auto"))
+                    requested=normalize_language(fields.get("language","auto")) or "auto"
+                    language=supports_language(model,requested)
+                    preferred=preferred_for_model(model["languages"],
+                        json.loads(fields["preferred_languages"]) if "preferred_languages" in fields else None,requested=="auto")
                     fmt=fields.get("response_format","json")
                     if fmt not in ("json","text","verbose_json"): raise ValueError("Unsupported response format.")
-                    result=await run_worker(engine.transcribe,files[0],fields.get("prompt",""),
-                        model["id"],language,cancelled,cancelled=cancelled,timeout=config.inference_timeout_seconds)
+                    arguments=(files[0],fields.get("prompt",""),model["id"],language,cancelled)
+                    if language=="auto" and preferred is not None:arguments+= (preferred,)
+                    result=await run_worker(engine.transcribe,*arguments,
+                        cancelled=cancelled,timeout=config.inference_timeout_seconds)
                     if request.url.path.endswith("/test"):
                         tested_model=model["id"]
                     if fmt=="text": return PlainTextResponse(result["text"])

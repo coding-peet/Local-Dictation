@@ -17,6 +17,10 @@ public sealed class ReviewDocument
     [JsonIgnore] public bool CanInsert=>InsertedAt==null&&UnresolvedCount==0;
     public ReviewProvenance? Provenance {get;set;}
     public string PrimaryModel { get; set; } = "";
+    public string RequestedLanguage {get;set;}="";
+    public string? Language {get;set;}
+    public string? LanguageMode {get;set;}
+    public string? RetranscriptionOf {get;set;}
     public string? VerificationModel { get; set; }
     public string Primary { get; set; } = "";
     public string Verification { get; set; } = "";

@@ -7,6 +7,7 @@ import os
 import time
 
 from asr import model_path, read_audio
+from language_policy import normalize_language, preferred_for_model
 
 FAST_MODEL_ID = "kinit/whisper-large-v3-turbo-sk"
 PRECISE_MODEL_ID = "openai/whisper-large-v3"
@@ -26,13 +27,13 @@ def resolve_request(model_id, language):
     model_id = aliases.get(model_id, model_id)
     if model_id not in MODELS:
         raise ValueError("Unknown model; select an installed model in /v1/models.")
-    language = (language or "").strip().lower()
-    language = {"slovak": "sk", "english": "en", "auto": None, "": None}.get(language, language)
-    if language not in (None, "sk", "en"):
-        raise ValueError("Supported explicit languages are sk and en; omit language for automatic detection.")
+    language = normalize_language(language)
+    known_languages = MODEL_LANGUAGES.get(model_id)
+    if language is not None and known_languages and language not in known_languages:
+        raise ValueError("This model does not support the selected language.")
     if model_id == FAST_MODEL_ID:
-        if language == "en":
-            raise ValueError("The fast Slovak profile does not support English; select the precise SK/EN profile.")
+        if language not in (None, "sk"):
+            raise ValueError("The fast Slovak profile supports Slovak only; select a multilingual model.")
         language = "sk"
     if MODEL_LANGUAGES.get(model_id)==["en"]:
         if language not in (None,"en"):raise ValueError("This model supports English only.")
@@ -268,7 +269,7 @@ class WhisperEngine:
         LOG.info("Model activated: %s; load_seconds=%.3f", model_id, elapsed)
         return elapsed
 
-    def transcribe(self, data, prompt, model_id, language, cancel_event=None):
+    def transcribe(self, data, prompt, model_id, language, cancel_event=None, preferred_languages=None):
         self._last_request_succeeded = False
         model_id, language = resolve_request(model_id, language)
         try:
@@ -287,6 +288,17 @@ class WhisperEngine:
         # Never inherit a language or forced prefix from another request.
         config.language = None
         config.forced_decoder_ids = None
+        language_mode = "model_fixed" if fast or MODEL_LANGUAGES.get(model_id)==["en"] else "forced" if language is not None else "detected"
+        mapping = getattr(config, "lang_to_id", {})
+        if language is not None and mapping and f"<|{language}|>" not in mapping:
+            raise ValueError("This model does not support the selected language token.")
+        detect_config = config
+        if language is None and preferred_languages is not None:
+            supported = [token[2:-2] for token in mapping]
+            preferred = preferred_for_model(supported, preferred_languages)
+            detect_config = deepcopy(config)
+            detect_config.lang_to_id = {token: token_id for token, token_id in mapping.items()
+                                        if token[2:-2] in preferred}
         prompt_ids = None
         if prompt.strip():
             prompt_ids = self.processor.get_prompt_ids(prompt.strip(), return_tensors="pt")
@@ -299,7 +311,7 @@ class WhisperEngine:
             if language is None:
                 language_id = int(self.model.detect_language(
                     input_features=prepared[0].input_features,
-                    generation_config=config)[0].item())
+                    generation_config=detect_config)[0].item())
                 by_id = {value: token[2:-2] for token, value in config.lang_to_id.items()}
                 language = by_id[language_id]
             options = generation_options(model_id, language)
@@ -326,6 +338,6 @@ class WhisperEngine:
         self.torch.cuda.synchronize()
         elapsed = time.perf_counter() - start
         self._last_request_succeeded = True
-        return {"text": " ".join(decoded).strip(), "language": language,
+        return {"text": " ".join(decoded).strip(), "language": language, "language_mode": language_mode,
                 "duration": len(audio) / 16000, "model": model_id,
                 "inference_seconds": round(elapsed, 3), "load_seconds": round(load_seconds, 3)}

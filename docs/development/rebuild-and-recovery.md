@@ -163,6 +163,8 @@ transcript, audio, clipboard values, UI names or document paths. Leave it unset
 for normal operation. Do not substitute a custom external-window inspection tool
 when application-control permission is missing.
 
-If the previous client reports clipboard recovery pending, resolve it through
-Restore previous clipboard before updating or stopping that process. Its previous
-clipboard backup lives only in memory; force termination cannot preserve it.
+If the previous client reports clipboard recovery pending, open Resolve clipboard
+recovery from the banner, Settings or tray. Inspect the destination and stop any
+delayed paste, tick the inspection checkbox, then restore before updating or
+stopping that process. Its previous clipboard backup lives only in memory;
+force termination cannot preserve it.

@@ -34,17 +34,17 @@ static class Program
             catch(Exception error){Environment.ExitCode=1;File.WriteAllText(path,JsonSerializer.Serialize(new{Passed=false,NativeFormatCloningOnly=true,Error=error.ToString()}));}
             return;
         }
-        var typingOnly=args.Contains("--typing-only");var baselineOnly=args.Contains("--baseline-only");
-        var reportArgs=args.Where(argument=>argument is not "--typing-only" and not "--baseline-only").ToArray();
-        if((typingOnly||baselineOnly)&&(typingOnly&&baselineOnly||
-            args.Count(argument=>argument=="--typing-only")>1||args.Count(argument=>argument=="--baseline-only")>1||
+        var typingOnly=args.Contains("--typing-only");var baselineOnly=args.Contains("--baseline-only");var placeholderOnly=args.Contains("--placeholder-only");
+        var reportArgs=args.Where(argument=>argument is not "--typing-only" and not "--baseline-only" and not "--placeholder-only").ToArray();
+        if((typingOnly||baselineOnly||placeholderOnly)&&((typingOnly?1:0)+(baselineOnly?1:0)+(placeholderOnly?1:0)>1||
+            args.Count(argument=>argument=="--typing-only")>1||args.Count(argument=>argument=="--baseline-only")>1||args.Count(argument=>argument=="--placeholder-only")>1||
             !(reportArgs.Length==0||reportArgs.Length==2&&reportArgs[0]=="--report")))
         {Environment.ExitCode=2;return;}
         var report=reportArgs.Length==2&&reportArgs[0]=="--report"?Path.GetFullPath(reportArgs[1]):
             Path.Combine(@"C:\AI\LocalDictation\diagnostics","delivery-probe-"+DateTime.Now.ToString("yyyyMMdd-HHmmss")+".json");
         var application=new System.Windows.Application{ShutdownMode=ShutdownMode.OnMainWindowClose};
         application.Resources.MergedDictionaries.Add(new ResourceDictionary{Source=new Uri("/LocalDictation;component/Theme.xaml",UriKind.Relative)});
-        application.Run(new ProbeWindow(report,typingOnly,baselineOnly));
+        application.Run(new ProbeWindow(report,typingOnly,baselineOnly,placeholderOnly));
     }
 }
 
@@ -81,9 +81,9 @@ sealed partial class ProbeWindow : Window
     bool running,restoringClipboard,closed,stoppedForClipboardRecovery;
     string lastRecoveryAction="";
     readonly string reportPath;
-    readonly bool typingOnly,baselineOnly;
-    int ExpectedChecks=>typingOnly?5:baselineOnly?30:35;
-    string SelectedSuite=>typingOnly?"typing-only":baselineOnly?"baseline-only":"all";
+    readonly bool typingOnly,baselineOnly,placeholderOnly;
+    int ExpectedChecks=>placeholderOnly?2:typingOnly?5:baselineOnly?33:38;
+    string SelectedSuite=>placeholderOnly?"placeholder-only":typingOnly?"typing-only":baselineOnly?"baseline-only":"all";
     readonly List<StepResult> results=[];
     WindowsTextDelivery? current;
     GlobalInput? observer;
@@ -113,12 +113,12 @@ sealed partial class ProbeWindow : Window
             operationActive??(owned==null?null:owned.OwnsProgrammaticFocus(owned.Window)),ownsFocus,suspended));
     }
 
-    public ProbeWindow(string reportPath,bool typingOnly=false,bool baselineOnly=false)
+    public ProbeWindow(string reportPath,bool typingOnly=false,bool baselineOnly=false,bool placeholderOnly=false)
     {
-        if(typingOnly&&baselineOnly)throw new ArgumentException("Choose either typing-only or baseline-only.");
-        this.reportPath=reportPath;this.typingOnly=typingOnly;this.baselineOnly=baselineOnly;
-        Title="Local Dictation delivery probe"+(typingOnly?" — typing-only":baselineOnly?" — baseline-only":"");
-        if(typingOnly||baselineOnly)status.Text=$"Ready — {ExpectedChecks} checks ({SelectedSuite})";
+        if((typingOnly?1:0)+(baselineOnly?1:0)+(placeholderOnly?1:0)>1)throw new ArgumentException("Choose either typing-only or baseline-only.");
+        this.reportPath=reportPath;this.typingOnly=typingOnly;this.baselineOnly=baselineOnly;this.placeholderOnly=placeholderOnly;
+        Title="Local Dictation delivery probe"+(placeholderOnly?" — placeholder-only":typingOnly?" — typing-only":baselineOnly?" — baseline-only":"");
+        if(typingOnly||baselineOnly||placeholderOnly)status.Text=$"Ready — {ExpectedChecks} checks ({SelectedSuite})";
         Width=980;Height=790;MinWidth=760;MinHeight=600;WindowStartupLocation=WindowStartupLocation.CenterScreen;
         var panel=new DockPanel{Margin=new(24)};
         var header=new StackPanel();header.Children.Add(status);
@@ -828,7 +828,7 @@ sealed partial class ProbeWindow : Window
         using var worker=new AutomationWorker();
         try
         {
-            if(!typingOnly)
+            if(!typingOnly&&!placeholderOnly)
             {
                 await Step("Native clipboard format cloning preserves synthetic memory and GDI resources",()=>{ClipboardChecks.Run();return Task.CompletedTask;});
                 await Step("Failed native clipboard restoration retains every original backup format",()=>{ClipboardChecks.RecoveryChecks();return Task.CompletedTask;});
@@ -848,7 +848,7 @@ sealed partial class ProbeWindow : Window
                 }
                 TraceInput("input",input,operationActive,ownsFocus,suspended);
             };
-            if(!typingOnly)
+            if(!typingOnly&&!placeholderOnly)
             {
                 await Step("Capture and insert live draft",async()=>
                 {
@@ -1004,6 +1004,9 @@ sealed partial class ProbeWindow : Window
                 await Step("Repeated surroundings and long Unicode revisions survive unavailable FindText",()=>OwnedSuffixWithoutFindText(unicode:true),continueAfterFailure:true);
                 await Step("Invalid provider endpoint movement cannot queue replacement input",()=>OwnedSuffixWithoutFindText(unicode:false,badMovement:true),continueAfterFailure:true);
                 await Step("Expired pre-paste anchor falls back to a fresh exact caret range",()=>OwnedSuffixWithoutFindText(unicode:false,staleAnchor:true),continueAfterFailure:true);
+                await Step("Exact suffix lookup resumes live revisions when character movement is unreliable",ExactFindTextContinuation,continueAfterFailure:true);
+                await Step("Independent empty value excludes placeholder text and supports complete live/final updates",()=>EmptyPlaceholderContinuation(),continueAfterFailure:true);
+                await Step("Independent empty value excludes a virtual empty paragraph during live and final updates",()=>EmptyPlaceholderContinuation("\n"),continueAfterFailure:true);
                 await Step("Known Outlook initial LF projection confirms the first full final paste without replay",()=>InitialParagraphProjection("olk"),continueAfterFailure:true);
                 await Step("Ordinary process initial LF mutation retains clipboard recovery without replay",()=>InitialParagraphProjection("ordinary-fixture"),continueAfterFailure:true);
                 await Step("Additional signature mutation in Outlook retains clipboard recovery without replay",()=>InitialParagraphProjection("olk",mutateSignature:true),continueAfterFailure:true);
@@ -1012,7 +1015,12 @@ sealed partial class ProbeWindow : Window
                 await Step("A different field cannot replace original focus when provider SetFocus never completes",()=>NativeFocusRestoration(FixtureFocusBehavior.Never),continueAfterFailure:true);
                 await Step("A handle-less native field resolves only to its original window and refuses a matching-text foreign window",NativeWindowScope,continueAfterFailure:true);
             }
-            if(!baselineOnly)
+            if(placeholderOnly)
+            {
+                await Step("Independent empty value excludes placeholder text and supports complete live/final updates",()=>EmptyPlaceholderContinuation(),continueAfterFailure:true);
+                await Step("Exact suffix lookup resumes live revisions when character movement is unreliable",ExactFindTextContinuation,continueAfterFailure:true);
+            }
+            if(!baselineOnly&&!placeholderOnly)
             {
                 await Step("Clipboard and Unicode keyboard preserve short owned revisions, append and withdrawal",()=>PairedTextBoxTransport(longText:false),continueAfterFailure:true);
                 await Step("Clipboard (2 s) and Unicode keyboard (30 s diagnostic) preserve 3360 UTF-16 units",()=>PairedTextBoxTransport(longText:true),continueAfterFailure:true);

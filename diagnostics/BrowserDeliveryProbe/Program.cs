@@ -18,12 +18,12 @@ static class Program
     const BindingFlags StaticMembers=BindingFlags.Static|BindingFlags.NonPublic;
     const string Payload="Native browser paste č. 42 😀";
     static readonly JsonSerializerOptions Json=new(){WriteIndented=true};
-    sealed record Options(nint Window,string Nonce,string Control,string Report,int ArmMilliseconds)
+    sealed record Options(nint Window,string Nonce,string Control,string Report,int ArmMilliseconds,bool InspectOnly)
     {
         public string Name=>"Local Dictation fixture "+Control+" "+Nonce;
         public string Id=>"ld-fixture-"+Control+"-"+Nonce;
-        public string Prefix=>"["+Control+":"+Nonce+"] before | ";
-        public string Baseline=>Prefix+" | after";
+        public string Prefix=>Control=="placeholder"?"":"["+Control+":"+Nonce+"] before | ";
+        public string Baseline=>Control=="placeholder"?"":Prefix+" | after";
         public string RecoverySignal=>Report+".restore";
     }
     sealed class Refused(string stage):Exception(stage);
@@ -35,6 +35,10 @@ static class Program
         public bool ScopedProductionInspectUsed {get;set;}
         public string Stage {get;set;}="arming";
         public string Control {get;set;}="";
+        public bool? ValuePatternSupported {get;set;}
+        public int? ControlValueLength {get;set;}
+        public bool? ValueEqualsDocument {get;set;}
+        public bool InspectionOnly {get;set;}
         public bool Passed {get;set;}
         public bool Refused {get;set;}
         public string? FailureType {get;set;}
@@ -60,9 +64,12 @@ static class Program
             var values=new Dictionary<string,string>(StringComparer.Ordinal);
             for(var i=0;i<args.Length;i+=2){if(i+1>=args.Length)throw new ArgumentException();values.Add(args[i],args[i+1]);}
             var nonce=values["--nonce"];var control=values["--control"];
-            if(!Regex.IsMatch(nonce,"^[0-9a-f]{32}$")||control is not("textarea" or "contenteditable"))throw new ArgumentException();
+            if(!Regex.IsMatch(nonce,"^[0-9a-f]{32}$")||control is not("textarea" or "contenteditable" or "placeholder"))throw new ArgumentException();
             options=new(new nint(long.Parse(values["--expected-window"])),nonce,control,Path.GetFullPath(values["--report"]),
-                values.TryGetValue("--arm-ms",out var milliseconds)?int.Parse(milliseconds):5000);
+                values.TryGetValue("--arm-ms",out var milliseconds)?int.Parse(milliseconds):5000,
+                values.TryGetValue("--mode",out var mode)&&mode=="inspect");
+            if(values.TryGetValue("--mode",out var selectedMode)&&selectedMode is not("inspect" or "paste"))throw new ArgumentException();
+            if(control=="placeholder"&&!options.InspectOnly)throw new ArgumentException();
             if(options.Window==0||options.ArmMilliseconds is <0 or >30000)throw new ArgumentException();
             Environment.SetEnvironmentVariable("LOCAL_DICTATION_HOME",Path.Combine(Path.GetDirectoryName(options.Report)!,"isolated-"+nonce));
         }
@@ -114,6 +121,14 @@ static class Program
         var state=((string Text,int Caret,TextPattern Pattern,System.Windows.Automation.Text.TextPatternRange Selection))inspect.Invoke(null,[element,null])!;
         result.ScopedProductionInspectUsed=true;result.BeforeLength=state.Text.Length;result.BeforeCaret=state.Caret;
         result.ExactSyntheticBaseline=state.Text==options.Baseline||state.Text==options.Baseline+"\r\n"||state.Text==options.Baseline+"\n";
+        if(options.Control=="placeholder")result.ExactSyntheticBaseline=state.Text is "" or "\n" or "Write a message" or "Write a message\n";
+        result.ValuePatternSupported=element.TryGetCurrentPattern(ValuePattern.Pattern,out var valueObject);
+        if(valueObject is ValuePattern valuePattern)
+        {
+            var controlValue=valuePattern.Current.Value;
+            result.ControlValueLength=controlValue.Length;
+            result.ValueEqualsDocument=controlValue==state.Text;
+        }
         if(!result.ExactSyntheticBaseline||state.Caret!=options.Prefix.Length)throw new Refused("exact-baseline-caret");
         token.ThrowIfCancellationRequested();
         if(Identity(Scope(options,result))!=identity)throw new Refused("field-identity-raced");
@@ -129,6 +144,11 @@ static class Program
             Write(options,result);await Task.Delay(options.ArmMilliseconds);
             result.Stage="scoped-capture";
             delivery=await worker.Run(token=>CaptureScoped(options,result,token));
+            if(options.InspectOnly)
+            {
+                result.InspectionOnly=true;result.Passed=true;result.Stage="inspection-complete";
+                Write(options,result);return 0;
+            }
             observer=new GlobalInput{ShortcutEnabled=false,SessionActive=false};
             observer.UserEdited+=change=>{if(!change.FocusOnly||!delivery.OwnsProgrammaticFocus(change.RootWindow))delivery.Suspend();};
             result.Stage="single-native-apply";

@@ -732,6 +732,9 @@ internal static class Program
     sealed class FakeDelivery : ITextDelivery
     {
         public nint Window=>0;
+        public bool HasTransportFailure=>false;
+        public bool IsOriginalFieldCurrent(CancellationToken token){token.ThrowIfCancellationRequested();return !IsConflict;}
+        public bool Apply(string next,CancellationToken token,DeliveryIntent intent)=>Apply(next,token,intent.RestoreFocus);
         public bool IsConflict {get;private set;}
         public string Reason {get;private set;}="";
         public string InsertedText {get;private set;}="";

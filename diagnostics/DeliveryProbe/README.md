@@ -457,3 +457,23 @@ Use -AppDirectory for a separately published candidate and -DataRoot for an
 explicit isolated test data root. The defaults preserve the installed C:\Git
 application and C:\AI\LocalDictation settings/data. A later ordinary restart
 without this launcher does not inherit its process-only diagnostic opt-in.
+
+
+## Empty-field and range continuation regressions
+
+The baseline-only suite includes lease-scoped empty-value checks for a generated
+placeholder and a virtual LF. It covers pause/continue, earlier-word correction,
+withdrawal and final delivery, plus contradictory ValuePattern results that must
+not hide foreign text or acknowledge a failed Delete. Real words, whitespace,
+absent ValuePattern and read-only ValuePattern remain protected. The synthetic
+initial-only projection retires when real text appears and is reset explicitly
+before a fresh capture case; it must not reappear during an owned withdrawal.
+
+An exact-suffix case rejects character-based range construction and requires
+backward FindText to prove the complete prefix/suffix and original caret before
+replacement. Surrounding text must remain unchanged.
+
+The --placeholder-only mode selects the two focused placeholder/range cases.
+These cases compile. Current native GREEN is blocked by Defender ASR on the new
+diagnostic EXE. Do not run it through another host, rename it or change security
+controls. A successful build is not native/application acceptance.

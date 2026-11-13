@@ -14,7 +14,7 @@ public sealed class AppController : IDisposable
     sealed class Run(Settings settings)
     {
         public Settings Settings=settings;
-        public ReviewDocument Review=new() {PrimaryModel=settings.PrimaryModel,
+        public ReviewDocument Review=new() {PrimaryModel=settings.PrimaryModel,RequestedLanguage=settings.Language,
             VerificationModel=settings.VerifyAfterRecording?settings.VerificationModel:null,
             Reason="Interrupted recording. Some draft text may already be in your destination."};
         public CancellationTokenSource Cancel=new();
@@ -22,11 +22,18 @@ public sealed class AppController : IDisposable
         public SessionStream Stream=new();
         public ITextDelivery? Delivery;
         public bool FinalOnlyDestination;
+        public string? DestinationProcessName;
+        public CompletionDestinationGate CompletionGate = new();
+        public Task FinishDestinationCheck = Task.CompletedTask;
+        public DestinationStamp FinishStamp;
         public DestinationStamp Destination;
         public bool CanDeliver,NeedsReview,PrimaryFinal,Completed,NormalCompletion,AutoInsertBlocked,Verifying,Closing,DestinationChecked,Recording=true;
         public DateTimeOffset Started=DateTimeOffset.Now;
         public string Text="";
         public string Stage="microphone",Failure="";
+        public Settings? RetrySettings;
+        public long ReplayBytes;
+        public TaskCompletionSource? LanguageSelection;
     }
 
     readonly ReviewStore store=new(Path.Combine(AppPaths.Data,"review"));
@@ -37,6 +44,12 @@ public sealed class AppController : IDisposable
     readonly DispatcherTimer reconnectTimer=new(){Interval=TimeSpan.FromSeconds(5)};
     bool refreshing;
     ReviewWindow? reviewWindow;
+    CompactReviewWindow? compactReviewWindow;
+    ClipboardRecoveryWindow? clipboardRecoveryWindow;
+    ITextDelivery? lastDeliveryTarget;
+    bool clipboardWasPending,checkingClipboard,drainingConfirmedPastes;
+    string lastClipboardRecoveryMessage="",lastRecoveryCheckMessage="";
+    DateTimeOffset clipboardPendingAt;
     readonly Dictionary<string,ITextDelivery> destinations=[];
     readonly HashSet<string> inserting=[];
     readonly Dictionary<string,ReviewDocument> canonicalReviews=[];
@@ -75,28 +88,157 @@ public sealed class AppController : IDisposable
     public string StateLabel {get;private set;}="Ready";
     public string DetailLabel {get;private set;}="";
     public string LatestText => active?.Text??BannerReview?.OutputText??lastTranscript;
+    public string VerificationPreviewText => active is {Recording:false,Settings.VerifyAfterRecording:true} run?run.Text:"";
+    public bool IsVerifying => active?.Verifying==true;
     public bool LiveTranscription=>active?.Settings.Live??Settings.Live;
     public string DeliveryMessage=>ClipboardRecovery.HasPending?ClipboardRecovery.Message:active is {} run
-        ?run.FinalOnlyDestination&&!run.AutoInsertBlocked?"Live text stays in this banner. Finished text returns to the original Outlook cursor after any required wording choices.":
+        ?run.FinalOnlyDestination&&!run.AutoInsertBlocked?"Finished text is inserted at the original cursor after recording.":
             run.CanDeliver?"Text is also inserted at the original cursor.":run.Review.Reason
         :BannerReview?.Reason??lastDeliveryMessage;
-    public string RecordingDeliveryLabel=>active is {FinalOnlyDestination:true}?"Outlook · Inserts after Finish":
+    public string RecordingDeliveryLabel=>active is {FinalOnlyDestination:true}?"Inserts after Finish":
         AtCursor?(LiveTranscription?"Live text · At your cursor":"After Finish · At your cursor"):"Review mode · Text stays here";
     public float Level => active?.Capture.Level??0;
     public bool IsRecording => active?.Recording==true;
     public bool AtCursor=>active?.CanDeliver==true;
     public bool IsBusy => active!=null;
+    public bool HasClipboardRecovery=>ClipboardRecovery.HasPending;
+    public bool HasAcknowledgedClipboardBackup=>ClipboardRecovery.HasAcknowledgedBackup;
+    public bool IsCheckingClipboard=>checkingClipboard;
+    public string ClipboardRecoveryStatus=>lastRecoveryCheckMessage.Length>0?lastRecoveryCheckMessage:ClipboardRecovery.Message;
+    public string ClipboardRecoveryDetails=>lastDeliveryTarget is WindowsTextDelivery {LastDiagnostic:{} diagnostic}
+        ?JsonSerializer.Serialize(diagnostic,new JsonSerializerOptions{WriteIndented=true})
+        :"No delivery metadata is available in this session.";
     public bool CanRestoreClipboard=>!IsBusy&&!IsApplyingReview&&inserting.Count==0&&!restoringClipboard&&ClipboardRecovery.HasPending;
     public bool ShowBanner => ClipboardRecovery.HasPending&&Volatile.Read(ref clipboardRecoveryVersion)>dismissedClipboardRecoveryVersion||active is {DestinationChecked:true}||BannerReview!=null||DateTimeOffset.Now<hideAt;
     public string MicrophoneLabel=>active?.Capture.DeviceName??"Microphone";
     public string ModelLabel=>Models.FirstOrDefault(m=>m.Id==(active?.Settings.PrimaryModel??Settings.PrimaryModel))?.Name??Settings.PrimaryModel;
-    public string ElapsedLabel=>active is {} run?TimeSpan.FromSeconds(run.Capture.CapturedBytes/32000.0).ToString(@"mm\:ss"):"";
+    string BannerModelId=>active is {Verifying:true,Settings.VerificationModel:{} verifier}?verifier:
+        active?.Settings.PrimaryModel??(BannerReview is {PrimaryModel:{Length:>0}} review?review.PrimaryModel:Settings.PrimaryModel);
+    public string BannerModelLabel=>BannerModelId switch
+    {
+        "kinit/whisper-large-v3-turbo-sk"=>"KInIT Turbo SK",
+        "openai/whisper-large-v3-turbo"=>"OpenAI Turbo",
+        "openai/whisper-large-v3"=>"OpenAI Large-v3",
+        "openai/whisper-tiny"=>"Whisper Tiny",
+        _=>Models.FirstOrDefault(m=>m.Id==BannerModelId)?.Name??BannerModelId.Split('/').Last()
+    };
+    public string BannerModelDetails=>(IsVerifying?"Verification":"Dictation")+" model: "+
+        (Models.FirstOrDefault(m=>m.Id==BannerModelId)?.Name??BannerModelId);
+    public string ElapsedLabel=>active is {} run?TimeSpan.FromSeconds((run.ReplayBytes>0?run.ReplayBytes:run.Capture.CapturedBytes)/32000.0).ToString(@"mm\:ss"):"";
+    public string InputLanguageLabel
+    {
+        get
+        {
+            var doc=active?.Review??BannerReview;
+            var settings=active?.Settings??Settings;
+            var model=Models.FirstOrDefault(m=>m.Id==(doc?.PrimaryModel??settings.PrimaryModel));
+            var label=LanguagePolicy.Label(doc?.RequestedLanguage is {Length:>0} requested?requested:settings.Language,doc?.Language,doc?.LanguageMode,model);
+            return active?.RetrySettings is {} retry?label+" → "+retry.Language.ToUpperInvariant():label;
+        }
+    }
+    public bool CanChangeInputLanguage=>active is {Closing:false}||BannerReview is {} doc&&History.Any(e=>e.Id==doc.Id);
+    LanguageWindow? languageWindow;
+    public void ShowInputLanguage(ReviewDocument? document=null)
+    {
+        if(languageWindow!=null){languageWindow.Activate();return;}
+        var run=document==null?active:null;
+        var source=document??run?.Review??BannerReview;
+        if(source==null||run==null&&!History.Any(e=>e.Id==source.Id))return;
+        if(run!=null)run.LanguageSelection=new(TaskCreationOptions.RunContinuationsAsynchronously);
+        languageWindow=new LanguageWindow(this,source.PrimaryModel,run?.Recording==true,
+            code=>ChangeInputLanguage(code,run,source),source.RequestedLanguage.Length>0?source.RequestedLanguage:Settings.Language,
+            run?.Settings.PreferredLanguages??Settings.PreferredLanguages);
+        languageWindow.Closed+=(_,_)=>{languageWindow=null;run?.LanguageSelection?.TrySetResult();};
+        languageWindow.Show();
+    }
+    Settings LanguageRetrySettings(string currentModel,string code)
+    {
+        var selected=LanguagePolicy.RetryModel(Models,currentModel,code)??throw new ArgumentException("No installed model supports this language.");
+        var value=JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(active?.Settings??Settings))!;
+        value.Language=code;value.PrimaryModel=selected.Id;value.Live=false;
+        LanguagePolicy.ValidateForModel(selected,code,value.PreferredLanguages);
+        if(value.VerifyAfterRecording)
+        {
+            var choices=Models.Where(m=>m.Id!=selected.Id&&ModelEligibility.CanVerify(m,code,selected,value.PreferredLanguages)).ToArray();
+            var verifier=choices.FirstOrDefault(m=>m.Id==value.VerificationModel)??choices.FirstOrDefault();
+            if(verifier==null)throw new ArgumentException("No distinct verification model supports this language. Change verification in Settings first.");
+            value.VerificationModel=verifier.Id;
+        }
+        return value;
+    }
+    string? ChangeInputLanguage(string code,Run? expected,ReviewDocument source)
+    {
+        try
+        {
+            if(expected!=null)
+            {
+                if(active!=expected)return "This dictation has finished. Change its language from History.";
+                expected.RetrySettings=LanguageRetrySettings(expected.Settings.PrimaryModel,code);
+                if(!expected.Recording&&expected.PrimaryFinal)expected.Cancel.Cancel();
+                Changed?.Invoke();return null;
+            }
+            if(IsBusy||IsApplyingReview||ClipboardRecovery.HasPending)return "Finish the current operation before retranscribing a saved recording.";
+            var settings=LanguageRetrySettings(source.PrimaryModel,code);
+            byte[]? wave=null;
+            try
+            {
+                wave=HistoryAudio(source.Id);
+                var pcm=RecordedAudio.PcmFromWave(wave);
+                var run=new Run(settings){Recording=false,DestinationChecked=true,AutoInsertBlocked=true,ReplayBytes=pcm.Length};
+                run.Review.RetranscriptionOf=source.Id;
+                run.Review.Reason="Retranscribed from the original recording. Choose destination to insert this new version.";
+                active=run;input.SessionActive=true;bannerProgress=null;hideAt=DateTimeOffset.MinValue;
+                StateLabel="Retranscribing";
+                TrackRecording(Record(run,pcm));Changed?.Invoke();return null;
+            }
+            finally{if(wave!=null)System.Security.Cryptography.CryptographicOperations.ZeroMemory(wave);}
+        }
+        catch(Exception error) when(error is ArgumentException or IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {return error.Message;}
+    }
+    void TrackRecording(Task recording)
+    {
+        recordingTasks.Add(recording);_=ObserveRecording(recording);
+    }
+    bool TransferReplayDestination(ReviewDocument previous,ReviewDocument next,ITextDelivery target)
+    {
+        // Consume any earlier proven insertion before handing over its carrier.
+        DrainConfirmedPastes();
+        foreach(var alias in destinations.Where(e=>ReferenceEquals(e.Value,target)).Select(e=>e.Key).ToArray())destinations.Remove(alias);
+        if(previous.InsertedAt!=null||target.IsConflict)return false;
+        destinations[next.Id]=target;return true;
+    }
+    async Task ReplayAtOriginalDestination(Run previous,byte[] pcm)
+    {
+        var settings=previous.RetrySettings!;
+        var run=new Run(settings){Recording=false,DestinationChecked=true,ReplayBytes=pcm.Length,
+            Delivery=previous.Delivery,Destination=previous.Destination,DestinationProcessName=previous.DestinationProcessName,
+            FinalOnlyDestination=previous.FinalOnlyDestination,CompletionGate=previous.CompletionGate,
+            FinishDestinationCheck=previous.FinishDestinationCheck,FinishStamp=previous.FinishStamp,
+            AutoInsertBlocked=previous.AutoInsertBlocked};
+        run.Review.RetranscriptionOf=previous.Review.Id;
+        run.Review.DraftWithdrawn=previous.Review.DraftWithdrawn;
+        if(run.Delivery!=null&&!TransferReplayDestination(previous.Review,run.Review,run.Delivery))
+        {run.Delivery=null;run.AutoInsertBlocked=true;}
+        active=run;StateLabel="Retranscribing";
+        if(History.Any(e=>e.Id==previous.Review.Id))
+        {
+            // The source remains in protected History; it needs no duplicate pending action.
+            try{pending.Dismiss(previous.Review.Id);}
+            catch(Exception error) when(error is IOException or UnauthorizedAccessException){Diagnostics.Error("source Review cleanup",error);}
+        }
+        Changed?.Invoke();
+        // Record owns and clears this private replay copy. Original history stays protected.
+        await Record(run,pcm.ToArray());
+    }
+
     public event Action? Changed;
 
     public AppController(bool noHotkey)
     {
         this.noHotkey=noHotkey;
         Settings=Settings.Load();
+        Settings.FinalOnlyApplications ??= [];
         Settings.ServerUri();
         ThemeManager.Apply(Settings.Theme);
         History=historyStore.Load();
@@ -121,7 +263,7 @@ public sealed class AppController : IDisposable
         menu.Items.Add("Settings",null,(_,_)=>ShowSettings());
         menu.Items.Add("Pending Review",null,(_,_)=>OpenLatestReview());
         menu.Items.Add("History",null,(_,_)=>ShowHistory());
-        clipboardRecoveryAction=(Forms.ToolStripMenuItem)menu.Items.Add("Restore previous clipboard",null,async(_,_)=>await RestoreClipboardAfterInspection());
+        clipboardRecoveryAction=(Forms.ToolStripMenuItem)menu.Items.Add("Resolve clipboard recovery…",null,(_,_)=>ShowClipboardRecoveryDetails());
         clipboardRecoveryAction.Enabled=CanRestoreClipboard;
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Exit",null,(_,_)=>Exit());
@@ -138,7 +280,7 @@ public sealed class AppController : IDisposable
             {
                 var elapsed=TimeSpan.FromSeconds(active.Capture.CapturedBytes/32000.0);
                 DetailLabel=$"{(int)elapsed.TotalMinutes:00}:{elapsed.Seconds:00} · {Models.FirstOrDefault(m=>m.Id==active.Settings.PrimaryModel)?.Name??active.Settings.PrimaryModel}"+
-                    (active.FinalOnlyDestination?" · Outlook · Inserts after Finish":active.CanDeliver?" · At cursor":" · Review")+
+                    (active.FinalOnlyDestination?" · Inserts after Finish":active.CanDeliver?" · At cursor":" · Paused")+
                     " · "+active.Capture.DeviceName+(active.Recording?" · Mic active":" · Mic stopped");
             }
             clipboardRecoveryAction.Enabled=CanRestoreClipboard;
@@ -149,6 +291,9 @@ public sealed class AppController : IDisposable
         reconnectTimer.Start();
         resumeTimer.Tick+=async(_,_)=>
         {
+            DrainConfirmedPastes();
+            if(ClipboardRecovery.HasPending)
+            {await RecheckClipboardRecoveryAsync(automatic:true);return;}
             if(active is {Recording:true,CanDeliver:false,Delivery:{} target} run&&run.Settings.InsertAtCursor&&!target.IsConflict&&
                 WindowsTextDelivery.ForegroundWindow==target.Window)await Deliver(run);
         };
@@ -164,7 +309,7 @@ public sealed class AppController : IDisposable
             if(disposed)return;
             clipboardRecoveryAction.Enabled=CanRestoreClipboard;
             if(ClipboardRecovery.HasPending&&version>dismissedClipboardRecoveryVersion)ShowClipboardRecovery();
-            else{Changed?.Invoke();banner.Refresh();}
+            else{if(!ClipboardRecovery.HasPending)ClearClipboardRecoveryStatus();Changed?.Invoke();banner.Refresh();}
         });
     }
 
@@ -172,15 +317,110 @@ public sealed class AppController : IDisposable
     {
         dismissedClipboardRecoveryVersion=-1;
         var message=ClipboardRecovery.Message;
+        if(!clipboardWasPending){clipboardPendingAt=DateTimeOffset.UtcNow;lastRecoveryCheckMessage="";}
+        clipboardWasPending=true;lastClipboardRecoveryMessage=message;
         ConnectionMessage=message;DetailLabel=message;lastDeliveryMessage=message;
         if(BannerReview is {} document){document.Reason=message;SaveReview(document);}
         else if(!IsBusy)StateLabel="Clipboard recovery";
         Changed?.Invoke();banner.Refresh();
     }
 
+    void ClearClipboardRecoveryStatus()
+    {
+        if(!clipboardWasPending)return;
+        clipboardWasPending=false;lastRecoveryCheckMessage="";
+        if(ConnectionMessage==lastClipboardRecoveryMessage)
+            ConnectionMessage=Connected?"Ready · Local transcription":"Local transcription service is offline.";
+        if(DetailLabel==lastClipboardRecoveryMessage)DetailLabel="The clipboard is no longer held. Your pending text is preserved.";
+        if(lastDeliveryMessage==lastClipboardRecoveryMessage)lastDeliveryMessage=DetailLabel;
+        if(StateLabel=="Clipboard recovery")StateLabel=BannerReview!=null?"Text ready":"Ready";
+    }
+
+    public void ShowClipboardRecoveryDetails()
+    {
+        if(!ClipboardRecovery.HasPending)return;
+        if(clipboardRecoveryWindow==null)
+        {
+            var window=new ClipboardRecoveryWindow(this);
+            clipboardRecoveryWindow=window;
+            window.Closed+=(_,_)=>{if(clipboardRecoveryWindow==window)clipboardRecoveryWindow=null;};
+        }
+        clipboardRecoveryWindow.Show();clipboardRecoveryWindow.Activate();
+    }
+
+    void DrainConfirmedPastes()
+    {
+        if(drainingConfirmedPastes)return;
+        drainingConfirmedPastes=true;
+        try
+        {
+            foreach(var entry in destinations.ToArray())
+            {
+                if(entry.Value is not WindowsTextDelivery target)continue;
+                while(target.ConfirmedPendingPaste is {} confirmation)
+                {
+                    lastDeliveryTarget=target;
+                    if(confirmation.IsFinal&&canonicalReviews.TryGetValue(entry.Key,out var document)&&document.InsertedAt==null)
+                    {
+                        if(document.CanInsert&&document.OutputText==confirmation.Text)
+                            RecordSuccessfulInsertion(document,"The original insertion was confirmed. Nothing was sent.");
+                        else
+                        {
+                            document.Reason="An earlier version was inserted. Your later edits are kept for explicit replacement.";
+                            SaveReview(document);
+                        }
+                    }
+                    // Drain every proven fact before removal or clipboard restoration.
+                    target.ClearConfirmedPendingPaste(confirmation);
+                }
+            }
+        }
+        finally{drainingConfirmedPastes=false;}
+    }
+
+    public async Task RecheckClipboardRecoveryAsync(bool automatic=false)
+    {
+        DrainConfirmedPastes();
+        if(checkingClipboard||restoringClipboard||deliveryBusy||inserting.Count>0||!ClipboardRecovery.HasPending)return;
+        if(automatic&&DateTimeOffset.UtcNow-clipboardPendingAt>TimeSpan.FromSeconds(10))return;
+        var candidates=destinations.Where(entry=>entry.Value is WindowsTextDelivery target&&target.HasPendingAcknowledgement).ToArray();
+        if(candidates.Length==0&&!ClipboardRecovery.HasAcknowledgedBackup)
+        {
+            if(!automatic){lastRecoveryCheckMessage="The insertion cannot be confirmed safely. Inspect the destination before restoring the clipboard.";Changed?.Invoke();}
+            return;
+        }
+        checkingClipboard=true;Changed?.Invoke();
+        try
+        {
+            if(await Task.Run(ClipboardRecovery.TryRestoreAcknowledged))return;
+            foreach(var entry in candidates)
+            {
+                var target=(WindowsTextDelivery)entry.Value;
+                var confirmation=await automation.Run(token=>target.TryConfirmPendingPaste(token));
+                if(confirmation is null)continue;
+                lastDeliveryTarget=target;
+                DrainConfirmedPastes();
+                // Clipboard restoration runs independently only after the receipt was handled.
+                await Task.Run(ClipboardRecovery.TryRestoreAcknowledged);
+                break;
+            }
+            if(!automatic&&ClipboardRecovery.HasPending)
+                lastRecoveryCheckMessage="The original paste remains unconfirmed. Inspect the destination before restoring the clipboard.";
+        }
+        catch(Exception error) when(error is InvalidOperationException or OperationCanceledException)
+        {lastRecoveryCheckMessage="The destination could not answer. Your clipboard backup and transcript are still kept.";}
+        finally
+        {
+            DrainConfirmedPastes();
+            checkingClipboard=false;
+            if(!ClipboardRecovery.HasPending)ClearClipboardRecoveryStatus();
+            Changed?.Invoke();banner.Refresh();
+        }
+    }
+
     public async Task RestoreClipboardAfterInspection()
     {
-        if(!CanRestoreClipboard)return;
+        if(checkingClipboard||!CanRestoreClipboard)return;
         ShowClipboardRecovery();
         if(!CanRestoreClipboard)return;
         restoringClipboard=true;clipboardRecoveryAction.Enabled=false;
@@ -196,7 +436,7 @@ public sealed class AppController : IDisposable
         catch(Exception error)
         {
             Diagnostics.Error("clipboard recovery",error);
-            ConnectionMessage="The previous clipboard is still held. Inspect the destination and retry Restore previous clipboard from the tray.";
+            ConnectionMessage="The previous clipboard is still held. Open Resolve clipboard recovery and retry after inspecting the destination.";
             DetailLabel=lastDeliveryMessage=ConnectionMessage;
         }
         finally
@@ -216,7 +456,9 @@ public sealed class AppController : IDisposable
         if(change.FocusOnly&&run.Delivery?.OwnsProgrammaticFocus(change.RootWindow)==true)return;
         System.Windows.Application.Current.Dispatcher.BeginInvoke(()=>
         {
-            if(active!=run||!run.CanDeliver)return;
+            if(active!=run)return;
+            run.CompletionGate.Interrupt();
+            if(!run.CanDeliver)return;
             run.CanDeliver=false;run.NeedsReview=true;run.Review.Reason=change.Reason;
             SaveReview(run.Review);Changed?.Invoke();banner.Refresh();
         });
@@ -224,15 +466,21 @@ public sealed class AppController : IDisposable
 
     async Task Deliver(Run run,bool wait=false)
     {
-        if(run.FinalOnlyDestination||!run.Settings.InsertAtCursor||run.Delivery==null||run.PrimaryFinal&&run.Settings.VerifyAfterRecording)return;
+        if(!run.Recording||run.CompletionGate.IsFinishing||run.FinalOnlyDestination||!run.Settings.InsertAtCursor||run.Delivery==null||run.PrimaryFinal&&run.Settings.VerifyAfterRecording)return;
         if(wait)await deliveryGate.WaitAsync();
         else if(!await deliveryGate.WaitAsync(0))return;
         deliveryBusy=true;
+        bool CanBeginLive()=>ReferenceEquals(Volatile.Read(ref active),run)&&
+            Volatile.Read(ref run.Recording)&&run.CompletionGate.CanBeginLiveDelivery;
         try
         {
+            // Finish revokes work waiting on either the delivery gate or UIA worker.
+            if(!CanBeginLive())return;
             var text=run.Text;
-            var inserted=await automation.Run(token=>run.Delivery.Apply(text,token));
-            if(active!=run)return;
+            lastDeliveryTarget=run.Delivery;
+            var inserted=await automation.Run(token=>CanBeginLive()&&run.Delivery.Apply(text,token));
+            if(!inserted)RememberLiveCompatibilityFailure(run);
+            if(!CanBeginLive())return;
             run.CanDeliver=inserted;
             if(inserted)
             {
@@ -245,7 +493,11 @@ public sealed class AppController : IDisposable
                 SaveReview(run.Review);
             }
         }
-        catch(Exception){run.CanDeliver=false;run.NeedsReview=true;run.Review.Reason="Cursor checking is unavailable. Your transcript is preserved in Review.";}
+        catch(Exception error)
+        {
+            Diagnostics.Error("live cursor check",error);
+            run.CanDeliver=false;run.NeedsReview=true;run.Review.Reason="Cursor checking is unavailable. Your transcript is preserved in Review.";
+        }
         finally{deliveryBusy=false;deliveryGate.Release();Changed?.Invoke();}
     }
 
@@ -263,7 +515,7 @@ public sealed class AppController : IDisposable
             if(await automation.Run(token=>run.Delivery.Apply("",token,restoreFocus)))
             {
                 run.Review.DraftWithdrawn=true;run.CanDeliver=false;
-                run.Review.Reason="The live draft is held here for checking. Choose the wording; the last choice returns it to the original cursor.";
+                run.Review.Reason="The first transcript is kept in the banner while verification runs. Matching text returns to the original cursor; differences open Review.";
                 SaveReview(run.Review);
             }
         }
@@ -271,8 +523,9 @@ public sealed class AppController : IDisposable
         finally{deliveryBusy=false;deliveryGate.Release();}
     }
 
-    async Task<ReviewInsertionResult> AcceptReview(ReviewDocument document)
+    async Task<ReviewInsertionResult> AcceptReview(ReviewDocument document,bool restoreFocus=true,DestinationStamp? automaticStamp=null)
     {
+        DrainConfirmedPastes();
         document=CanonicalReview(document);
         if(document.InsertedAt!=null)return new(true,"This Review was already inserted.");
         if(ClipboardRecovery.HasPending)return new(false,ClipboardRecovery.Message);
@@ -286,39 +539,62 @@ public sealed class AppController : IDisposable
             SaveReview(document);
             if(pending.UnsavedIds.Contains(document.Id))return new(false,"Protected saving failed. Your choices are preserved in this window; fix storage before inserting.");
             bool inserted;
-            try{inserted=await automation.Run(token=>target.Apply(document.OutputText,token,true),TimeSpan.FromSeconds(5));}
-            catch(Exception){inserted=false;}
-            if(!inserted)return new(false,target.Reason.Length>0?target.Reason:"The original destination could not be validated. Choose another destination.");
-            // Persist the receipt before cleanup. A cleanup failure must never trigger another insertion.
-            document.InsertedAt=DateTimeOffset.UtcNow;document.DraftWithdrawn=false;
-            var deliveryWarning=target.Reason;
-            lastTranscript=document.OutputText;lastDeliveryMessage=deliveryWarning.Length>0?deliveryWarning:"Finished text was inserted at the original cursor.";
-            SaveReview(document);
-            if(BannerReview?.Id==document.Id)bannerProgress=null;
-            if(pending.UnsavedIds.Contains(document.Id))
-                ConnectionMessage="Text was inserted, but its receipt could not be saved. Pending Review is preserved; do not insert it again after restarting.";
-            else
+            lastDeliveryTarget=target;
+            try{inserted=await automation.Run(token=>
             {
-                try{DismissReview(document.Id);}
-                catch(Exception){ConnectionMessage="Text was inserted. Pending cleanup failed; this Review is marked as already inserted.";}
-            }
-            placementReview=null;StateLabel="Inserted";DetailLabel=deliveryWarning.Length>0?deliveryWarning:"Reviewed text inserted. Nothing was submitted.";
-            hideAt=DateTimeOffset.Now.AddSeconds(4);Changed?.Invoke();
-            return new(true,deliveryWarning.Length>0?deliveryWarning:"Reviewed text inserted.");
+                if(automaticStamp is {} stamp&&!input.Epoch.CanAdopt(stamp,(long)WindowsTextDelivery.ForegroundWindow))return false;
+                return target.Apply(document.OutputText,token,restoreFocus?DeliveryIntent.ExplicitFinal:DeliveryIntent.AutomaticFinal);
+            },TimeSpan.FromSeconds(5));}
+            catch(Exception){inserted=false;}
+            DrainConfirmedPastes();
+            if(document.InsertedAt!=null)return new(true,"The original insertion was confirmed. Nothing was sent.");
+            if(!inserted)return new(false,target.Reason.Length>0?target.Reason:"The original destination could not be validated. Choose another destination.");
+            RecordSuccessfulInsertion(document,target.Reason);
+            return new(true,target.Reason.Length>0?target.Reason:"Reviewed text inserted.");
         }
         finally{inserting.Remove(document.Id);Changed?.Invoke();}
     }
 
-    void ShowBannerReview(ReviewDocument document)
+    void RecordSuccessfulInsertion(ReviewDocument document,string deliveryWarning)
+    {
+        // Persist the receipt before cleanup. A cleanup failure must never trigger another insertion.
+        document.InsertedAt=DateTimeOffset.UtcNow;document.DraftWithdrawn=false;
+        lastTranscript=document.OutputText;lastDeliveryMessage=deliveryWarning.Length>0?deliveryWarning:"Finished text was inserted at the original cursor.";
+        SaveReview(document);
+        if(BannerReview?.Id==document.Id)bannerProgress=null;
+        if(pending.UnsavedIds.Contains(document.Id))
+            ConnectionMessage="Text was inserted, but its receipt could not be saved. Pending Review is preserved; do not insert it again after restarting.";
+        else
+        {
+            try{DismissReview(document.Id);}
+            catch(Exception){ConnectionMessage="Text was inserted. Pending cleanup failed; this Review is marked as already inserted.";}
+        }
+        placementReview=null;StateLabel="Inserted";DetailLabel=deliveryWarning.Length>0?deliveryWarning:"Reviewed text inserted. Nothing was submitted.";
+        compactReviewWindow?.Close();
+        hideAt=DateTimeOffset.MinValue;Changed?.Invoke();
+    }
+
+    void ShowBannerReview(ReviewDocument document,bool openEditor=false)
     {
         if(ClipboardRecovery.HasPending)document.Reason=ClipboardRecovery.Message;
         placementReview=null;
         if(reviewWindow?.IsApplying==true||IsApplyingReview)return;
         reviewWindow?.Close();
         bannerProgress=new CompactReviewProgress(document);
-        StateLabel="Review";DetailLabel="Choose the correct wording. The final choice inserts the completed text.";
+        StateLabel=document.UnresolvedCount>0?"Review":"Ready to insert";
+        DetailLabel=document.UnresolvedCount>0?"Choose the wording in Review.":"Your text is saved. Use Insert when you are ready.";
         hideAt=DateTimeOffset.MinValue;
         Changed?.Invoke();banner.Refresh();
+        if(openEditor)
+        {
+            if(compactReviewWindow==null)
+            {
+                var window=new CompactReviewWindow(this);
+                compactReviewWindow=window;
+                window.Closed+=(_,_)=>{if(compactReviewWindow==window)compactReviewWindow=null;};
+            }
+            compactReviewWindow.Show();compactReviewWindow.Activate();
+        }
     }
 
     public void SelectBannerPiece(string id)
@@ -388,13 +664,15 @@ public sealed class AppController : IDisposable
     public void OpenBannerDetails()
     {
         if(IsBusy||BannerReview is not {} document||IsApplyingReview)return;
+        compactReviewWindow?.Close();
         bannerProgress=null;Changed?.Invoke();banner.Refresh();
         OpenReviewDetails(document);
     }
 
     void ChooseReviewDestination(ReviewDocument document)
     {
-        if(ClipboardRecovery.HasPending){ShowClipboardRecovery();return;}
+        DrainConfirmedPastes();
+        if(ClipboardRecovery.HasPending){ShowClipboardRecovery();ShowClipboardRecoveryDetails();return;}
         if(IsBusy||!document.CanInsert){reviewWindow?.ShowStatus("Finish the current recording and resolve the choices before selecting a destination.");return;}
         if(IsApplyingReview)return;
         if(BannerReview?.Id==document.Id)bannerProgress=null;
@@ -414,7 +692,9 @@ public sealed class AppController : IDisposable
             var target=await automation.Run(token=>WindowsTextDelivery.Capture(token));
             if(!input.Epoch.CanAdopt(stamp,(long)WindowsTextDelivery.ForegroundWindow))
             {target.Invalidate();throw new InvalidOperationException();}
-            if(destinations.Remove(document.Id,out var previous))previous.Invalidate();
+            if(destinations.TryGetValue(document.Id,out var previous))previous.Invalidate();
+            DrainConfirmedPastes();
+            if(document.InsertedAt!=null){target.Invalidate();placementReview=null;return;}
             destinations[document.Id]=target;
             var result=await AcceptReview(document);
             if(result.Success){reviewWindow?.Close();placementReview=null;}
@@ -437,10 +717,62 @@ public sealed class AppController : IDisposable
 
     public void SaveSettings(Settings settings)
     {
+        if(Models.FirstOrDefault(m=>m.Id==settings.PrimaryModel) is {} model)
+        {
+            LanguagePolicy.ValidateForModel(model,settings.Language,settings.PreferredLanguages);
+            if(settings.VerifyAfterRecording&&!Models.Any(m=>m.Id==settings.VerificationModel&&m.Id!=model.Id&&ModelEligibility.CanVerify(m,settings.Language,model,settings.PreferredLanguages)))
+                throw new ArgumentException("Choose a verification model supporting every preferred Auto language supported by Dictation.");
+        }
         settings.Save();
         Settings=settings;
         ThemeManager.Apply(settings.Theme);
         RecheckShortcut();
+    }
+
+    public bool ResetDeliveryCompatibility()
+    {
+        var previous=Settings.FinalOnlyApplications;
+        Settings.FinalOnlyApplications=[];
+        try {Settings.Save();}
+        catch(Exception error) when(error is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            Settings.FinalOnlyApplications=previous;
+            ConnectionMessage="Could not save the delivery preference. Your previous choices were kept.";
+            Changed?.Invoke();return false;
+        }
+        Changed?.Invoke();return true;
+    }
+
+    void RememberLiveCompatibilityFailure(Run run)
+    {
+        if(run.FinalOnlyDestination||!run.Settings.InsertAtCursor||run.Delivery?.HasTransportFailure!=true)return;
+        if(!DestinationDeliveryPolicy.RememberLiveFailure(Settings.FinalOnlyApplications,run.DestinationProcessName,true))return;
+        try {Settings.Save();}
+        catch(Exception error) when(error is IOException or UnauthorizedAccessException or ArgumentException)
+        {ConnectionMessage="The safer delivery mode could not be saved. Your transcript is preserved.";}
+    }
+
+    void BeginFinish(Run run)
+    {
+        if(run.CompletionGate.IsFinishing)return;
+        run.CompletionGate.BeginFinish();
+        var stamp=input.Epoch.Capture((long)WindowsTextDelivery.ForegroundWindow);
+        run.FinishStamp=stamp;
+        run.FinishDestinationCheck=CheckFinishDestination(run,stamp);
+    }
+
+    async Task CheckFinishDestination(Run run,DestinationStamp stamp)
+    {
+        var current=false;
+        try
+        {
+            if(run.Delivery is {} target&&stamp.Window==(long)target.Window)
+                current=await automation.Run(token=>target.IsOriginalFieldCurrent(token));
+            current=current&&input.Epoch.CanAdopt(stamp,(long)WindowsTextDelivery.ForegroundWindow);
+        }
+        catch(Exception error) when(error is InvalidOperationException or OperationCanceledException)
+        {current=false;}
+        run.CompletionGate.ConfirmOriginalField(current);
     }
 
     public async Task RefreshConnection()
@@ -504,7 +836,7 @@ public sealed class AppController : IDisposable
     public void ToggleReview(){if(IsRecording)Stop();else Start(true);}
     public void Start(bool reviewOnly=false)
     {
-        if(ClipboardRecovery.HasPending){ShowClipboardRecovery();return;}
+        if(ClipboardRecovery.HasPending){ShowClipboardRecovery();ShowClipboardRecoveryDetails();return;}
         if(exiting||reviewWindow?.IsApplying==true||IsApplyingReview||inserting.Count>0||deliveryBusy||active?.Closing==true)return;
         placementReview=null;
         if(active!=null&&!active.Verifying)return;
@@ -514,17 +846,18 @@ public sealed class AppController : IDisposable
         if(reviewOnly)snapshot.InsertAtCursor=false;
         var model=Models.FirstOrDefault(m=>m.Id==snapshot.PrimaryModel&&m.Installed);
         if(model==null){ShowSettings();return;}
-        if(snapshot.VerifyAfterRecording&&!Models.Any(m=>m.Id==snapshot.VerificationModel&&ModelEligibility.CanVerify(m,snapshot.Language,model)&&m.Id!=model.Id))
+        try{LanguagePolicy.ValidateForModel(model,snapshot.Language,snapshot.PreferredLanguages);}
+        catch(ArgumentException error){ConnectionMessage=error.Message;ShowSettings();Changed?.Invoke();return;}
+        if(snapshot.VerifyAfterRecording&&!Models.Any(m=>m.Id==snapshot.VerificationModel&&ModelEligibility.CanVerify(m,snapshot.Language,model,snapshot.PreferredLanguages)&&m.Id!=model.Id))
         {ConnectionMessage="Choose an installed, runtime-tested verification model distinct from Dictation.";ShowSettings();Changed?.Invoke();return;}
+        languageWindow?.Close();
         if(active?.Verifying==true)active.Cancel.Cancel();
         var destination=input.Epoch.Capture((long)WindowsTextDelivery.ForegroundWindow);
         bannerAnchor=(nint)destination.Window;
         var run=new Run(snapshot){Destination=destination};
         active=run;input.SessionActive=true;
         StateLabel="Preparing";DetailLabel="Opening the selected microphone…";hideAt=DateTimeOffset.MinValue;
-        var recording=Record(run);
-        recordingTasks.Add(recording);
-        _=ObserveRecording(recording);
+        TrackRecording(Record(run));
     }
 
     async Task ObserveRecording(Task recording)
@@ -541,18 +874,19 @@ public sealed class AppController : IDisposable
     void ConfigureDestination(Run run,ITextDelivery delivery,string? processName)
     {
         run.Delivery=delivery;destinations[run.Review.Id]=delivery;
-        run.FinalOnlyDestination=DestinationDeliveryPolicy.InsertsAfterFinish(processName);
+        run.DestinationProcessName=processName;
+        run.FinalOnlyDestination=DestinationDeliveryPolicy.InsertsAfterFinish(processName,run.Settings.FinalOnlyApplications);
         run.CanDeliver=run.Settings.InsertAtCursor&&!run.FinalOnlyDestination;
         if(!run.CanDeliver)
         {
             run.NeedsReview=true;
             run.Review.Reason=run.FinalOnlyDestination
-                ?"Outlook keeps live text in this banner. The completed text will return to the original cursor."
+                ?"The completed text will be inserted at the original cursor after recording."
                 :"Preview only while recording. The completed text will return to the original cursor.";
         }
     }
 
-    async Task Record(Run run)
+    async Task Record(Run run,byte[]? replay=null)
     {
         Task? sender=null,receiver=null;
         try
@@ -560,11 +894,12 @@ public sealed class AppController : IDisposable
             run.Capture.Faulted+=message=>System.Windows.Application.Current.Dispatcher.BeginInvoke(()=>
             {if(active!=run)return;ConnectionMessage=message;run.Failure=message;run.NeedsReview=true;run.Cancel.Cancel();if(run.DestinationChecked)Changed?.Invoke();});
             run.Capture.LimitReached+=()=>System.Windows.Application.Current.Dispatcher.InvokeAsync(()=>
-            {if(active!=run)return;run.Recording=false;StateLabel="Finishing · recording limit";if(run.DestinationChecked)Changed?.Invoke();});
-            run.Capture.Start(run.Settings.MicrophoneId);
+            {if(active!=run)return;BeginFinish(run);run.Recording=false;StateLabel="Finishing · recording limit";if(run.DestinationChecked)Changed?.Invoke();});
+            if(replay==null)run.Capture.Start(run.Settings.MicrophoneId);
             run.Started=DateTimeOffset.Now;
             run.Stage="destination";
-            // Preview-only dictation still owns an original final destination.
+            // A replay retains its original guarded destination; it never captures a new field.
+            if(replay==null)
             {
                 try
                 {
@@ -583,19 +918,27 @@ public sealed class AppController : IDisposable
             if(active!=run)return;
             run.DestinationChecked=true;
             bannerProgress=null;
+            compactReviewWindow?.Close();
             reviewWindow?.Close();
             lastTranscript=lastDeliveryMessage="";
             Changed?.Invoke();banner.Refresh();
             run.Stage="connection";
+            if(replay!=null)
+            {
+                // transcript.final precedes server cleanup. Do not replay audio until
+                // the previous GPU owner has actually released admission.
+                using var api=new ApiClient(run.Settings);
+                await api.WaitForIdle(run.Cancel.Token);
+            }
             using(var timeout=CancellationTokenSource.CreateLinkedTokenSource(run.Cancel.Token))
             {
                 timeout.CancelAfter(TimeSpan.FromSeconds(20));
                 await run.Stream.Connect(run.Settings,timeout.Token);
             }
-            if(active==run)StateLabel="Listening";
+            if(active==run)StateLabel=replay==null?"Listening":"Retranscribing";
             run.Stage="audio or transcription";
             receiver=run.Stream.Receive(e=>Handle(run,e),run.Cancel.Token);
-            sender=SendAudio(run);
+            sender=replay==null?SendAudio(run):SendReplayAudio(run,replay);
             var first=await Task.WhenAny(receiver,sender);
             await first;
             if(first==receiver)
@@ -608,14 +951,15 @@ public sealed class AppController : IDisposable
         }
         catch(Exception ex)
         {
-            run.AutoInsertBlocked=true;
+            var languageRetry=run.RetrySettings!=null&&run.PrimaryFinal&&ex is OperationCanceledException;
+            run.AutoInsertBlocked|=!languageRetry;
             var cancelled=ex is OperationCanceledException&&run.Cancel.IsCancellationRequested&&run.Failure.Length==0;
             if(!cancelled)Diagnostics.Error(run.Stage,ex);
             run.NeedsReview=true;
             run.Review.Reason=ex is OperationCanceledException
                 ?"Recording or verification stopped. Received text is preserved; some text may already be inserted."
                 :"Transcription was interrupted. Received text is preserved; check your destination before pasting.";
-            if(active==run)
+            if(active==run&&!languageRetry)
             {
                 StateLabel=cancelled?"Stopped":"Unavailable";ConnectionMessage=cancelled?"Recording cancelled. Received text is preserved.":run.Failure.Length>0?run.Failure:
                     $"Recording stopped during {run.Stage} ({ex.GetType().Name}, 0x{ex.HResult:X8}). Retry or check the selected microphone.";
@@ -629,10 +973,10 @@ public sealed class AppController : IDisposable
             if(receiver!=null)try{await receiver;}catch(Exception){}
             await run.Stream.DisposeAsync();
             await run.Capture.DisposeAsync();
-            var audio=run.Capture.TakeAudio();
+            var audio=replay??run.Capture.TakeAudio();
             try
             {
-                if(run.Text.Length>0&&audio.Length>0)
+                if(audio.Length>0)
                 {
                     historyStore.Add(run.Review,audio);
                     History=historyStore.Load();
@@ -644,9 +988,18 @@ public sealed class AppController : IDisposable
                 run.Review.Reason="History could not save this recording. The transcript is kept in pending Review; audio recovery is unavailable.";
                 ConnectionMessage="History could not be saved. Check pending Review before exiting.";
             }
-            finally {System.Security.Cryptography.CryptographicOperations.ZeroMemory(audio);}
-            await CompleteRun(run);
-            run.Cancel.Dispose();
+            try
+            {
+                if(run.LanguageSelection is {} selection)await selection.Task;
+                if(active==run&&run.RetrySettings!=null&&audio.Length>0&&!exiting)
+                    await ReplayAtOriginalDestination(run,audio);
+                else await CompleteRun(run);
+            }
+            finally
+            {
+                System.Security.Cryptography.CryptographicOperations.ZeroMemory(audio);
+                run.Cancel.Dispose();
+            }
         }
     }
 
@@ -654,9 +1007,15 @@ public sealed class AppController : IDisposable
     {
         if(run.Text.Length>0)SaveReview(run.Review);
         if(active!=run)return;
+        BeginFinish(run);
+        await run.FinishDestinationCheck;
+        run.AutoInsertBlocked|=!run.CompletionGate.CanInsertAutomatically;
+        if(run.AutoInsertBlocked&&run.NormalCompletion)
+            run.Review.Reason="Your text is ready. Use Insert when you return to the original field.";
         if(run.Settings.VerifyAfterRecording&&run.Text.Length>0&&!run.Review.DraftWithdrawn&&!run.AutoInsertBlocked)
-            await WithdrawForReview(run,true);
+            await WithdrawForReview(run,false);
         if(active!=run)return;
+        run.AutoInsertBlocked|=!run.CompletionGate.CanInsertAutomatically||!input.Epoch.CanAdopt(run.FinishStamp,(long)WindowsTextDelivery.ForegroundWindow);
         lastTranscript=run.Text;lastDeliveryMessage=run.Review.Reason;
         active=null;input.SessionActive=false;hideAt=DateTimeOffset.Now.AddSeconds(6);
         if(run.Text.Length==0)
@@ -673,13 +1032,25 @@ public sealed class AppController : IDisposable
             {
                 // Ordinary completion and verification agreement return to the
                 // captured field before any interactive Review surface appears.
-                var result=await AcceptReview(run.Review);
+                var result=await AcceptReview(run.Review,false,run.FinishStamp);
                 if(result.Success){banner.Refresh();return;}
                 run.Review.Reason=result.Message;
             }
             else run.Review.Reason="The text is ready. Choose destination to place it in your selected field.";
         }
-        ShowBannerReview(run.Review);
+        ShowBannerReview(run.Review,action==CompactCompletionAction.ReviewDifferences);
+    }
+
+    async Task SendReplayAudio(Run run,byte[] pcm)
+    {
+        for(var offset=0;offset<pcm.Length;offset+=64000)
+        {
+            run.Cancel.Token.ThrowIfCancellationRequested();
+            var frame=pcm.AsSpan(offset,Math.Min(64000,pcm.Length-offset)).ToArray();
+            try{await run.Stream.SendAudio(frame,run.Cancel.Token);}
+            finally{System.Security.Cryptography.CryptographicOperations.ZeroMemory(frame);}
+        }
+        await run.Stream.Finish(run.Cancel.Token);
     }
 
     async Task SendAudio(Run run)
@@ -705,21 +1076,25 @@ public sealed class AppController : IDisposable
         }
         else if(type=="recording.limit_reached")
         {
-            run.Recording=false;run.Capture.Stop();
+            BeginFinish(run);run.Recording=false;run.Capture.Stop();
             if(active==run)StateLabel="Finishing · recording limit";
         }
         else if(type is "transcript.updated" or "transcript.final")
         {
             run.Text=e.GetProperty("text").GetString()??"";
+            if(e.TryGetProperty("language",out var detected)&&detected.ValueKind==JsonValueKind.String)run.Review.Language=detected.GetString();
+            if(e.TryGetProperty("language_mode",out var mode)&&mode.ValueKind==JsonValueKind.String)run.Review.LanguageMode=mode.GetString();
             run.Review.SetPrimary(run.Text);
             SaveReview(run.Review);
-            if(run.Delivery!=null)await Deliver(run,true);
             if(type=="transcript.final")
             {
+                BeginFinish(run);
                 run.PrimaryFinal=true;run.Recording=false;run.Capture.Stop();
-                if(run.Settings.VerifyAfterRecording)
+                if(run.Settings.VerifyAfterRecording&&run.RetrySettings==null)
                 {run.NeedsReview=true;await WithdrawForReview(run,false);}
+                if(run.RetrySettings!=null)run.Cancel.Cancel();
             }
+            else if(run.Delivery!=null)await Deliver(run,true);
         }
         else if(type=="verification.started")
         {
@@ -752,11 +1127,13 @@ public sealed class AppController : IDisposable
     public void Stop()
     {
         if(active==null||!active.Recording)return;
+        BeginFinish(active);
         active.Recording=false;StateLabel="Finishing";
         active.Capture.Stop();if(active.DestinationChecked)Changed?.Invoke();
     }
     public void Cancel()
     {
+        languageWindow?.Close();
         if(IsApplyingReview||inserting.Count>0)return;
         if(active==null)
         {
@@ -764,6 +1141,7 @@ public sealed class AppController : IDisposable
             dismissedClipboardRecoveryVersion=Volatile.Read(ref clipboardRecoveryVersion);
             bannerProgress=null;placementReview=null;hideAt=DateTimeOffset.MinValue;Changed?.Invoke();banner.Refresh();return;
         }
+        active.RetrySettings=null;
         active.AutoInsertBlocked=true;active.NeedsReview=true;active.Delivery?.Invalidate();active.Cancel.Cancel();active.Capture.Stop();
     }
     public void EmergencyReview()
@@ -773,6 +1151,7 @@ public sealed class AppController : IDisposable
             active.AutoInsertBlocked=true;
             active.NeedsReview=true;active.Delivery?.Invalidate();
             if(active.Text.Length>0)SaveReview(active.Review);
+            active.RetrySettings=null;
             active.Cancel.Cancel();
         }
     }
@@ -801,6 +1180,10 @@ public sealed class AppController : IDisposable
     }
     public void DismissReview(string id)
     {
+        // Revoke further acknowledgement before dropping the carrier; consume any
+        // proof already published so History cannot lose an insertion receipt.
+        if(destinations.TryGetValue(id,out var existing))existing.Invalidate();
+        DrainConfirmedPastes();
         pending.Dismiss(id);
         if(BannerReview?.Id==id)bannerProgress=null;
         if(destinations.Remove(id,out var target))target.Invalidate();
@@ -809,7 +1192,7 @@ public sealed class AppController : IDisposable
     public void OpenReview(ReviewDocument document,bool activate=true)
     {
         if(IsBusy){ConnectionMessage="Finish recording before opening another Review.";Changed?.Invoke();return;}
-        ShowBannerReview(CanonicalReview(document));
+        ShowBannerReview(CanonicalReview(document),true);
     }
     void OpenReviewDetails(ReviewDocument document,bool activate=true)
     {
@@ -821,7 +1204,7 @@ public sealed class AppController : IDisposable
             if(open.ReviewId==document.Id){open.Show();open.ShowStatus(document.Reason);if(activate)open.Activate();return;}
             open.Close();
         }
-        var window=new ReviewWindow(document,SaveReview,DismissReview,AcceptReview,ChooseReviewDestination){ShowActivated=activate};
+        var window=new ReviewWindow(document,SaveReview,DismissReview,doc=>AcceptReview(doc),ChooseReviewDestination){ShowActivated=activate};
         reviewWindow=window;window.Closed+=(_,_)=>{if(reviewWindow==window)reviewWindow=null;};
         window.Show();if(activate)window.Activate();
     }
@@ -849,9 +1232,13 @@ public sealed class AppController : IDisposable
     }
     bool ClipboardBlocksExit()
     {
-        if(!ClipboardRecovery.HasUnsettledTransaction)return false;
+        // A confirmed receipt is published before acknowledged clipboard release.
+        // Drain after that state read, and do not exit across an in-flight recovery await.
+        var unsettled=ClipboardRecovery.HasUnsettledTransaction;
+        DrainConfirmedPastes();
+        if(!unsettled&&!checkingClipboard&&!restoringClipboard)return false;
         exiting=false;
-        if(ClipboardRecovery.HasPending)ShowClipboardRecovery();
+        if(ClipboardRecovery.HasPending){ShowClipboardRecovery();ShowClipboardRecoveryDetails();}
         else
         {
             const string message="Clipboard delivery is still running or waiting for the destination. Keep Local Dictation open and wait for it to finish before exiting.";
@@ -865,6 +1252,7 @@ public sealed class AppController : IDisposable
 
     async Task<bool> PrepareForExit()
     {
+        languageWindow?.Close();
         if(ClipboardBlocksExit())return false;
         exiting=true;
         EmergencyReview();active?.Capture.Stop();

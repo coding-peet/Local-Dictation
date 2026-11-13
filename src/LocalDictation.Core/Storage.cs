@@ -119,7 +119,9 @@ public sealed class Settings
     public bool VerifyAfterRecording { get; set; }
     public bool InsertAtCursor { get; set; } = true;
     public bool Live { get; set; } = true;
+    public List<string> FinalOnlyApplications { get; set; } = [];
     public string Language { get; set; } = "sk";
+    public List<string> PreferredLanguages { get; set; } = ["sk","en"];
     public bool EnableShortcut { get; set; } = true;
     public string Shortcut {get;set;}="Ctrl+Shift";
     public string Theme {get;set;}="System";
@@ -142,6 +144,7 @@ public sealed class Settings
     {
         ServerUri();
         ShortcutSpec.Parse(Shortcut);
+        LanguagePolicy.ValidatePreferences(PreferredLanguages);
         if(Theme is not ("System" or "Light" or "Dark"))throw new ArgumentException("Choose System, Light, or Dark.");
         AtomicFile.Write(Path.Combine(directory ?? AppPaths.Data, "settings.json"),
             JsonSerializer.SerializeToUtf8Bytes(this, new JsonSerializerOptions { WriteIndented = true }));

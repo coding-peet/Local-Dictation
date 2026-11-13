@@ -16,11 +16,12 @@ public sealed class ClipboardTransaction : IDisposable
     readonly uint markerFormat=RegisterClipboardFormat("LocalDictation.ClipboardLease");
     byte[] payloadBytes=[];
     uint sequence;
-    bool changed,finished,mayHaveQueued,acknowledged,restoreFailed;
+    bool changed,finished,mayHaveQueued,acknowledged,restoreFailed,recoveryPending;
     public int SavedFormatCount=>saved.Count;
+    internal bool HasAcknowledgedBackup=>Volatile.Read(ref acknowledged)&&Volatile.Read(ref recoveryPending)&&!Volatile.Read(ref finished);
     public bool WasRestored {get;private set;}
     public bool WasSuperseded {get;private set;}
-    public bool RecoveryPending {get;internal set;}
+    public bool RecoveryPending {get=>Volatile.Read(ref recoveryPending);internal set=>Volatile.Write(ref recoveryPending,value);}
     public string RecoveryMessage=>restoreFailed
         ?"The previous clipboard could not be fully restored. Its complete backup is held in memory. Keep Local Dictation open and use Restore previous clipboard."
         :"Paste was not confirmed. Check the destination and stop any delayed paste before restoring: it could insert your previous clipboard contents. Keep Local Dictation open until recovery is complete.";
@@ -102,9 +103,44 @@ public sealed class ClipboardTransaction : IDisposable
         try{var actual=new byte[bytes.Length];Marshal.Copy(memory,actual,0,actual.Length);return actual.SequenceEqual(bytes);}
         finally{GlobalUnlock(handle);}
     }
-    public void MarkMayHaveQueued()=>mayHaveQueued=true;
-    public void MarkNoInputQueued(){if(!acknowledged)mayHaveQueued=false;}
-    public void Acknowledge()=>acknowledged=true;
+    public void MarkMayHaveQueued(){lock(stateGate)mayHaveQueued=true;}
+    public void MarkNoInputQueued(){lock(stateGate)if(!acknowledged)mayHaveQueued=false;}
+    public void Acknowledge(){lock(stateGate)Volatile.Write(ref acknowledged,true);}
+
+    internal bool IsCurrentHeldPayload()
+    {
+        lock(stateGate)
+        {
+            if(finished||acknowledged||!ClipboardRecovery.IsCurrentHeldLease(this))return false;
+            try{EnsureCurrent();return true;}
+            catch(Exception error) when(error is InvalidOperationException or Win32Exception){return false;}
+        }
+    }
+    internal bool TryAcknowledgeHeldPaste(Func<bool> accept)
+    {
+        lock(stateGate)
+        {
+            if(finished||acknowledged||!ClipboardRecovery.IsCurrentHeldLease(this))return false;
+            try
+            {
+                Open(()=>{},100);
+                try
+                {
+                    // Keep the native clipboard locked while atomically accepting the
+                    // already-read destination. No input or UIA call occurs in accept.
+                    if(GetClipboardOwner()!=owner||!Contains(markerFormat,marker)||!Contains(UnicodeText,payloadBytes)||
+                        !ClipboardRecovery.IsCurrentHeldLease(this)||!accept())return false;
+                    Volatile.Write(ref acknowledged,true);return true;
+                }
+                finally{CloseClipboard();sequence=GetClipboardSequenceNumber();}
+            }
+            catch(Exception error) when(error is InvalidOperationException or Win32Exception){return false;}
+        }
+    }
+    internal bool TryRestoreAcknowledged()
+    {
+        lock(stateGate)return acknowledged&&RestoreCore();
+    }
 
     void Open(Action validate,int milliseconds)
     {
@@ -157,7 +193,7 @@ public sealed class ClipboardTransaction : IDisposable
     void Complete()
     {
         if(finished)return;
-        finished=true;RecoveryPending=false;
+        Volatile.Write(ref finished,true);RecoveryPending=false;
         foreach(var copy in saved)copy.Dispose();
         ClipboardRecovery.Release(this);
     }

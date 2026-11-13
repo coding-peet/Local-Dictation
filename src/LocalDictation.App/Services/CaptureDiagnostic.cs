@@ -6,7 +6,7 @@ public enum CaptureStage
 {
     Foreground,FocusedElement,OwnProcess,Integrity,Availability,TextPattern,ReadOnly,
     SelectionCount,SelectionCollapse,DocumentText,CaretPrefix,PrefixCoherence,
-    Cancellation,CaretAnchor,PostcheckWindow,PostcheckFocusIdentity,ConstructIdentity,ProviderMetadata,Unknown,WindowScope
+    Cancellation,CaretAnchor,PostcheckWindow,PostcheckFocusIdentity,ConstructIdentity,ProviderMetadata,Unknown,WindowScope,EmptyValueCheck,EmptyValueConfirmed
 }
 
 public sealed record CaptureProviderMetadata(string FrameworkId,string ClassName,int ControlTypeId,int TargetProcessId,
@@ -77,6 +77,7 @@ public sealed class CaptureDiagnostic
         CaptureStage.ReadOnly=>"read-only",CaptureStage.SelectionCount=>"selection-count",
         CaptureStage.SelectionCollapse=>"selection-collapse",CaptureStage.DocumentText=>"document-text",
         CaptureStage.CaretPrefix=>"caret-prefix",CaptureStage.PrefixCoherence=>"prefix-coherence",
+        CaptureStage.EmptyValueCheck=>"empty-value-check",CaptureStage.EmptyValueConfirmed=>"empty-value-confirmed",
         CaptureStage.CaretAnchor=>"caret-anchor",CaptureStage.Cancellation=>"cancellation",CaptureStage.PostcheckWindow=>"postcheck-window",
         CaptureStage.PostcheckFocusIdentity=>"postcheck-focus-identity",CaptureStage.ConstructIdentity=>"construct-identity",
         CaptureStage.ProviderMetadata=>"provider-metadata",CaptureStage.WindowScope=>"window-scope",_=>"unknown"

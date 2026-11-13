@@ -78,8 +78,14 @@ public static class ModelEligibility
         var explicitLanguages=primary.Languages.Where(l=>l!="auto").ToArray();
         return language=="auto"&&explicitLanguages.Length==1?explicitLanguages[0]:language;
     }
-    public static bool CanVerify(ModelInfo verifier,string language,ModelInfo primary) =>
-        verifier.Installed&&verifier.RuntimeTested&&verifier.Languages.Contains(EffectiveLanguage(primary,language));
+    public static bool CanVerify(ModelInfo verifier,string language,ModelInfo primary,IReadOnlyList<string>? preferred=null)
+    {
+        if(!verifier.Installed||!verifier.RuntimeTested)return false;
+        var effective=EffectiveLanguage(primary,language);
+        if(effective!="auto")return verifier.Languages.Contains(effective);
+        var candidates=primary.Languages.Where(l=>l!="auto"&&(preferred is not {Count:>0}||preferred.Contains(l))).ToArray();
+        return candidates.Length>0&&candidates.All(verifier.Languages.Contains);
+    }
 }
 
 /// <summary>Communication heartbeats never extend primary/verification absolute deadlines.</summary>

@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><UseAppHost>false</UseAppHost><UseWPF>true</UseWPF>
+    <AssemblyName>VerificationBannerRender</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/LocalDictation.App/LocalDictation.App.csproj" />
+  </ItemGroup>
+</Project>

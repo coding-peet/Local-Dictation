@@ -184,9 +184,9 @@
             </ol>
           </div>
           <div class="card">
-            <h3>Keep live text in the banner</h3>
+            <h3>Insert the result after recording</h3>
             <p>Turn off <strong>Insert live text at the cursor</strong>, then start with the shortcut from your destination field. The setting saves automatically.</p>
-            <p>The app remembers that cursor while live text stays in its own banner. After normal completion and any required word choices, it returns the finished text automatically.</p>
+            <p>Recognition continues without live cursor insertion. Finish in the original field to insert automatically; finishing elsewhere keeps the result for the small Insert action.</p>
             <p><strong>Record in banner</strong> starts from the app window without an external cursor. Use <strong>Choose destination</strong> when the text is ready.</p>
           </div>
         </div>
@@ -199,27 +199,18 @@
       </section>
 
       <section id="live-text" aria-labelledby="live-text-title">
-        <h2 id="live-text-title">Live text and the banner</h2>
-        <p><strong>Live transcription</strong> shows partial wording in the banner. With <strong>Insert live text at the cursor</strong> enabled it also updates a valid destination as you speak. With that option off, a shortcut-started recording remembers the original field and inserts the final text after normal completion and any required choices. Updates arrive after speech segments and processing, and can be revised. Without live mode, wait for the result after <strong>Finish</strong>.</p>
-        <p>In desktop <strong>Outlook</strong>, live wording stays in the banner. After <strong>Finish</strong>, the complete result is inserted once at the original valid cursor, after any verification choices. Live recognition stays on, and your live-insertion preference still applies to other apps.</p>
-        <p>Live wording is a draft. The app waits for enough speech context, then refreshes it roughly every few seconds of new audio when the model can keep up. After <strong>Finish</strong>, the same dictation model checks the complete original recording before returning the final text. This happens with <strong>Verify after recording</strong> off too; verification adds a separate model and word choices.</p>
-        <p>Finishing can revise earlier wording. Keep the original field unchanged until insertion completes. The Turbo profiles usually finish much sooner than Large-v3 on this PC; Large-v3 may need tens of seconds. Initial runtime preparation and model loading add time. Progress stays visible and <kbd>Esc</kbd> cancels.</p>
-
-        <h3>Move or collapse the banner</h3>
-        <ul>
-          <li>Drag the microphone tile, title/status area, or waveform to move the banner away from your text.</li>
-          <li><strong>Hide text</strong> collapses the recording preview. <strong>Show text</strong> opens it again. Word choices remain visible during compact Review.</li>
-          <li>Banner controls preserve your destination cursor.</li>
-          <li>Manual position is kept for the current app run, including later recordings, but not across restarts.</li>
-        </ul>
-
-        <h3>What happens when you click elsewhere?</h3>
-        <p>Recording continues; insertion pauses. Return to the <strong>same unchanged field</strong> to resume at the draft's end, even if you click inside it.</p>
-        <div class="callout">
-          <strong>A changed field needs a new decision.</strong>
-          <p>Manual edits or a closed destination prevent automatic replacement. Your transcript stays in Review. Use <a href="#destination">Choose destination</a> when needed.</p>
-        </div>
-        <p>Insertion requires reliable Windows accessibility access. Protected, elevated, or unsupported fields fall back to Review.</p>
+        <h2 id="live-text-title">Live text and the minimal banner</h2>
+        <p><strong>Live transcription</strong> recognizes speech while you record. With <strong>Insert live text at the cursor</strong> enabled, the app updates its own draft in your original field, including corrections after a pause. The banner only shows recording state and duration.</p>
+        <p>Press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> again to finish. The selected dictation model completes the original recording; the final wording is inserted automatically and the banner closes. Verification and word choices are optional.</p>
+        <p>In desktop <strong>Outlook</strong>, the complete result is inserted once after recording. If live delivery fails in another app, Local Dictation remembers that app and uses final-only insertion from the next recording. Live recognition remains enabled. Use <strong>Reset remembered apps</strong> in Dictation settings to try live delivery again; Outlook stays final-only.</p>
+        <h3>Move the banner</h3>
+        <p>Drag its waveform or status area. It remains small and does not take keyboard focus. The soft edge fades to a transparent window boundary; text and controls stay sharp. Placement is retained during the current app run.</p>
+        <h3>Switching fields or apps</h3>
+        <p>Recording continues and insertion pauses. Return to the <strong>same unchanged field during recording</strong> to resume. If you finish elsewhere, the text is saved and waits for the small <strong>Insert</strong> action. Returning after Finish never triggers delayed automatic insertion.</p>
+        <p>Keep the original field unchanged until insertion completes. Manual edits, a closed target or unsupported accessibility may require an explicit destination in Review. The app never submits or sends the text.</p>
+        <h3>Clipboard</h3>
+        <p>The app preserves the previous clipboard and restores it automatically after acknowledged insertion. If you copy something new, that newer clipboard is kept. No clipboard action is needed in the normal dictation flow.</p>
+        <p>If insertion cannot be confirmed immediately, the app briefly checks the unchanged original field without pasting again. Confirmed insertion closes the banner and restores the clipboard automatically. Otherwise the transcript and backup remain protected. The small <strong>Resolve</strong> action opens exceptional recovery; the same window is available in Settings and the tray.</p>
       </section>
 
       <section id="review" aria-labelledby="review-title">
@@ -228,12 +219,12 @@
         <ol>
           <li>Dictate and stop recording.</li>
           <li>The transcript is saved before its live draft is removed from a validated destination. Surrounding text stays.</li>
-          <li>Wait for comparison to finish. Review stays inside the small recording banner.</li>
+          <li>The first transcript stays visible in a read-only banner preview while verification runs. Scroll longer text without opening an editor. Agreement inserts the final result and closes the banner; differences open compact Review.</li>
           <li>Click an underlined phrase and choose its correct wording from the two alternatives. The live wording is first; the alternative is second. There are no model labels in the choices.</li>
           <li>After each choice, the next unresolved phrase opens automatically.</li>
           <li>The final choice returns the finished text to the remembered cursor. If no differences need a choice, normal completion returns the text automatically.</li>
         </ol>
-        <p>The destination is checked again before insertion. If it changed or cannot be validated, the draft may remain in place and the banner keeps your text with an explanation. Use <strong>Choose destination</strong> when needed. Cancelled or failed sessions do not automatically insert on completion.</p>
+        <p>The destination is checked again before insertion. If it changed or cannot be validated, the draft may remain in place and Review keeps your text with an explanation. Use <strong>Choose destination</strong> when needed. Cancelled or failed sessions do not automatically insert on completion.</p>
 
         <h3>Choose the words you heard</h3>
         <div class="table-scroll" role="region" aria-label="Review controls" tabindex="0">
@@ -253,11 +244,11 @@
         <p>A phrase correction is saved as you type, but changes the transcript only after <strong>Use this wording</strong>. Cancelling the editor, choosing another phrase, or reopening Review keeps that draft for the next time you select <strong>Edit wording</strong> on the same phrase. Holding <kbd>Enter</kbd> does not accept following phrases.</p>
         <p>In <strong>Details</strong>, <strong>Dictation original</strong> and <strong>Verification original</strong> keep model outputs unchanged. An edited final draft takes precedence over phrase choices; <strong>Rebuild from choices</strong> preserves a previous draft for restoration.</p>
         <h3>Type directly into the transcript</h3>
-        <p>Click ordinary transcript text, press <kbd>F2</kbd>, or select <strong>Edit text</strong> to edit the whole draft in the same banner. Delete an extra word, add punctuation, or rewrite a sentence. Actual edits are saved automatically, including when Review closes.</p>
+        <p>Click ordinary transcript text, press <kbd>F2</kbd>, or select <strong>Edit text</strong> to edit the whole draft in the compact Review window. Delete an extra word, add punctuation, or rewrite a sentence. Actual edits are saved automatically, including when Review closes.</p>
         <p>While editing the whole draft, phrase alternatives pause so they cannot overwrite your corrections. Select <strong>Use edited text</strong> when ready to return it to the validated destination. Typing or pressing <kbd>Enter</kbd> never approves it. Originals and comparison choices remain in <strong>Details</strong>.</p>
         <p>Automatic delivery currently accepts a single paragraph. Pasted line breaks or control characters stay preserved for correction; remove them before approval. Already inserted transcripts remain read-only.</p>
         <div class="callout info">
-          <strong>Ordinary Review stays in the banner.</strong>
+          <strong>Review has its own compact window.</strong>
           <p>No large editor opens automatically. Pending items remain available for later. In the optional Details editor, <strong>Close</strong> and <strong>Copy reviewed text</strong> keep the item; <strong>Dismiss</strong> removes pending Review. Retained History is separate.</p>
         </div>
         <p>Automatic insertion accepts <strong>single-paragraph text</strong>. Remove added line breaks/control characters before insertion. Rejection leaves the field unchanged and keeps the text available.</p>
@@ -284,7 +275,7 @@
             <thead><tr><th scope="col">Model</th><th scope="col">How to use it</th></tr></thead>
             <tbody>
               <tr><td><strong>KInIT Turbo · Slovak</strong><br><span class="tag">Live available</span></td><td>Slovak live preview, or after-recording transcription with live off.</td></tr>
-              <tr><td><strong>Whisper Large-v3 Turbo · Multilingual</strong><br><span class="tag">Live available</span></td><td>Original OpenAI Turbo weights for Slovak, English or automatic language detection. A separate model from the Slovak KInIT fine-tune. Test technical names on your recordings.</td></tr>
+              <tr><td><strong>Whisper Large-v3 Turbo · Multilingual</strong><br><span class="tag">Live available</span></td><td>Original OpenAI Turbo weights with the multilingual languages advertised by the installed model, including Slovak, English and Spanish, plus constrained automatic detection. A separate model from the Slovak KInIT fine-tune. Test technical names on your recordings.</td></tr>
               <tr><td><strong>Whisper Large-v3 · Multilingual</strong><br><span class="tag">Live available · slower updates</span></td><td>Live preview, after Finish, or eligible verification. It uses much more processing time on this PC and can take tens of seconds to finish. A larger model does not guarantee better wording on your recording.</td></tr>
               <tr><td><strong>Whisper Tiny</strong><br><span class="tag">After recording</span></td><td>A small additional model when installed. Check accuracy on your recordings.</td></tr>
             </tbody>
@@ -301,7 +292,12 @@
         <p>Imports support compatible built-in Whisper Transformers models with original safetensors; private, gated, and remote-code models are rejected. New imports start after-recording. Closing Settings does not stop downloading; use <strong>Cancel download</strong>.</p>
         <p>A note below <strong>Dictation model</strong> appears when it needs a runtime test, is missing, works after recording only, or may have slow live previews. Support and measured low-latency readiness are separate. The three named Turbo/Large-v3 profiles support live; other newly imported profiles still start without live capability.</p>
         <p><strong>Installed</strong>, <strong>runtime-tested</strong>, <strong>quality-checked</strong>, and <strong>live-ready</strong> are separate states. A successful runtime test proves the model can transcribe; check its accuracy and live performance separately. Verification needs a different, installed, runtime-tested model supporting your language.</p>
-        <p>KInIT is Slovak-only. For English, use a multilingual model and select <strong>English</strong> or <strong>Auto</strong>. Forcing the wrong language can corrupt wording. The local comparison covered three Slovak recordings with user-supplied or corrected reference wording; it is not a universal accuracy ranking.</p>
+        <p>The small banner language indicator shows the actual result, such as <strong>Auto · SK</strong> or <strong>Auto · EN</strong>. Before detection it shows <strong>Auto · …</strong>. A fixed language shows its code, such as <strong>SK</strong> or <strong>ES</strong>.</p>
+        <p>Under <strong>Preferred Auto languages (supported by installed models)</strong>, use <strong>+</strong> to add a language supported by installed models, or remove a tag with its ×. With tags selected, Auto chooses only among those supported by the selected model, and the banner correction picker offers only your preferred languages. Remove all tags to use and offer every supported language. The initial SK and EN tags exclude Russian, Serbian and Czech. This restriction is not a confidence or accuracy guarantee.</p>
+        <p>The small model name beside the phase identifies the Dictation model while recording and the Verification model during Verify. Hover the name to see its full identity and role.</p>
+        <p>Click the banner language to reprocess the same recording in another language. The choice names any required model switch. While recording, keep dictating and press your usual shortcut to Finish; the new pass then uses the original audio without recording again. Escape also cancels a queued pass. If you change focus after Finish, the result waits for explicit Insert.</p>
+        <p>After the banner closes, use <strong>History → Change language…</strong>. This creates a new Review and preserves the previous transcript and edits. It never automatically replaces text already inserted elsewhere. Audio is retained even when recognition returned no text.</p>
+        <p>KInIT is Slovak-only. For English, use a multilingual model and select <strong>en</strong> or <strong>Auto</strong>. Forcing the wrong language can corrupt wording. The local comparison covered three Slovak recordings with user-supplied or corrected reference wording; it is not a universal accuracy ranking.</p>
       </section>
 
       <section id="history" aria-labelledby="history-title">
@@ -310,7 +306,7 @@
         <ul>
           <li><strong>Play audio</strong> plays the selected original recording; <strong>Stop</strong> stops playback.</li>
           <li><strong>Copy text</strong> copies the current transcript.</li>
-          <li><strong>Open Review</strong> opens the item's current text in the compact banner. Select <strong>Details</strong> for its original wordings and recording information. Reopening an item does not insert it.</li>
+          <li><strong>Open Review</strong> opens the item's current text in the separate compact Review window. Select <strong>Details</strong> for its original wordings and recording information. Reopening an item does not insert it.</li>
           <li><strong>Save audio…</strong> exports an ordinary WAV to a location you choose.</li>
           <li><strong>Delete</strong> removes the selected history transcript and audio after confirmation.</li>
         </ul>
@@ -377,7 +373,8 @@
         </details>
         <details>
           <summary>The app switched to Review or will not resume at the cursor</summary>
-          <p>If only the beginning of a dictation appeared, the full transcript remains in the banner. A live correction must validate the text already inserted before replacing it. A range warning means delivery stopped; inspect the partial text before choosing another destination so it is not inserted twice.</p>
+          <p>If only the beginning of a dictation appeared, the full transcript remains saved in Pending Review. A live correction must validate the text already inserted before replacing it. A range warning means delivery stopped; inspect the partial text before choosing another destination so it is not inserted twice.</p>
+          <p>A slow accessibility check can temporarily pause delivery. Once that check has ended, fresh live updates can resume in the same unchanged field. An uncertain paste still waits for confirmation or clipboard recovery; it is never repeated automatically.</p>
           <p>Return to the original field and leave its text unchanged. The destination must expose reliable editable text and selection access. A protected, elevated, unsupported, closed, or manually edited field cannot be used automatically. Continue through Review and <strong>Choose destination</strong>.</p>
           <p><strong>Record in banner</strong> starts from the app window and needs a destination selection. For preview-only dictation with an automatic final return, turn off <strong>Insert live text at the cursor</strong> and start with the shortcut from the destination field.</p>
         </details>
@@ -391,14 +388,14 @@
         </details>
         <details>
           <summary>Dictating into Outlook or another Office editor</summary>
-          <p>Click in the message body so the text cursor is visible, then start with your dictation shortcut. In desktop Outlook, the live draft stays in the banner; <strong>Finish</strong> returns the complete text to that original cursor after processing and any required word choices. Your signature and surrounding text stay in place. Paste Special is not part of the dictation workflow.</p>
+          <p>Click in the message body so the text cursor is visible, then start with your dictation shortcut. In desktop Outlook, the live draft stays in the recognition pipeline; <strong>Finish</strong> returns the complete text to that original cursor after processing and any required word choices. Your signature and surrounding text stay in place. Paste Special is not part of the dictation workflow.</p>
           <p>When you start at the beginning of a message above a signature, Outlook may report two leading line breaks as one after the paste. The app can confirm this specific first insertion only when the complete dictated text, the rest of the message, and the final cursor position match. It does not paste the result again.</p>
           <p>If an Office paste menu or another small editing popup is open, close it and return the cursor to the message body before starting. A Paste Options button belongs to Office; it is separate from the dictation banner. If insertion is unconfirmed, inspect the message and follow clipboard recovery below before retrying.</p>
         </details>
         <details>
           <summary>Paste is unconfirmed, or the previous clipboard needs recovery</summary>
           <p>Open the destination and inspect whether text arrived. Do not retry blindly: a slow editor may still consume a queued paste. The app keeps the dictation paste available and retains your previous clipboard in memory.</p>
-          <p>After inspecting the destination and stopping any deferred paste, select <strong>Restore clipboard</strong> in the idle banner, or <strong>Restore previous clipboard</strong> from the notification-area menu. Restoration starts immediately. If an earlier paste happens afterwards, it may insert the previous clipboard contents. Recording and finishing must stop before restoration is available.</p>
+          <p>Open <strong>Resolve</strong> in the idle banner, <strong>Resolve clipboard recovery</strong> in Settings, or <strong>Resolve clipboard recovery…</strong> from the notification-area menu. After inspecting the destination and stopping any delayed paste, tick the inspection checkbox and select <strong>Restore previous clipboard</strong>. A delayed paste could otherwise insert your previous clipboard contents. Finish recording before restoring. If insertion was already confirmed, <strong>Retry clipboard restoration</strong> retries restoration without sending text.</p>
           <p>The banner's <strong>X</strong> hides the idle recovery message and keeps your saved text and clipboard backup. A new recovery event or an explicit Start/Exit attempt can show it again. New delivery and normal Exit still wait for recovery. A newer copy made in another app is preserved. Avoid force-closing the app while it holds the backup; a crash or forced termination loses that in-memory state.</p>
         </details>
         <details>

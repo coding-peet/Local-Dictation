@@ -26,6 +26,13 @@ public sealed record ModelInfo
 
 public static class Protocol
 {
+    public static object SessionStart(Settings settings)=>new
+    {
+        type="start",protocol_version=1,model=settings.PrimaryModel,language=settings.Language,
+        // Empty tags restore unrestricted Auto; the API rejects an empty allowlist.
+        preferred_languages=settings.PreferredLanguages.Count>0?settings.PreferredLanguages:null,
+        live=settings.Live,verification_model=settings.VerifyAfterRecording?settings.VerificationModel:null
+    };
     public static JsonSerializerOptions Json { get; } = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
@@ -36,9 +43,10 @@ public static class Protocol
 public sealed class ApiClient : IDisposable
 {
     readonly HttpClient http;
-    public ApiClient(Settings settings)
+    public ApiClient(Settings settings):this(settings,new HttpClientHandler {UseProxy=false}){}
+    public ApiClient(Settings settings,HttpMessageHandler handler)
     {
-        http = new(new HttpClientHandler { UseProxy = false }) { BaseAddress = settings.ServerUri(), Timeout = TimeSpan.FromSeconds(45) };
+        http = new(handler) { BaseAddress = settings.ServerUri(), Timeout = TimeSpan.FromSeconds(45) };
     }
     public async Task<JsonElement> Get(string path, CancellationToken token = default)
     {
@@ -61,6 +69,25 @@ public sealed class ApiClient : IDisposable
     }
     public async Task<List<ModelInfo>> Models(CancellationToken token = default) =>
         (await Get("/v1/models", token)).GetProperty("data").Deserialize<List<ModelInfo>>(Protocol.Json) ?? [];
+
+    public async Task WaitForIdle(CancellationToken token,TimeSpan? timeout=null,TimeSpan? pollDelay=null)
+    {
+        using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(timeout??TimeSpan.FromSeconds(30));
+        try
+        {
+            while(true)
+            {
+                deadline.Token.ThrowIfCancellationRequested();
+                var health=await Get("/health",deadline.Token);
+                if(health.TryGetProperty("ready",out var ready)&&ready.ValueKind==JsonValueKind.True&&
+                    health.TryGetProperty("busy",out var busy)&&busy.ValueKind==JsonValueKind.False)return;
+                await Task.Delay(pollDelay??TimeSpan.FromMilliseconds(200),deadline.Token);
+            }
+        }
+        catch(OperationCanceledException) when(!token.IsCancellationRequested)
+        {throw new TimeoutException("The previous transcription is still stopping. The original recording is preserved in History.");}
+    }
 
     public async Task TestModel(ModelInfo model, string file, string language, CancellationToken token)
     {
@@ -90,9 +117,7 @@ public sealed class SessionStream : IAsyncDisposable
             TimeSpan.FromSeconds(15),TimeSpan.FromSeconds(600),TimeSpan.FromMinutes(10));
         var uri = new UriBuilder(settings.ServerUri()) { Scheme = "ws", Path = "/v1/audio/sessions" }.Uri;
         await socket.ConnectAsync(uri, token);
-        await Send(new { type = "start", protocol_version = 1, model = settings.PrimaryModel,
-            language = settings.Language, live = settings.Live,
-            verification_model = settings.VerifyAfterRecording ? settings.VerificationModel : null }, token);
+        await Send(Protocol.SessionStart(settings),token);
     }
     public async Task Finish(CancellationToken token)
     {

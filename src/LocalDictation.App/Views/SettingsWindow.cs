@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using MaterialDesignThemes.Wpf;
 using System.Windows.Input;
 using System.Windows.Threading;
 using LocalDictation.Core;
@@ -18,16 +20,17 @@ public sealed class SettingsWindow : Window
     readonly ComboBox microphone=new(){DisplayMemberPath="Name",SelectedValuePath="Id"},
         primary=new(){DisplayMemberPath="Label",SelectedValuePath="Id"},
         verifier=new(){DisplayMemberPath="Label",SelectedValuePath="Id"},
-        language=new(){ItemsSource=new[]{"sk","en","auto"}};
-    readonly CheckBox live=new(){Content="Live transcription"},
-        verify=new(){Content="Verify after recording"},insert=new(){Content="Insert live text at the cursor"},
-        shortcutEnabled=new(){Content="Enable keyboard shortcut"};
+        language=new();
+    readonly ToggleButton live=Ui.Switch("Live transcription"),
+        verify=Ui.Switch("Verify after recording"),insert=Ui.Switch("Insert live text at the cursor"),
+        shortcutEnabled=Ui.Switch("Enable keyboard shortcut");
     readonly ListBox catalogModels=new(){MinHeight=96,MaxHeight=160,DisplayMemberPath="Label",SelectedValuePath="Id"};
-    readonly StackPanel verificationDetails=new(){Margin=new(22,0,0,0)};
-    Button inspectCatalog=null!;
+    readonly StackPanel verificationDetails=new(){Margin=new(0,8,0,0)};
+    readonly TextBlock compatibility=Ui.Text("",12);
+    Button inspectCatalog=null!,resetCompatibility=null!;
     readonly ListBox reviews=new(){MinHeight=70,MaxHeight=170,DisplayMemberPath="Reason"};
     Button download=null!,cancelDownload=null!;
-    readonly Button record;
+    readonly Button record,recovery;
     readonly ProgressBar progress=new(){Minimum=0,Maximum=100,Height=6,Margin=new(0,6,0,8)};
     readonly DispatcherTimer poll=new(){Interval=TimeSpan.FromSeconds(1)};
     readonly DispatcherTimer saveDelay=new(){Interval=TimeSpan.FromMilliseconds(650)};
@@ -45,9 +48,9 @@ public sealed class SettingsWindow : Window
             e.Handled=true;
             if(!e.IsRepeat)OpenHelp();
         };
-        Title="Local Dictation";Width=920;Height=800;MinWidth=740;MinHeight=620;
+        Title="Local Dictation";Width=1040;Height=820;MinWidth=640;MinHeight=620;
         WindowStartupLocation=WindowStartupLocation.CenterScreen;
-        var root=new DockPanel{Margin=new(20)};
+        var root=new DockPanel{Margin=new(24)};
         var header=new StackPanel();
         var titleRow=new DockPanel();
         record=Ui.Button("Record in banner",RecordInBanner,true);
@@ -62,6 +65,8 @@ public sealed class SettingsWindow : Window
         saveStatus.FontSize=13;saveStatus.Margin=new(12,0,0,0);saveStatus.TextAlignment=TextAlignment.Right;
         System.Windows.Automation.AutomationProperties.SetLiveSetting(saveStatus,System.Windows.Automation.AutomationLiveSetting.Polite);
         Grid.SetColumn(saveStatus,1);statusRow.Children.Add(saveStatus);header.Children.Add(statusRow);
+        recovery=Ui.Button("Resolve clipboard recovery",controller.ShowClipboardRecoveryDetails);
+        recovery.HorizontalAlignment=HorizontalAlignment.Left;recovery.Margin=new(0,0,0,8);recovery.Visibility=Visibility.Collapsed;header.Children.Add(recovery);
         DockPanel.SetDock(header,Dock.Top);root.Children.Add(header);
 
         var footer=new DockPanel{Margin=new(0,14,0,0)};
@@ -71,16 +76,31 @@ public sealed class SettingsWindow : Window
         message.SetResourceReference(TextBlock.ForegroundProperty,"Warning");notes.Children.Add(message);
         notes.Children.Add(Ui.Text("Latest 20 dictations saved locally · 10-minute recording limit",12));
         footer.Children.Add(notes);DockPanel.SetDock(footer,Dock.Bottom);root.Children.Add(footer);
-        var tabs=new TabControl();
-        tabs.Items.Add(new TabItem{Header="_Dictation",Content=DictationPage()});
-        tabs.Items.Add(new TabItem{Header="_Models",Content=ModelsPage()});
-        tabs.Items.Add(new TabItem{Header="_Pending Review",Content=ReviewPage()});
-        tabs.Items.Add(new TabItem{Header="_History",Content=HistoryPage()});
-        tabs.Items.Add(new TabItem{Header="_Settings",Content=PreferencesPage()});
-        root.Children.Add(tabs);Content=root;
+        // A desktop navigation rail keeps destinations stable while their forms scroll independently.
+        var shell=new Grid();var navigationColumn=new ColumnDefinition{Width=new(216)};
+        shell.ColumnDefinitions.Add(navigationColumn);shell.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});
+        var navigation=new ListBox{Margin=new(0,8,16,0),VerticalAlignment=VerticalAlignment.Stretch};
+        navigation.SetResourceReference(Control.BackgroundProperty,"Canvas");
+        var destinations=new[]{("Dictation",PackIconKind.Microphone),("Models",PackIconKind.CubeOutline),("Pending Review",PackIconKind.TextBoxCheckOutline),("History",PackIconKind.History),("Settings",PackIconKind.CogOutline)};
+        var pages=new[]{DictationPage(),ModelsPage(),ReviewPage(),HistoryPage(),PreferencesPage()};
+        var pageHost=new ContentControl{Content=pages[0],HorizontalContentAlignment=HorizontalAlignment.Stretch,VerticalContentAlignment=VerticalAlignment.Stretch};
+        var labels=new List<TextBlock>();
+        foreach(var (label,icon) in destinations)
+        {
+            var caption=Ui.Text(label);caption.ClearValue(TextBlock.ForegroundProperty);caption.Margin=new(0);caption.VerticalAlignment=VerticalAlignment.Center;labels.Add(caption);
+            var item=new ListBoxItem{Content=caption,ToolTip=label,Padding=new(0),Margin=new(0,0,0,8),Width=double.NaN};
+            item.SetResourceReference(FrameworkElement.StyleProperty,"Md3NavigationItem");
+            NavigationDrawerAssist.SetSelectedIcon(item,icon);NavigationDrawerAssist.SetUnselectedIcon(item,icon);
+            System.Windows.Automation.AutomationProperties.SetName(item,label);navigation.Items.Add(item);
+        }
+        void NavigationContrast()=>ApplyNavigationContrast(navigation,SystemParameters.HighContrast);
+        navigation.Loaded+=(_,_)=>NavigationContrast();ThemeManager.Changed+=NavigationContrast;
+        navigation.SelectionChanged+=(_,_)=>{if(navigation.SelectedIndex>=0)pageHost.Content=pages[navigation.SelectedIndex];NavigationContrast();};
+        navigation.SelectedIndex=0;Grid.SetColumn(pageHost,1);shell.Children.Add(navigation);shell.Children.Add(pageHost);root.Children.Add(shell);Content=root;
+        SizeChanged+=(_,_)=>{var compact=ActualWidth<840;navigationColumn.Width=new(compact?96:216);foreach(var label in labels)label.Visibility=compact?Visibility.Collapsed:Visibility.Visible;};
         controller.Changed+=Refresh;
         Closing+=(_,_)=>CommitTextEdits();
-        Closed+=(_,_)=>{controller.Changed-=Refresh;poll.Stop();saveDelay.Stop();};
+        Closed+=(_,_)=>{controller.Changed-=Refresh;ThemeManager.Changed-=NavigationContrast;poll.Stop();saveDelay.Stop();};
         poll.Tick+=(_,_)=>_ = PollDownload();
         foreach(var box in new[]{microphone,primary,verifier,language,theme})box.SelectionChanged+=(_,_)=>SelectionChanged(box);
         foreach(var check in new[]{live,verify,insert,shortcutEnabled})
@@ -95,40 +115,82 @@ public sealed class SettingsWindow : Window
         Refresh(true);UpdateSaveStatus();
     }
 
+    static void ApplyNavigationContrast(ListBox navigation,bool highContrast)
+    {
+        foreach(var item in navigation.Items.OfType<ListBoxItem>())
+        {
+            item.ApplyTemplate();
+            // The pinned toolkit's selection layer is 12% opaque. Pair an opaque
+            // Windows highlight with HighlightText in high contrast, retaining its template.
+            var frame=item.Template?.FindName("border",item) as Border;
+            if(frame!=null)Ui.BindCapsule(frame);
+            if(highContrast&&item.IsSelected)
+            {
+                frame?.SetResourceReference(Border.BackgroundProperty,"Selected");
+                item.SetResourceReference(Control.ForegroundProperty,"SelectedInk");
+            }
+            else
+            {
+                frame?.ClearValue(Border.BackgroundProperty);
+                item.ClearValue(Control.ForegroundProperty);
+            }
+        }
+    }
+
     void OpenHelp()
     {
         if(!LocalHelp.TryOpen(out var error))message.Text=error;
     }
 
+    readonly WrapPanel preferredLanguages=new();
+    string preferredLanguageSignature="";
+    void RefreshLanguageChoices()
+    {
+        var selected=primary.SelectedItem as ModelInfo;
+        var code=language.SelectedItem as string??controller.Settings.Language;
+        var supported=new[]{"auto"}.Concat(selected?.Languages.Where(l=>l!="auto")??controller.Settings.PreferredLanguages).Distinct().ToArray();
+        if(!(language.ItemsSource as IEnumerable<string>??[]).SequenceEqual(supported))language.ItemsSource=supported;
+        language.SelectedItem=supported.Contains(code)?code:code=="auto"?"auto":supported.FirstOrDefault(l=>l!="auto");
+        var signature=string.Join(",",controller.Settings.PreferredLanguages)+"/"+string.Join(",",LanguagePolicy.Available(controller.Models).Select(l=>l.Code));
+        if(signature==preferredLanguageSignature)return;preferredLanguageSignature=signature;
+        preferredLanguages.Children.Clear();
+        preferredLanguages.Children.Add(new PreferredLanguagesPanel(controller.Settings.PreferredLanguages,controller.Models,
+            code=>
+            {
+                var settings=Snapshot();settings.PreferredLanguages.Remove(code);Persist(settings);
+            },
+            code=>{var settings=Snapshot();settings.PreferredLanguages.Add(code);Persist(settings);}));
+    }
+
     UIElement DictationPage()
     {
-        var page=new StackPanel{Margin=new(0,14,4,0)};
+        var page=new StackPanel{Margin=new(0,8,8,0)};
         var recording=new StackPanel();
         var microphoneRow=new DockPanel();
-        var refresh=Ui.Button("Refresh microphones",LoadMicrophones);refresh.Margin=new(10,0,0,0);refresh.MinHeight=40;
+        var refresh=Ui.Button("Refresh microphones",LoadMicrophones);refresh.Margin=new(16,8,0,8);refresh.MinHeight=48;
         DockPanel.SetDock(refresh,Dock.Right);microphoneRow.Children.Add(refresh);microphoneRow.Children.Add(microphone);
         Ui.Label(recording,"Microphone",microphoneRow);
         System.Windows.Automation.AutomationProperties.SetName(microphone,"Microphone");
         var modelRow=new Grid();modelRow.ColumnDefinitions.Add(new(){Width=new GridLength(1,GridUnitType.Star)});modelRow.ColumnDefinitions.Add(new(){Width=new GridLength(160)});
         var dictationChoice=new StackPanel{Margin=new(0,0,16,0)};Ui.Label(dictationChoice,"Dictation model",primary);modelRow.Children.Add(dictationChoice);
         var languageChoice=new StackPanel();Ui.Label(languageChoice,"Language",language);Grid.SetColumn(languageChoice,1);modelRow.Children.Add(languageChoice);recording.Children.Add(modelRow);
+        Ui.Label(recording,"Preferred Auto languages (supported by installed models)",preferredLanguages);
         modelStatus.FontSize=12;modelStatus.Margin=new(0,0,0,10);modelStatus.SetResourceReference(TextBlock.ForegroundProperty,"Muted");recording.Children.Add(modelStatus);
-        recording.Children.Add(live);recording.Children.Add(insert);page.Children.Add(recording);
-        var divider=new Border{Height=1,Margin=new(0,14,0,14)};divider.SetResourceReference(Border.BackgroundProperty,"Border");page.Children.Add(divider);
-        page.Children.Add(verify);
+        recording.Children.Add(Ui.SwitchRow("Live transcription",live,"Recognize speech while you record."));recording.Children.Add(Ui.SwitchRow("Insert live text at the cursor",insert,"Updates only the original, validated field."));page.Children.Add(Ui.Card(recording));
+        page.Children.Add(Ui.SwitchRow("Verify after recording",verify,"Compare with a second local model. Matching results insert automatically."));
         Ui.Label(verificationDetails,"Verification model",verifier);
         verificationStatus.FontSize=12;verificationStatus.SetResourceReference(TextBlock.ForegroundProperty,"Muted");verificationDetails.Children.Add(verificationStatus);
         page.Children.Add(verificationDetails);
-        return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
+        return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,MaxWidth=880,HorizontalAlignment=HorizontalAlignment.Stretch};
     }
 
     UIElement PreferencesPage()
     {
-        var page=new StackPanel{Margin=new(0,18,4,0)};
+        var page=new StackPanel{Margin=new(0,8,8,0)};
         var appearance=new StackPanel();appearance.Children.Add(Ui.Text("Appearance",18,true));
         Ui.Label(appearance,"Color theme",theme,"System follows Windows. Light and Dark override it.");
         page.Children.Add(Section(appearance));
-        var keyboard=new StackPanel();keyboard.Children.Add(Ui.Text("Keyboard shortcut",18,true));keyboard.Children.Add(shortcutEnabled);
+        var keyboard=new StackPanel();keyboard.Children.Add(Ui.Text("Keyboard shortcut",18,true));keyboard.Children.Add(Ui.SwitchRow("Enable keyboard shortcut",shortcutEnabled));
         Ui.Label(keyboard,"Start / stop recording",shortcutValue,"Examples: Ctrl+Shift, Ctrl+Alt+Space, Ctrl+Shift+D, Alt+F9.");
         shortcut.FontSize=12;keyboard.Children.Add(shortcut);
         var recheck=Ui.Button("Recheck shortcut",()=>{controller.RecheckShortcut();Refresh();});recheck.HorizontalAlignment=HorizontalAlignment.Left;keyboard.Children.Add(recheck);page.Children.Add(Section(keyboard));
@@ -136,12 +198,21 @@ public sealed class SettingsWindow : Window
         Ui.Label(service,"Local service address",endpoint,"The session service supplies your installed models and transcriptions.");
         service.Children.Add(Ui.Row(Ui.Button("Reconnect",()=>_ = Reconnect()),Ui.Button("Start local API",()=>_ = controller.StartLocalApi())));
         page.Children.Add(Section(service));
-        return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
+        var delivery=new StackPanel();delivery.Children.Add(Ui.Text("Application compatibility",20));
+        delivery.Children.Add(Ui.Text("Outlook inserts after Finish. Apps with a failed live insertion use final-only delivery on the next recording.",14));
+        delivery.Children.Add(compatibility);
+        resetCompatibility=Ui.Button("Re-enable live insertion for remembered apps",()=>
+        {
+            try{var saved=controller.ResetDeliveryCompatibility();Refresh();message.Text=saved?"Remembered applications cleared. Outlook still inserts after Finish.":controller.ConnectionMessage;}
+            catch(Exception ex) when(ex is IOException or UnauthorizedAccessException){message.Text="Could not save compatibility settings. "+ex.Message;}
+        });
+        resetCompatibility.HorizontalAlignment=HorizontalAlignment.Left;delivery.Children.Add(resetCompatibility);page.Children.Add(Section(delivery));
+        return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,MaxWidth=880,HorizontalAlignment=HorizontalAlignment.Stretch};
     }
 
     UIElement ModelsPage()
     {
-        var page=new StackPanel{Margin=new(0,18,4,0)};
+        var page=new StackPanel{Margin=new(0,8,8,0)};
         page.Children.Add(Ui.Text("Original models",18,true));
         page.Children.Add(Ui.Text("The Dictation dropdown lists installed models and the initial checked catalog. Runtime-tested and quality-checked are separate states.",13));
         page.Children.Add(Ui.Text("Test the selected Dictation model with a local audio file before using it for Verification. Testing sends audio only to this loopback API.",13));
@@ -160,31 +231,31 @@ public sealed class SettingsWindow : Window
         var cancel=Ui.Button("Cancel download",()=>_ = CancelDownload());cancel.IsEnabled=false;cancelDownload=cancel;
         page.Children.Add(Ui.Row(start,cancel));page.Children.Add(progress);page.Children.Add(importStatus);
         page.Children.Add(Ui.Text("Downloading does not prove transcription quality or live performance. A new model starts in after-recording mode. Closing this window does not cancel its download.",12));
-        return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
+        return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,MaxWidth=880,HorizontalAlignment=HorizontalAlignment.Stretch};
     }
 
     UIElement ReviewPage()
     {
-        var page=new StackPanel{Margin=new(0,18,4,0)};
+        var page=new StackPanel{Margin=new(0,8,8,0)};
         page.Children.Add(Ui.Text("Pending Review",18,true));
         page.Children.Add(Ui.Text("Unfinished text and choices are protected for this Windows user. The latest 20 dictations and their audio are also available in History.",13));
         page.Children.Add(reviews);
         reviews.MouseDoubleClick+=(_,_)=>OpenSelected();
         page.Children.Add(Ui.Button("_Open selected Review",OpenSelected));
         page.Children.Add(Ui.Text("Copy and Close keep an item. Use Dismiss inside Review to remove it.",12));
-        return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
+        return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,MaxWidth=880,HorizontalAlignment=HorizontalAlignment.Stretch};
     }
     UIElement HistoryPage()
     {
-        var page=new StackPanel{Margin=new(0,18,4,0)};
+        var page=new StackPanel{Margin=new(0,8,8,0)};
         page.Children.Add(Ui.Text("Recent dictations",18,true));
         page.Children.Add(Ui.Text("Keep the latest 20 transcripts and recordings. Open History to play audio, copy text, export a WAV, or remove an item.",13));
         var open=Ui.Button("Open transcript and audio history",controller.ShowHistory);
-        open.HorizontalAlignment=HorizontalAlignment.Left;page.Children.Add(open);return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
+        open.HorizontalAlignment=HorizontalAlignment.Left;page.Children.Add(open);return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,MaxWidth=880,HorizontalAlignment=HorizontalAlignment.Stretch};
     }
 
     static FrameworkElement Section(FrameworkElement content)
-    {content.Margin=new(0,0,0,24);return content;}
+    {return Ui.Card(content);}
 
     void LoadMicrophones()
     {
@@ -229,10 +300,13 @@ public sealed class SettingsWindow : Window
         try
         {
             connection.Text=controller.ConnectionMessage;
+            resetCompatibility.Visibility=controller.Settings.FinalOnlyApplications.Count>0?Visibility.Visible:Visibility.Collapsed;
+            compatibility.Text=controller.Settings.FinalOnlyApplications.Count==0?"No applications remembered.":"Final-only: "+string.Join(", ",controller.Settings.FinalOnlyApplications.OrderBy(name=>name,StringComparer.OrdinalIgnoreCase));
             shortcut.Text=controller.ShortcutMessage;
             record.Content=controller.IsRecording?"Stop recording":"Record in banner";
             System.Windows.Automation.AutomationProperties.SetName(record,(string)record.Content);
-            record.IsEnabled=controller.IsRecording||controller.Connected;
+            record.IsEnabled=!controller.HasClipboardRecovery&&(controller.IsRecording||controller.Connected);
+            recovery.Visibility=controller.HasClipboardRecovery?Visibility.Visible:Visibility.Collapsed;
             var selected=primary.SelectedValue as string??controller.Settings.PrimaryModel;
             primary.ItemsSource=controller.Models;primary.SelectedValue=selected;
             if(initial)
@@ -259,8 +333,9 @@ public sealed class SettingsWindow : Window
     void UpdateModelChoices(bool userChange)
     {
         var selected=primary.SelectedItem as ModelInfo;
+        RefreshLanguageChoices();
         var previous=userChange||selectionPending?verifier.SelectedValue as string??controller.Settings.VerificationModel:controller.Settings.VerificationModel;
-        var choices=controller.Models.Where(m=>selected!=null&&m.Id!=selected.Id&&ModelEligibility.CanVerify(m,language.SelectedItem as string??"sk",selected)).ToList();
+        var choices=controller.Models.Where(m=>selected!=null&&m.Id!=selected.Id&&ModelEligibility.CanVerify(m,language.SelectedItem as string??"sk",selected,controller.Settings.PreferredLanguages)).ToList();
         verifier.ItemsSource=choices;
         var eligible=choices.FirstOrDefault(m=>m.Id==previous);
         if(userChange)eligible??=choices.FirstOrDefault();
@@ -327,7 +402,7 @@ public sealed class SettingsWindow : Window
             if(model!=null&&selectedLanguage!="auto"&&!model.Languages.Contains(selectedLanguage))
                 throw new ArgumentException("The selected model does not support this language.");
             var verification=verifier.SelectedValue as string??(controller.Models.Count==0?controller.Settings.VerificationModel:null);
-            if(verify.IsChecked==true&&controller.Models.Count>0&&(verification==null||model==null||!controller.Models.Any(m=>m.Id==verification&&m.Id!=model.Id&&ModelEligibility.CanVerify(m,selectedLanguage,model))))
+            if(verify.IsChecked==true&&controller.Models.Count>0&&(verification==null||model==null||!controller.Models.Any(m=>m.Id==verification&&m.Id!=model.Id&&ModelEligibility.CanVerify(m,selectedLanguage,model,value.PreferredLanguages))))
                 throw new ArgumentException("Choose an eligible Verification model.");
             value.PrimaryModel=model?.Id??controller.Settings.PrimaryModel;value.VerificationModel=verification;
             value.VerifyAfterRecording=verify.IsChecked==true;value.Live=live.IsChecked==true;value.Language=selectedLanguage;

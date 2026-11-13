@@ -5,5 +5,7 @@
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1"><PrivateAssets>all</PrivateAssets></PackageReference>
     <ProjectReference Include="../../src/LocalDictation.Core/LocalDictation.Core.csproj" />
+    <!-- Actual windowless worker source; tests never create App or call native UIA. -->
+    <Compile Include="../../src/LocalDictation.App/Services/AutomationWorker.cs" Link="Production/AutomationWorker.cs" />
   </ItemGroup>
 </Project>
