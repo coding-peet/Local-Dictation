@@ -21,7 +21,8 @@ public sealed partial class SettingsWindow : Window
     public void SelectHistory()=>navigation.SelectedIndex=2;
     readonly TextBlock connection=Ui.Text(""), shortcut=Ui.Text(""), message=Ui.Text(""), importStatus=Ui.Text(""), modelStatus=Ui.Text(""), verificationStatus=Ui.Text(""), saveStatus=Ui.Text("");
     readonly TextBox endpoint=new(), repository=new();
-    readonly TextBox shortcutValue=new();
+    readonly Button shortcutValue;
+    readonly Func<bool> focusShortcutRecorder;
     readonly ComboBox theme=new(){ItemsSource=new[]{"System","Light","Dark"}};
     readonly ComboBox afterRecording=new(){ItemsSource=new[]{"Insert directly","Preview first"}};
     FrameworkElement liveInsertRow=null!;
@@ -44,7 +45,7 @@ public sealed partial class SettingsWindow : Window
     Button resetCompatibility=null!;
     Button download=null!,cancelDownload=null!,checkModel=null!,testModel=null!,removeModel=null!;
     readonly Button record;
-    readonly ProgressBar progress=new(){Minimum=0,Maximum=100,Height=6,Margin=new(0,6,0,8)};
+    readonly ProgressBar progress=new(){Minimum=0,Maximum=100,Height=6,Margin=new(0,6,0,8),Visibility=Visibility.Collapsed};
     readonly DispatcherTimer poll=new(){Interval=TimeSpan.FromSeconds(1)};
     readonly DispatcherTimer saveDelay=new(){Interval=TimeSpan.FromMilliseconds(650)};
     readonly HashSet<TextBox> pendingText=[];
@@ -59,16 +60,19 @@ public sealed partial class SettingsWindow : Window
     internal SettingsWindow(AppController controller,bool enumerateMicrophones)
     {
         this.controller=controller;
+        shortcutValue=Ui.Button("",ToggleShortcutCapture);
+        focusShortcutRecorder=()=>shortcutValue.Focus()&&shortcutValue.IsKeyboardFocusWithin;
         this.enumerateMicrophones=enumerateMicrophones;
         PreviewKeyDown+=OnSettingsKey;
         Title="Local Dictation";Width=1040;Height=820;MinWidth=640;MinHeight=620;
         WindowStartupLocation=WindowStartupLocation.CenterScreen;
-        record=Ui.Button("Record in banner",RecordInBanner,true);
+        record=Ui.Button("Record",RecordInBanner,true);
         var pages=new[]{DictationPage(),ModelsPage(),HistoryPage(),PreferencesPage()};
         shell=new MainWindowShell(navigation,pages,record,Ui.Button("Help",OpenHelp),
             connection,saveStatus,message,index=>historyPanel?.SetActive(index==2));
         Content=shell;
         ConfigureSettingsSearch();
+        ConfigureShortcutCapture();
         controller.Changed+=Refresh;
         Closing+=(_,_)=>CommitTextEdits();
         Closed+=(_,_)=>{closed=true;controller.Changed-=Refresh;shell.Dispose();poll.Stop();saveDelay.Stop();historyPanel?.Dispose();};
@@ -76,7 +80,7 @@ public sealed partial class SettingsWindow : Window
         foreach(var box in new[]{microphone,primary,verifier,language,theme,afterRecording})box.SelectionChanged+=(_,_)=>SelectionChanged(box);
         foreach(var check in new[]{live,verify,insert,shortcutEnabled})
         {check.Checked+=(_,_)=>SelectionChanged(check);check.Unchecked+=(_,_)=>SelectionChanged(check);}
-        foreach(var text in new[]{endpoint,shortcutValue})
+        foreach(var text in new[]{endpoint})
         {
             text.TextChanged+=(_,_)=>QueueTextEdit(text);
             text.LostKeyboardFocus+=(_,_)=>CommitTextEdits(text);
@@ -127,7 +131,15 @@ public sealed partial class SettingsWindow : Window
         var modelRow=new Grid();modelRow.ColumnDefinitions.Add(new(){Width=new GridLength(1,GridUnitType.Star)});modelRow.ColumnDefinitions.Add(new(){Width=new GridLength(160)});
         var dictationChoice=new StackPanel{Margin=new(0,0,16,0)};Ui.Label(dictationChoice,"Dictation model",primary);modelRow.Children.Add(dictationChoice);
         var languageChoice=new StackPanel();Ui.Label(languageChoice,"Language",language);Grid.SetColumn(languageChoice,1);modelRow.Children.Add(languageChoice);recording.Children.Add(modelRow);
-        Ui.Label(recording,"Preferred Auto languages (supported by installed models)",preferredLanguages);
+        var preferredHeading=new DockPanel{Margin=new(0,4,0,0)};
+        var preferredHelp=SettingsHelp.Create("Preferred Auto languages","Choose the languages you use. In Auto, recognition chooses among your preferred languages supported by the active model. Changes apply to the next recording. Live preview may arrive several seconds after speech, depending on the model and hardware; Finish completes the final transcript.");
+        DockPanel.SetDock(preferredHelp,Dock.Right);preferredHeading.Children.Add(preferredHelp);
+        var preferredCaption=new WrapPanel{VerticalAlignment=VerticalAlignment.Center};
+        var preferredTitle=Ui.Text("Preferred Auto languages",13,true);preferredTitle.FontSize=13;preferredTitle.Margin=new(0);preferredTitle.VerticalAlignment=VerticalAlignment.Center;preferredCaption.Children.Add(preferredTitle);
+        var preferredQualifier=Ui.Text("(supported by installed models)",11);preferredQualifier.FontSize=11;preferredQualifier.Margin=new(8,0,0,0);preferredQualifier.VerticalAlignment=VerticalAlignment.Center;preferredQualifier.SetResourceReference(TextBlock.ForegroundProperty,"Muted");preferredCaption.Children.Add(preferredQualifier);
+        preferredHeading.Children.Add(preferredCaption);recording.Children.Add(preferredHeading);recording.Children.Add(preferredLanguages);
+        System.Windows.Automation.AutomationProperties.SetName(preferredLanguages,"Preferred Auto languages");
+        System.Windows.Automation.AutomationProperties.SetHelpText(preferredLanguages,System.Windows.Automation.AutomationProperties.GetHelpText(preferredHelp));
         modelStatus.FontSize=12;modelStatus.Margin=new(0,0,0,10);modelStatus.SetResourceReference(TextBlock.ForegroundProperty,"Muted");recording.Children.Add(modelStatus);
         Ui.Label(recording,"After recording",afterRecording,"Insert directly places completed text at the validated original cursor. Preview first opens Review and leaves the destination unchanged until you use Insert. Verification can be combined with either choice.");
         recording.Children.Add(Ui.SwitchRow("Live transcription",live,"Recognize speech while you record. Live recognition can stay on in Preview first."));
@@ -148,10 +160,7 @@ public sealed partial class SettingsWindow : Window
         var appearance=new StackPanel();appearance.Children.Add(Ui.Text("Appearance",18,true));
         Ui.Label(appearance,"Color theme",theme,"System follows Windows. Light and Dark override it.");
         page.Children.Add(Section(appearance));
-        var keyboard=new StackPanel();keyboard.Children.Add(Ui.Text("Keyboard shortcut",18,true));keyboard.Children.Add(Ui.SwitchRow("Enable keyboard shortcut",shortcutEnabled));
-        Ui.Label(keyboard,"Start / stop recording",shortcutValue,"Examples: Ctrl+Shift, Ctrl+Alt+Space, Ctrl+Shift+D, Alt+F9.");
-        shortcut.FontSize=12;keyboard.Children.Add(shortcut);
-        var recheck=Ui.Button("Recheck shortcut",()=>{controller.RecheckShortcut();Refresh();});recheck.HorizontalAlignment=HorizontalAlignment.Left;keyboard.Children.Add(recheck);page.Children.Add(Section(keyboard));
+        page.Children.Add(Section(ShortcutSection()));
         var service=new StackPanel();service.Children.Add(Ui.Text("Local transcription service",18,true));
         Ui.Label(service,"Local service address",endpoint,"The session service supplies your installed models and transcriptions.");
         service.Children.Add(Ui.Row(Ui.Button("Reconnect",()=>_ = Reconnect()),Ui.Button("Start local API",()=>_ = controller.StartLocalApi())));
@@ -174,7 +183,10 @@ public sealed partial class SettingsWindow : Window
         var installed=new StackPanel();installed.Children.Add(Ui.Text("Installed models",18,true));
         installedModels.Columns.Add(new DataGridTextColumn{Header="Model",Binding=new Binding(nameof(InstalledModelRow.Name)),Width=new DataGridLength(1,DataGridLengthUnitType.Star),MinWidth=140});
         installedModels.Columns.Add(new DataGridTextColumn{Header="Test",Binding=new Binding(nameof(InstalledModelRow.Test)),Width=new DataGridLength(1,DataGridLengthUnitType.Star),MinWidth=110});
-        installedModels.Columns.Add(new DataGridTextColumn{Header="Live",Binding=new Binding(nameof(InstalledModelRow.Live)),Width=new DataGridLength(120),MinWidth=100});
+        var liveStyle=new Style(typeof(TextBlock),DataGridTextColumn.DefaultElementStyle);
+        liveStyle.Setters.Add(new Setter(TextBlock.TextWrappingProperty,TextWrapping.Wrap));
+        liveStyle.Setters.Add(new Setter(FrameworkElement.VerticalAlignmentProperty,VerticalAlignment.Center));
+        installedModels.Columns.Add(new DataGridTextColumn{Header="Live",Binding=new Binding(nameof(InstalledModelRow.Live)),Width=new DataGridLength(120),MinWidth=100,ElementStyle=liveStyle});
         System.Windows.Automation.AutomationProperties.SetName(installedModels,"Installed models");
         installedModels.SelectionChanged+=(_,_)=>UpdateModelActions();
         installed.Children.Add(installedModels);installed.Children.Add(installedEmpty);
@@ -216,6 +228,7 @@ public sealed partial class SettingsWindow : Window
     void UpdateModelActions()
     {
         var model=SelectedInstalledModel();
+        progress.Visibility=job==null?Visibility.Collapsed:Visibility.Visible;
         testModel.IsEnabled=model!=null&&controller.Connected&&!controller.IsBusy&&!modelActionBusy;
         removeModel.IsEnabled=model?.CanRemove==true&&controller.Connected&&!controller.IsBusy&&!modelActionBusy&&job==null;
         removalReason.Text=model==null?"Select an installed model.":
@@ -277,12 +290,13 @@ public sealed partial class SettingsWindow : Window
             connection.Text=controller.ConnectionMessage;
             resetCompatibility.Visibility=controller.Settings.FinalOnlyApplications.Count>0?Visibility.Visible:Visibility.Collapsed;
             compatibility.Text=controller.Settings.FinalOnlyApplications.Count==0?"No applications remembered.":"Final-only: "+string.Join(", ",controller.Settings.FinalOnlyApplications.OrderBy(name=>name,StringComparer.OrdinalIgnoreCase));
-            shortcut.Text=controller.ShortcutMessage;
-            record.Content=controller.IsRecording?"Stop recording":"Record in banner";
+            shortcut.Text=shortcutCapturing?"Current shortcut: "+controller.Settings.Shortcut:controller.ShortcutMessage;
+            record.Content=controller.IsRecording?"Stop":"Record";
+            record.ToolTip=controller.IsRecording?"Finish the current dictation.":"Record a dictation for Review. To dictate at an external cursor, use your recording shortcut.";
             System.Windows.Automation.AutomationProperties.SetName(record,(string)record.Content);
             record.IsEnabled=!controller.HasClipboardRecovery&&(controller.IsRecording||controller.Connected);
             var selected=primary.SelectedValue as string??controller.Settings.PrimaryModel;
-            primary.ItemsSource=controller.Models;primary.SelectedValue=selected;
+            primary.ItemsSource=controller.Models.Where(m=>m.Installed).ToList();primary.SelectedValue=selected;
             if(initial)
             {
                 endpoint.Text=controller.Settings.Endpoint;
@@ -290,11 +304,11 @@ public sealed partial class SettingsWindow : Window
                 insert.IsChecked=controller.Settings.InsertAtCursor;shortcutEnabled.IsChecked=controller.Settings.EnableShortcut;
                 afterRecording.SelectedIndex=(int)controller.Settings.AfterRecording;
                 if(afterRecording.SelectedIndex is not (0 or 1))selectionError="Choose Insert directly or Preview first under After recording.";
-                shortcutValue.Text=controller.Settings.Shortcut;theme.SelectedItem=controller.Settings.Theme;
+                RefreshShortcutPresentation();theme.SelectedItem=controller.Settings.Theme;
                 language.SelectedItem=controller.Settings.Language;LoadMicrophones();
             }
             UpdateModelChoices(false);
-            UpdateOutputDependencies();
+            UpdateOutputDependencies();UpdateShortcutOptions();
             UpdateSaveStatus();
             var selectedInstalled=SelectedInstalledModel()?.Id;
             var installed=controller.Models.Where(m=>m.Installed).Select(m=>new InstalledModelRow(m)).ToList();
@@ -353,7 +367,7 @@ public sealed partial class SettingsWindow : Window
             !selected.Installed?"This catalog model is not installed.":
             !selected.RuntimeTested?"Installed. Run a model test before first use.":
             !selected.LiveSupported?"After-recording transcription only.":
-            !selected.LiveReady?"Live preview latency may be several seconds.":"";
+            "";
         modelStatus.Visibility=modelStatus.Text.Length>0?Visibility.Visible:Visibility.Collapsed;
     }
 
@@ -442,7 +456,7 @@ public sealed partial class SettingsWindow : Window
             {
                 if(text==endpoint)
                 {var candidate=Snapshot();candidate.Endpoint=text.Text.Trim();candidate.ServerUri();value.Endpoint=candidate.Endpoint;}
-                else value.Shortcut=ShortcutSpec.Parse(text.Text).ToString();
+
                 textErrors.Remove(text);valid.Add(text);
             }
             catch(ArgumentException ex){textErrors[text]=ex.Message;pendingText.Remove(text);}
@@ -461,7 +475,7 @@ public sealed partial class SettingsWindow : Window
     void UpdateSaveStatus()
     {
         var discreteError=selectionPending&&selectionError.Length==0&&saveError.Length==0?"Your option changes are not saved. Select the choice again to retry.":"";
-        var errors=new[]{selectionError,saveError,discreteError}.Where(error=>error.Length>0).Concat(textErrors.Values).Distinct().ToArray();
+        var errors=new[]{selectionError,saveError,discreteError,shortcutError}.Where(error=>error.Length>0).Concat(textErrors.Values).Distinct().ToArray();
         var failed=errors.Length>0;
         saveStatus.SetResourceReference(TextBlock.ForegroundProperty,failed?"Warning":"Muted");
         saveStatus.Text=failed?"Not saved: "+string.Join(" ",errors):pendingText.Count>0?"Saving…":

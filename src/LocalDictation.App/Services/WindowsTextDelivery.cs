@@ -998,18 +998,24 @@ public sealed class WindowsTextDelivery : ITextDelivery
     static int Integrity(int pid)
     {
         var process = OpenProcess(0x1000, false, pid);
-        if (process == 0) throw new Win32Exception("Cannot validate destination privileges.");
+        if (process == 0) throw IntegrityFailure(pid,"open-process","Cannot validate destination privileges.");
         nint token = 0, data = 0;
         try
         {
-            if (!OpenProcessToken(process, 8, out token)) throw new Win32Exception("Cannot validate destination token.");
+            if (!OpenProcessToken(process, 8, out token)) throw IntegrityFailure(pid,"open-token","Cannot validate destination token.");
             GetTokenInformation(token, 25, 0, 0, out var size);
             data = Marshal.AllocHGlobal(size);
-            if (!GetTokenInformation(token, 25, data, size, out _)) throw new Win32Exception("Cannot validate destination integrity.");
+            if (!GetTokenInformation(token, 25, data, size, out _)) throw IntegrityFailure(pid,"read-integrity","Cannot validate destination integrity.");
             var sid = Marshal.ReadIntPtr(data);
             var count = Marshal.ReadByte(GetSidSubAuthorityCount(sid));
             return Marshal.ReadInt32(GetSidSubAuthority(sid, (uint)(count - 1)));
         }
         finally { if (data != 0) Marshal.FreeHGlobal(data); if (token != 0) CloseHandle(token); CloseHandle(process); }
+    }
+    static Win32Exception IntegrityFailure(int pid,string operation,string message)
+    {
+        var error=new Win32Exception(Marshal.GetLastWin32Error(),message);
+        error.Data["NativeTargetProcessId"]=pid;error.Data["IntegrityOperation"]=operation;
+        return error;
     }
 }

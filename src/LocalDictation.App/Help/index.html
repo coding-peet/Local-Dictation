@@ -187,7 +187,7 @@
             <h3>Insert the result after recording</h3>
             <p>Choose <strong>After recording → Insert directly</strong> and turn off <strong>Insert live text at the cursor</strong>, then start with the shortcut from your destination field. The setting saves automatically.</p>
             <p>Recognition continues without live cursor insertion. Finish in the original field to insert automatically; finishing elsewhere keeps the result for the small Insert action.</p>
-            <p><strong>Record in banner</strong> starts from the app window without an external cursor. When the text is ready, click the destination field and use <strong>Insert</strong>.</p>
+            <p><strong>Record</strong> starts from the app window without an external cursor. When the text is ready, click the destination field and use <strong>Insert</strong>.</p>
           </div>
         </div>
         <h3>Preview before inserting</h3>
@@ -315,7 +315,7 @@
         </ol>
         <p>Use <strong>Cancel download</strong> to stop a download. Closing the window does not cancel it. Installed models stay in the upper table. A different eligible model that has passed an audio test can be selected for Verification.</p>
         <p>The small banner language indicator shows the actual result, such as <strong>Auto · SK</strong> or <strong>Auto · EN</strong>. Before detection it shows <strong>Auto · …</strong>. A fixed language shows its code, such as <strong>SK</strong> or <strong>ES</strong>.</p>
-        <p>Under <strong>Preferred Auto languages (supported by installed models)</strong>, use <strong>+</strong> to add a language supported by installed models, or remove a tag with its ×. With tags selected, Auto chooses only among those supported by the selected model, and the banner correction picker offers only your preferred languages. Remove all tags to use and offer every supported language. The initial SK and EN tags exclude Russian, Serbian and Czech. This restriction is not a confidence or accuracy guarantee.</p>
+        <p>Under <strong>Preferred Auto languages</strong>, use <strong>+</strong> to add a language supported by installed models, or remove a tag with its ×. With tags selected, Auto chooses only among those supported by the selected model, and the banner correction picker offers only your preferred languages. Remove all tags to use and offer every supported language. The initial SK and EN tags exclude Russian, Serbian and Czech. This restriction is not a confidence or accuracy guarantee. The local information icon explains these preferences and possible live-preview delay; the smaller gray qualifier identifies model support.</p>
         <p>The small model name beside the phase identifies the Dictation model while recording and the Verification model during Verify. Hover the name to see its full identity and role.</p>
         <p>Click the banner language to reprocess the same recording in another language. The choice names any required model switch. While recording, keep dictating and press your usual shortcut to Finish; the new pass then uses the original audio without recording again. Escape also cancels a queued pass. If you change focus after Finish, the result waits for explicit Insert.</p>
         <p>After the banner closes, use <strong>History → More actions (⋯) → Change language…</strong>. This creates a new Review and preserves the previous transcript and edits. It never automatically replaces text already inserted elsewhere. Audio is retained even when recognition returned no text.</p>
@@ -324,14 +324,16 @@
 
       <section id="history" aria-labelledby="history-title">
         <h2 id="history-title">History and original audio</h2>
+        <p>Move the pointer into the gap between the recording list and transcript, then drag to resize them. The divider line is hidden until you hover or focus it with the keyboard. With the divider focused, use the arrow keys for small adjustments. Narrow windows stack the panes and hide the divider; widening restores your preferred width. The thin scrollbars keep more space for the content.</p>
+        <p>The record count appears in the selected detail header. Empty History explains how to create the first dictation.</p>
         <p>Select <strong>History</strong> in the main window. <strong>History</strong> in the notification-area menu opens this same section. The list includes recordings and text marked Needs review. Text-only items remain available even when their original audio is gone.</p>
         <ul>
-          <li>The <strong>Play</strong>, <strong>Pause</strong> and <strong>Stop</strong> icons control the selected original recording. Pause keeps your position; Stop returns to the beginning.</li>
+          <li>The <strong>Play</strong>, <strong>Pause</strong> and <strong>Stop</strong> icons control the selected original recording. Pause keeps your position; Stop returns to the beginning. The compact player keeps the buttons, timeline and elapsed/total time on one line. Hover for playback state; playback failures remain visible.</li>
           <li>Drag the round timeline thumb to seek. Elapsed/total time show your position. The faint waveform behind the slider shows RMS energy on a fixed scale; loud isolated peaks do not shrink the rest of the recording. With the slider focused, Left/Right move one second; Page Up/Page Down move five seconds. Selecting a recording does not play it.</li>
           <li><strong>Copy text</strong> copies the current transcript.</li>
           <li><strong>Open Review</strong> opens the item's current text in the separate compact Review window. Select <strong>Details</strong> for its original wordings and recording information. Reopening an item does not insert it.</li>
           <li><strong>More actions (⋯) → Save audio…</strong> exports an ordinary WAV to a location you choose.</li>
-          <li><strong>More actions (⋯) → Delete…</strong> removes the selected dictation, recording and saved review choices after confirmation.</li>
+          <li>The small <strong>×</strong> beside each row deletes that dictation after confirmation. The prompt identifies its date and time and starts with Cancel selected. Select Delete to confirm. Confirming removes its recording, transcript and saved Review choices. <strong>More actions (⋯) → Delete…</strong> uses the same confirmation for the selected item.</li>
         </ul>
         <div class="callout">
           <strong>History keeps the latest 20 dictations with audio.</strong>
@@ -355,23 +357,39 @@
       <section id="settings" aria-labelledby="settings-title">
         <h2 id="settings-title">Settings and shortcuts</h2>
         <p>The <strong>Dictation</strong> section groups the microphone, model, language, <strong>After recording</strong> and both live options. <strong>Insert live text at the cursor</strong> sits directly below <strong>Live transcription</strong>. Enable <strong>Verify after recording</strong> to show its additional settings. Verification works with either output choice; it takes extra time and does not guarantee correctness.</p>
-        <p><strong>Search settings</strong> above the named menu finds settings by name, category, description or keyword. Press <kbd>Ctrl</kbd> + <kbd>F</kbd> to focus it, then select a result or press Enter. The app opens and scrolls to that setting. Hidden dependent options lead to their prerequisite without changing it. Press <kbd>Esc</kbd> to clear search. Small information icons beside settings explain them on hover, click or keyboard activation; the same text is available to screen readers.</p>
-        <p>Open the <strong>Settings</strong> section for appearance, shortcut, and local service preferences. Connection and automatic saving status share one row at the top of the window.</p>
+        <p><strong>Search settings</strong> at the upper left, above the named menu, finds settings by name, category, description or keyword. Press <kbd>Ctrl</kbd> + <kbd>F</kbd> to focus it, then select a result or press Enter. The app opens and scrolls to that setting. Hidden dependent options lead to their prerequisite without changing it. Search also finds recording shortcut behavior with terms such as hold, press or toggle. Press <kbd>Esc</kbd> to clear search. Small information icons beside settings explain them on hover, click or keyboard activation; the same text is available to screen readers.</p>
+        <p><strong>Record</strong> above Help in the navigation footer starts a dictation for Review; while recording it becomes <strong>Stop</strong>. For automatic delivery to an external cursor, start with your recording shortcut in that field. <strong>Help</strong> stays at the bottom of the navigation panel and is also available with <kbd>F1</kbd>.</p>
+        <p>Open the <strong>Settings</strong> section for appearance, shortcut, and local service preferences. Recording and connection state appear in the bottom status bar. Automatic saving feedback shares that area on Dictation and Settings; saving failures remain visible on every section. Important global warnings expand above the content. The native title bar identifies the app, leaving more room for your text.</p>
         <dl>
           <dt>Appearance</dt>
           <dd><strong>System</strong> follows Windows at app startup. <strong>Light</strong> / <strong>Dark</strong> override it. Preview is immediate and saves automatically. Windows high contrast takes priority.</dd>
           <dt>Recording shortcut</dt>
-          <dd>Enable the shortcut and check the automatic saving status. Default: <kbd>Ctrl</kbd> + <kbd>Shift</kbd>. Alternatives: <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Space</kbd>, <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>D</kbd>, <kbd>Alt</kbd> + <kbd>F9</kbd>. Use Ctrl/Shift/Alt with Space, letters, digits, or F1–F24.</dd>
+          <dd>
+            <p>Use <strong>Enable</strong> in the Keyboard shortcut header. Choose
+              <strong>Press to start/stop</strong> to toggle recording with each press,
+              or <strong>Hold to record</strong> to record while the complete shortcut
+              is held and finish when one of its keys is released. The default is Press.</p>
+            <p>The current combination appears as keycaps. Select the pencil icon to
+              change it, press the new combination and release every key to save.
+              <strong>Listening…</strong> shows when capture is active. Escape, Tab,
+              the cancel icon or leaving the control abandons the change. A successful
+              save ends Listening automatically. Shortcut editing waits until the
+              current recording or transcription has finished.</p>
+            <p>Default: <kbd>Ctrl</kbd> + <kbd>Shift</kbd>. You can also use Ctrl/Shift/Alt
+              with Space, letters, digits or F1–F24. Modifier-only combinations can
+              overlap other applications' shortcuts, especially in Hold mode; a
+              combination with a dedicated key reduces that overlap. Changes made
+              during a held recording apply after its release or cancellation.</p>          </dd>
           <dt>Saving</dt>
           <dd>Valid model, microphone, language, appearance, and toggle changes save automatically. Text settings save after a short pause or focus change. Invalid text shows an error and leaves the previous valid configuration active. During a session, changes apply to the next recording.</dd>
           <dt>Help</dt>
-          <dd><kbd>F1</kbd> or <strong>Help</strong> in the main header opens this local guide in your default browser. <kbd>Ctrl</kbd> + <kbd>F</kbd> searches; the browser's Print command makes a paper/PDF copy.</dd>
+          <dd><kbd>F1</kbd> or <strong>Help</strong> at the bottom of the navigation panel opens this local guide in your default browser. <kbd>Ctrl</kbd> + <kbd>F</kbd> searches; the browser's Print command makes a paper/PDF copy.</dd>
         </dl>
         <h3>Close Settings or exit the app</h3>
         <p>The title-bar <strong>×</strong> closes the main window; the app stays available in the Windows notification area. Choose <strong>Exit</strong> from its notification-area menu to quit.</p>
         <p>If a session is active, Exit asks to stop it, then waits while it saves the received text and original recording before closing. Stopping this way keeps the text for Review and does not complete automatic insertion. Captured audio can appear in History even if recognition returned no text. If protected Review saving fails, the app stays open so you can copy or explicitly dismiss the unsaved text.</p>
         <h3>Local transcription service</h3>
-        <p>If offline, use <strong>Start local API</strong>, wait for preparation, then <strong>Reconnect</strong>. Disconnected clients also retry automatically.</p>
+        <p>The app starts its local transcription service automatically when it opens. An existing listener is preserved, including while its runtime prepares. Wait for <strong>Ready · Local transcription</strong> before recording; reconnection is automatic. If startup fails, correct the service address or launcher problem and use <strong>Start local API</strong> to retry. Closing the app leaves the service running.</p>
         <p>Current address: <code>http://127.0.0.1:48125</code>. TypeWhisper's separate batch server on port <code>8123</code> is not this client's session service.</p>
       </section>
 
@@ -380,7 +398,7 @@
         <details open>
           <summary>No models appear, or the service is offline</summary>
           <ol>
-            <li>Open <strong>Settings → Local transcription service</strong> and select <strong>Start local API</strong>.</li>
+            <li>The app starts its service automatically. If it remains offline, open <strong>Settings → Local transcription service</strong> and select <strong>Start local API</strong> to retry.</li>
             <li>Wait for preparation, then select <strong>Reconnect</strong>. Confirm the address points to the session service.</li>
             <li>Check that the required model is installed on the <strong>Models</strong> section.</li>
           </ol>
@@ -388,6 +406,7 @@
         <details>
           <summary>The shortcut does nothing</summary>
           <ol>
+            <li>Check the connection status first. If the local transcription service is offline, open <strong>Settings → Local transcription service</strong> and select <strong>Start local API</strong>. Wait for the service to prepare and reconnect. Starting dictation while offline opens Settings without a recording banner.</li>
             <li>Check <strong>Enable keyboard shortcut</strong> and read the saving and shortcut status.</li>
             <li>If TypeWhisper is running, the shared default <kbd>Ctrl</kbd> + <kbd>Shift</kbd> is disabled here. Quit TypeWhisper and use <strong>Recheck shortcut</strong>, or choose a different shortcut.</li>
             <li>A test launch with <code>--no-hotkey</code> disables shortcuts. Relaunch normally. Also check whether another app uses the same key combination.</li>
@@ -411,7 +430,7 @@
           <p>If only the beginning of a dictation appeared, the full transcript remains in History with its review status. A live correction must validate the text already inserted before replacing it. A range warning means delivery stopped; inspect the partial text before choosing another destination so it is not inserted twice.</p>
           <p>A slow accessibility check can temporarily pause delivery. Once that check has ended, fresh live updates can resume in the same unchanged field. An uncertain insertion is never repeated automatically. The clipboard returns independently; your transcript remains available through Insert.</p>
           <p>Return to the original field and leave its text unchanged. The destination must expose reliable editable text and selection access. A protected, elevated, unsupported, closed, or manually edited field cannot be used automatically. Continue through Review and <strong>Choose destination</strong>.</p>
-          <p><strong>Record in banner</strong> starts from the app window and needs a destination selection. For an automatic final return without live insertion, choose <strong>Insert directly</strong>, turn off <strong>Insert live text at the cursor</strong> and start with the shortcut from the destination field. <strong>Preview first</strong> always waits for explicit Insert.</p>
+          <p><strong>Record</strong> starts from the app window and needs a destination selection. For an automatic final return without live insertion, choose <strong>Insert directly</strong>, turn off <strong>Insert live text at the cursor</strong> and start with the shortcut from the destination field. <strong>Preview first</strong> always waits for explicit Insert.</p>
         </details>
         <details>
           <summary>A wording choice or final insertion could not finish</summary>
@@ -429,6 +448,7 @@
         </details>
         <details>
           <summary>Insertion is unconfirmed, or Windows is busy with the clipboard</summary>
+          <p>If Insert cannot validate the destination, Review shows the failure while keeping your edited text. A Windows access-check failure includes its numeric error code. Select the destination field and try Insert again; keep the code if the problem repeats.</p>
           <p>The transcript stays in the banner with <strong>Insert</strong>. Your clipboard returns after every attempt; it does not wait for the destination to confirm. Check whether text already arrived before retrying so that you do not insert it twice. Insert uses your newly selected external cursor and a fresh clipboard backup.</p>
           <p>The app briefly checks an unchanged original field without sending text again. If it can confirm the existing insertion, the banner closes. Otherwise it stays until you retry successfully or use <strong>X</strong>. X hides the banner and keeps your protected text in History.</p>
           <p>If another application locks the clipboard, Local Dictation retains the complete backup and retries restoration automatically. A newer copy takes priority. Settings shows the temporary error without opening another window. A genuine restoration failure can briefly prevent another insertion or normal Exit; an unconfirmed insertion alone does not.</p>

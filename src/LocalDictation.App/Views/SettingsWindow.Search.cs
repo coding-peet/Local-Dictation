@@ -12,6 +12,7 @@ public sealed partial class SettingsWindow
 
     void OnSettingsKey(object sender,KeyEventArgs e)
     {
+        if(shortcutCapturing)return;
         if(e.Key==Key.F&&Keyboard.Modifiers==ModifierKeys.Control)
         {shell.Search.FocusSearch();e.Handled=true;return;}
         if(e.Key==Key.Escape&&shell.Search.IsQueryActive)
@@ -46,7 +47,8 @@ public sealed partial class SettingsWindow
         Add("add-model",1,repository,"Public Hugging Face URL","Check size and compatibility before downloading a public model.","add install repository custom");
         Add("theme",3,theme,"Color theme","Follow Windows or choose Light or Dark.","appearance system");
         Add("enable-shortcut",3,shortcutEnabled,"Enable keyboard shortcut","Enable the global recording shortcut.","hotkey keyboard");
-        Add("shortcut",3,shortcutValue,"Start / stop recording","Configure the global shortcut. Default Ctrl+Shift.","hotkey key binding");
+        Add("shortcut",3,shortcutValue,"Start / stop recording","Press a key combination to set the recording shortcut. Default Ctrl+Shift.","hotkey key binding");
+        Add("shortcut-mode",3,shortcutHold,"Recording shortcut behavior","Press to start/stop or Hold to record until you release the keys.","hold press release toggle push to talk mode");
         Add("service-address",3,endpoint,"Local service address","The loopback session service supplies models and transcriptions.","endpoint API port localhost connection reconnect");
         Add("compatibility",3,compatibility,"Application compatibility","Outlook inserts after Finish. Remembered applications use final-only delivery with Insert directly.","Outlook paused live insertion reset");
         shell.Search.SetEntries(entries);

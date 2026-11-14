@@ -55,7 +55,8 @@ static class Program
     [STAThread]
     static void Main(string[] args)
     {
-        if(args.Length!=2||args[0]!="--output")throw new ArgumentException("Use --output ABSOLUTE_DIRECTORY");
+        if(args.Length is not (2 or 4)||args[0]!="--output"||(args.Length==4&&args[2]!="--only"))throw new ArgumentException("Use --output ABSOLUTE_DIRECTORY [--only CHECK_CLASS]");
+        var only=args.Length==4?args[3]:null;
         var output=Path.GetFullPath(args[1]);Directory.CreateDirectory(output);
         Environment.SetEnvironmentVariable("LOCAL_DICTATION_HOME",Path.Combine(output,"synthetic-home"));
         var app=new Application{ShutdownMode=ShutdownMode.OnExplicitShutdown};
@@ -68,6 +69,20 @@ static class Program
         var checks=new List<string>();
         try
         {
+            if(only!=null)
+            {
+                var type=only.EndsWith("Checks",StringComparison.Ordinal)?typeof(Program).Assembly.GetType(only):null;
+                var run=type?.GetMethod("Run",BindingFlags.Static|BindingFlags.Public|BindingFlags.NonPublic,null,[typeof(string),typeof(List<string>)],null);
+                if(run==null)throw new ArgumentException("Unknown windowless check class: "+only);
+                run.Invoke(null,[output,checks]);
+            }
+            else
+            {
+            DeleteDialogChecks.Run(output,checks);
+            ShellPlacementChecks.Run(output,checks);
+            HistoryLayoutChecks.Run(output,checks);
+            SettingsContextHelpChecks.Run(output,checks);
+            PickerKeyboardChecks.Run(output,checks);
             var invalidSettingsController=(AppController)RuntimeHelpers.GetUninitializedObject(typeof(AppController));
             var savedSettings=new Settings();Property(invalidSettingsController,"Settings",savedSettings);
             Property(invalidSettingsController,"Models",new List<ModelInfo>{new(){Id=savedSettings.PrimaryModel,Name="Slovak",Languages=["sk"]}});
@@ -81,6 +96,9 @@ static class Program
             CheckReplayReceipts(output,checks);
             ReviewWorkflowChecks.Insertion(output,checks);
             AfterRecordingChecks.Controller(output,checks);
+            HoldShortcutFlowChecks.Check(output,checks);
+            ShortcutSettingsChecks.Run(output,checks);
+            HistoryDeleteChecks.Run(output,checks);
             var cancelledController=(AppController)RuntimeHelpers.GetUninitializedObject(typeof(AppController));
             var cancelledRunType=typeof(AppController).GetNestedType("Run",BindingFlags.NonPublic)!;
             var cancelledRun=RuntimeHelpers.GetUninitializedObject(cancelledRunType);
@@ -141,13 +159,14 @@ static class Program
                     Save(pickerRoot,510,(int)Math.Ceiling(height),"language-picker-"+mode+"-"+theme);checks.Add("language-picker "+mode+" "+theme);picker.Close();
                 }
             }
+            }
             File.WriteAllText(Path.Combine(output,"results.json"),JsonSerializer.Serialize(new{Passed=true,NoProductStartup=true,NoNativeWindowHandle=true,NoInput=true,NoAudio=true,Checks=checks},new JsonSerializerOptions{WriteIndented=true}));
             Console.WriteLine($"PASS {checks.Count} silent WPF state/layout checks; no native window handle, input or audio.");
         }
         catch(Exception error)
         {
-            File.WriteAllText(Path.Combine(output,"results.json"),JsonSerializer.Serialize(new{Passed=false,Error=error.Message,Checks=checks}));
-            Console.Error.WriteLine(error.Message);Environment.ExitCode=1;
+            File.WriteAllText(Path.Combine(output,"results.json"),JsonSerializer.Serialize(new{Passed=false,Error=error.GetBaseException().ToString(),Checks=checks}));
+            Console.Error.WriteLine(error.GetBaseException());Environment.ExitCode=1;
         }
         finally{app.Shutdown();}
 

@@ -1,5 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Threading;
 using LocalDictation.Core;
 
 namespace LocalDictation.App.Views;
@@ -8,6 +10,7 @@ namespace LocalDictation.App.Views;
 public sealed class RetranscriptionPicker : Border
 {
     public event Action? Changed;
+    public FrameworkElement? ReturnFocusTarget {get;set;}
     readonly Func<IReadOnlyList<ModelInfo>> models;
     readonly Func<ModelInfo,string?> transcribe;
     readonly ComboBox choice=new(){DisplayMemberPath="Label",Margin=new(0,4,0,8)};
@@ -16,6 +19,7 @@ public sealed class RetranscriptionPicker : Border
     public RetranscriptionPicker(Func<IReadOnlyList<ModelInfo>> models,Func<ModelInfo,string?> transcribe)
     {
         this.models=models;this.transcribe=transcribe;Visibility=Visibility.Collapsed;
+        FocusManager.SetIsFocusScope(this,true);
         Margin=new(0,12,0,0);Padding=new(12);SetResourceReference(BackgroundProperty,"SurfaceContainer");
         SetResourceReference(CornerRadiusProperty,"ShapeMedium");
         var root=new StackPanel();root.Children.Add(Ui.Text("Transcribe again",14,true));
@@ -35,11 +39,29 @@ public sealed class RetranscriptionPicker : Border
     }
     public void Toggle()
     {
-        Visibility=Visibility==Visibility.Visible?Visibility.Collapsed:Visibility.Visible;
-        if(Visibility==Visibility.Visible){message.Text="";Refresh(true);}
+        if(Cancel())return;
+        Visibility=Visibility.Visible;message.Text="";Refresh(true);
         Changed?.Invoke();
+        // Remember the selected field in this focus scope. Request keyboard
+        // focus after the owning Review has revealed the picker.
+        FocusManager.SetFocusedElement(this,choice);
+        Dispatcher.BeginInvoke(DispatcherPriority.Input,(Action)(()=>
+        {
+            if(Visibility==Visibility.Visible&&choice.IsVisible&&choice.IsEnabled)choice.Focus();
+        }));
     }
-    void ClosePicker(){Visibility=Visibility.Collapsed;Changed?.Invoke();}
+    public bool Cancel()
+    {
+        if(Visibility!=Visibility.Visible)return false;
+        ClosePicker();return true;
+    }
+    void ClosePicker()
+    {
+        Visibility=Visibility.Collapsed;Changed?.Invoke();
+        if(ReturnFocusTarget is not {IsEnabled:true} target)return;
+        FocusManager.SetFocusedElement(FocusManager.GetFocusScope(target),target);
+        if(target.IsVisible)target.Focus();
+    }
     public void Refresh(bool enabled)
     {
         var selected=(choice.SelectedItem as ModelInfo)?.Id;

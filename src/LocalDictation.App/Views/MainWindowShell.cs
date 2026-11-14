@@ -16,10 +16,11 @@ public sealed class MainWindowShell : Grid, IDisposable
 {
     readonly IReadOnlyList<UIElement> pages;
     readonly Action<int>? pageSelected;
+    readonly TextBlock saveStatus;
     bool disposed;
 
     public SettingsSearchControl Search {get;} = new();
-    public FrameworkElement Header {get;}
+    public FrameworkElement StatusBar {get;}
     public FrameworkElement StatusArea {get;}
     public ContentControl PageHost {get;}
     public ListBox Navigation {get;}
@@ -29,34 +30,11 @@ public sealed class MainWindowShell : Grid, IDisposable
         TextBlock message, Action<int>? pageSelected=null)
     {
         if(pages.Count!=4)throw new ArgumentException("Provide Dictation, Models, History and Settings pages.",nameof(pages));
-        this.pages=pages;this.pageSelected=pageSelected;Navigation=navigation;
-        Margin=new(16,0,16,12);SetResourceReference(BackgroundProperty,"Canvas");
-        RowDefinitions.Add(new(){Height=GridLength.Auto});
+        this.pages=pages;this.pageSelected=pageSelected;this.saveStatus=saveStatus;Navigation=navigation;
+        Margin=new(16,8,16,8);SetResourceReference(BackgroundProperty,"Canvas");
         RowDefinitions.Add(new(){Height=GridLength.Auto});
         RowDefinitions.Add(new(){Height=new(1,GridUnitType.Star)});
-
-        // Normal status fits inside the 64-DIP header. Longer connection or saving
-        // failures may grow it: their instructions must remain readable at 640 DIP.
-        var header=new Grid{MinHeight=64};Header=header;
-        header.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});
-        header.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
-        var heading=new StackPanel{VerticalAlignment=VerticalAlignment.Center,Margin=new(0,4,12,4)};
-        var title=Ui.Text("Local Dictation",20,true);title.FontSize=18;title.Margin=new(0,0,0,2);
-        heading.Children.Add(title);
-        var statusRow=new Grid();
-        statusRow.ColumnDefinitions.Add(new(){Width=new(3,GridUnitType.Star)});
-        statusRow.ColumnDefinitions.Add(new(){Width=new(2,GridUnitType.Star)});
-        connection.SetResourceReference(TextBlock.ForegroundProperty,"Muted");
-        connection.FontSize=12;connection.Margin=new(0);connection.TextWrapping=TextWrapping.Wrap;
-        statusRow.Children.Add(connection);
-        saveStatus.FontSize=12;saveStatus.Margin=new(12,0,0,0);
-        saveStatus.TextAlignment=TextAlignment.Right;saveStatus.TextWrapping=TextWrapping.Wrap;
-        System.Windows.Automation.AutomationProperties.SetLiveSetting(saveStatus,System.Windows.Automation.AutomationLiveSetting.Polite);
-        Grid.SetColumn(saveStatus,1);statusRow.Children.Add(saveStatus);heading.Children.Add(statusRow);
-        header.Children.Add(heading);
-        record.Margin=new(0,0,8,0);help.Margin=new(0);help.ToolTip="Help (F1)";
-        var actions=Ui.Row(record,help);actions.VerticalAlignment=VerticalAlignment.Center;
-        Grid.SetColumn(actions,1);header.Children.Add(actions);Children.Add(header);
+        RowDefinitions.Add(new(){Height=GridLength.Auto});
 
         var alerts=new StackPanel{Margin=new(0,0,0,8)};StatusArea=alerts;
         message.SetResourceReference(TextBlock.ForegroundProperty,"Warning");
@@ -65,7 +43,7 @@ public sealed class MainWindowShell : Grid, IDisposable
         System.Windows.Automation.AutomationProperties.SetLiveSetting(message,System.Windows.Automation.AutomationLiveSetting.Polite);
         alerts.Children.Add(message);
         alerts.SetBinding(VisibilityProperty,new Binding(nameof(TextBlock.Text)){Source=message,Converter=new MessageVisibilityConverter()});
-        Grid.SetRow(alerts,1);Children.Add(alerts);
+        Grid.SetRow(alerts,0);Children.Add(alerts);
 
         var body=new Grid();body.ColumnDefinitions.Add(new(){Width=new(160)});
         body.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});
@@ -89,11 +67,39 @@ public sealed class MainWindowShell : Grid, IDisposable
         var navigationColumn=new Grid();
         navigationColumn.RowDefinitions.Add(new(){Height=GridLength.Auto});
         navigationColumn.RowDefinitions.Add(new(){Height=new(1,GridUnitType.Star)});
-        navigationColumn.Children.Add(Search);Grid.SetRow(navigation,1);navigationColumn.Children.Add(navigation);
-        Grid.SetColumn(PageHost,1);body.Children.Add(navigationColumn);body.Children.Add(PageHost);
-        Grid.SetColumn(Search.ResultsView,1);body.Children.Add(Search.ResultsView);
+        navigationColumn.RowDefinitions.Add(new(){Height=GridLength.Auto});
+        navigationColumn.RowDefinitions.Add(new(){Height=GridLength.Auto});
+        navigationColumn.Children.Add(Search);
+        Grid.SetRow(navigation,1);navigationColumn.Children.Add(navigation);
+        record.Margin=new(0,8,8,4);record.HorizontalAlignment=HorizontalAlignment.Stretch;record.MinHeight=Math.Max(48,record.MinHeight);
+        Grid.SetRow(record,2);navigationColumn.Children.Add(record);
+        help.Margin=new(0,0,8,0);help.HorizontalAlignment=HorizontalAlignment.Stretch;help.MinHeight=Math.Max(48,help.MinHeight);help.ToolTip="Help (F1)";
+        Grid.SetRow(help,3);navigationColumn.Children.Add(help);
+        var pageColumn=new Grid();pageColumn.Children.Add(PageHost);pageColumn.Children.Add(Search.ResultsView);
+
+        // Routine state belongs below the workspace, not above the content.
+        // Actionable global alerts retain their separate expanding region above it.
+        var statusBar=new Grid{MinHeight=24,Margin=new(0,8,0,0)};StatusBar=statusBar;
+        statusBar.ColumnDefinitions.Add(new(){Width=new(2,GridUnitType.Star)});
+        statusBar.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});
+        connection.SetResourceReference(TextBlock.ForegroundProperty,"Muted");
+        connection.FontSize=12;connection.Margin=new(0,0,16,0);connection.TextWrapping=TextWrapping.Wrap;connection.VerticalAlignment=VerticalAlignment.Center;
+        System.Windows.Automation.AutomationProperties.SetLiveSetting(connection,System.Windows.Automation.AutomationLiveSetting.Polite);
+        System.Windows.Automation.AutomationProperties.SetName(statusBar,"Application status");
+        statusBar.Children.Add(connection);
+        saveStatus.FontSize=12;saveStatus.Margin=new(0);saveStatus.HorizontalAlignment=HorizontalAlignment.Right;saveStatus.VerticalAlignment=VerticalAlignment.Center;
+        saveStatus.TextAlignment=TextAlignment.Left;saveStatus.TextWrapping=TextWrapping.Wrap;
+        System.Windows.Automation.AutomationProperties.SetLiveSetting(saveStatus,System.Windows.Automation.AutomationLiveSetting.Polite);
+        saveStatus.SetBinding(VisibilityProperty,new MultiBinding
+        {
+            Converter=new SaveStatusVisibilityConverter(),
+            Bindings={new Binding(nameof(TextBlock.Text)){Source=saveStatus},new Binding(nameof(ListBox.SelectedIndex)){Source=navigation},new Binding(nameof(SettingsSearchControl.IsQueryActive)){Source=Search}}
+        });
+        Grid.SetColumn(saveStatus,1);statusBar.Children.Add(saveStatus);
+        Grid.SetRow(statusBar,2);Children.Add(statusBar);
+        Grid.SetColumn(pageColumn,1);body.Children.Add(navigationColumn);body.Children.Add(pageColumn);
         Search.QueryChanged+=SearchQueryChanged;
-        Grid.SetRow(body,2);Children.Add(body);
+        Grid.SetRow(body,1);Children.Add(body);
         navigation.Loaded+=NavigationLoaded;navigation.SelectionChanged+=NavigationChanged;
         navigation.AddHandler(UIElement.MouseLeftButtonUpEvent,new MouseButtonEventHandler(NavigationClicked),true);
         ThemeManager.Changed+=RefreshNavigationContrast;
@@ -116,6 +122,8 @@ public sealed class MainWindowShell : Grid, IDisposable
     {
         PageHost.Visibility=Search.IsQueryActive?Visibility.Hidden:Visibility.Visible;
         Search.ResultsView.Visibility=Search.IsQueryActive?Visibility.Visible:Visibility.Collapsed;
+        // IsQueryActive is a computed CLR property; query events refresh its binding.
+        BindingOperations.GetMultiBindingExpression(saveStatus,VisibilityProperty)?.UpdateTarget();
     }
     void RefreshNavigationContrast()=>ApplyNavigationContrast(Navigation,SystemParameters.HighContrast);
 
@@ -147,6 +155,20 @@ public sealed class MainWindowShell : Grid, IDisposable
         Search.QueryChanged-=SearchQueryChanged;
         Navigation.RemoveHandler(UIElement.MouseLeftButtonUpEvent,new MouseButtonEventHandler(NavigationClicked));
         ThemeManager.Changed-=RefreshNavigationContrast;
+    }
+
+    sealed class SaveStatusVisibilityConverter : IMultiValueConverter
+    {
+        public object Convert(object[] values,Type targetType,object parameter,CultureInfo culture)
+        {
+            if(values[0] is not string text||string.IsNullOrWhiteSpace(text))return Visibility.Collapsed;
+            var routine=text.StartsWith("Saved automatically",StringComparison.OrdinalIgnoreCase)||text.Equals("All changes saved",StringComparison.OrdinalIgnoreCase)||text is "Saving…" or "Saving...";
+            var relevant=values[1] is int index&&index is 0 or 3&&values[2] is false;
+            // Only recognized routine states are contextual. Keep unrecognized and
+            // failure messages visible on every page, including search results.
+            return relevant||!routine?Visibility.Visible:Visibility.Collapsed;
+        }
+        public object[] ConvertBack(object value,Type[] targetTypes,object parameter,CultureInfo culture)=>throw new NotSupportedException();
     }
 
     sealed class MessageVisibilityConverter : IValueConverter

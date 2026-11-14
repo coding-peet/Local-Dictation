@@ -55,6 +55,13 @@ static class HistoryIntegrationChecks
             Require(!Find<Button>(page).Any(b=>b.Content?.ToString()=="Open transcript and audio history"),"The embedded page still has the popup launcher.");
             var playerBounds=player.TransformToAncestor(page).TransformBounds(new Rect(0,0,player.ActualWidth,player.ActualHeight));
             Require(playerBounds.Bottom<=page.ActualHeight,"Full History or a long transcript pushes playback below the wide viewport.");
+            Require(player.ActualHeight<=64,"The History player still occupies two transport rows.");
+            var slider=Find<Slider>(player).Single();var transport=Find<Button>(player).Where(b=>System.Windows.Automation.AutomationProperties.GetName(b) is "Play original recording" or "Pause playback" or "Stop playback and return to start").ToArray();
+            Require(transport.Length==3&&transport.All(b=>b.ActualWidth==48&&b.ActualHeight==48),"The compact player shrank a transport interaction target.");
+            var seekBounds=slider.TransformToAncestor(player).TransformBounds(new Rect(slider.RenderSize));
+            Require(transport.All(b=>Math.Abs(b.TransformToAncestor(player).Transform(new Point(0,24)).Y-seekBounds.Top-24)<1)&&seekBounds.Width>=120,"The compact player does not keep usable seeking beside its controls.");
+            Require(!Find<TextBlock>(page).Any(t=>t.Text=="History"),"History repeats its navigation label above the list.");
+            Require(Find<TextBlock>(page).Any(t=>t.Text=="20 items"),"History lost the visible record count.");
             checks.Add("full History keeps wide playback visible "+theme);
             Save(page,760,560,Path.Combine(output,"layout-metrics-"+theme+".png"));
             Require(transcript.ActualHeight>=300,$"The selected transcript still loses height to page chrome and actions: text={transcript.ActualHeight}, player={player.ActualHeight}, page={page.ActualHeight}.");
@@ -68,32 +75,44 @@ static class HistoryIntegrationChecks
                 resources["Accent"]=SystemColors.HighlightBrush;resources["Selected"]=SystemColors.HighlightBrush;resources["SelectedInk"]=SystemColors.HighlightTextBrush;
                 // A detached tree has no Window resource invalidation broadcast;
                 // construct its row template under the simulated selection palette.
-                list.ItemTemplate=(DataTemplate)page.GetType().GetMethod("RowTemplate",BindingFlags.Static|BindingFlags.NonPublic)!.Invoke(null,null)!;
+                list.ItemTemplate=(DataTemplate)page.GetType().GetMethod("RowTemplate",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(page,null)!;
                 Layout(page,760,560);
                 var container=(ListBoxItem)list.ItemContainerGenerator.ContainerFromItem(list.SelectedItem);
                 Require(Find<TextBlock>(container).Where(t=>t.Text.Length>0&&t.Visibility==Visibility.Visible).All(t=>t.Foreground is SolidColorBrush brush&&brush.Color==SystemColors.HighlightTextColor),"Selected History text ignores the high-contrast selection foreground: selected="+container.IsSelected+", expected="+SystemColors.HighlightTextColor+", actual="+string.Join(";",Find<TextBlock>(container).Where(t=>t.Text.Length>0&&t.Visibility==Visibility.Visible).Select(t=>t.Text[..Math.Min(10,t.Text.Length)]+"="+t.Foreground)));
-                checks.Add("selected History text retains high contrast "+theme);
+                var delete=Find<Button>(container).Single(b=>System.Windows.Automation.AutomationProperties.GetName(b).StartsWith("Delete dictation"));
+                Require(delete.Foreground is SolidColorBrush deleteBrush&&deleteBrush.Color==SystemColors.HighlightTextColor,"Selected History delete ignores its high-contrast foreground.");
+                checks.Add("selected History text and delete retain high contrast "+theme);
             }
             finally{resources["Accent"]=oldAccent;resources["Selected"]=oldSelected;resources["SelectedInk"]=oldInk;list.ItemTemplate=normalTemplate;Layout(page,760,560);}
 
             Save(page,760,560,Path.Combine(output,"integrated-history-wide-"+theme+".png"));
             checks.Add("integrated main History content "+theme);
+            Layout(page,448,420);Save(page,448,420,Path.Combine(output,"integrated-history-audio-compact-"+theme+".png"));
+            var compactViewport=(ScrollViewer)page.GetType().GetProperty("Content")!.GetValue(page)!;
+            compactViewport.ScrollToBottom();Layout(page,448,420);
+            var compactSlider=slider.TransformToAncestor(player).TransformBounds(new Rect(slider.RenderSize));
+            Require(compactSlider.Width>=120&&player.ActualHeight<=64,"Compact History shrinks the seek target or wraps the player.");
+            Save(page,448,420,Path.Combine(output,"integrated-history-player-compact-"+theme+".png"));
+            compactViewport.ScrollToTop();Layout(page,760,560);
             var ui=typeof(SettingsWindow).Assembly.GetType("LocalDictation.App.Views.Ui")!;
             Button Button(string label,bool primary=false)=>(Button)ui.GetMethod("Button",BindingFlags.Static|BindingFlags.Public)!.Invoke(null,[label,(Action)(()=>{}),primary])!;
             TextBlock Text(string label)=>(TextBlock)ui.GetMethod("Text",BindingFlags.Static|BindingFlags.Public)!.Invoke(null,[label,12d,false])!;
-            var nav=new ListBox();var record=Button("Record in banner",true);var help=Button("Help");
+            var nav=new ListBox();var record=Button("Record",true);var help=Button("Help");
             var connection=Text("Ready · Local transcription");var saved=Text("Saved automatically");var alert=Text("");
             using(var shell=new MainWindowShell(nav,[new Border(),new Border(),page,new Border()],record,help,connection,saved,alert))
             {
                 try
                 {
                     nav.SelectedIndex=2;Layout(shell,1040,760);
-                    Require(shell.Header.ActualHeight<=72&&shell.StatusArea.Visibility==Visibility.Collapsed,"Normal chrome did not collapse to a compact header.");
+                    Require(shell.StatusBar.ActualHeight<=72&&shell.StatusArea.Visibility==Visibility.Collapsed,"Normal status bar did not stay compact.");
                     Require(transcript.ActualHeight>=380,"The selected design did not allocate the gained window height to the transcript.");
                     Require(nav.Items.OfType<ListBoxItem>().Select(i=>(TextBlock)i.Content).All(t=>t.Visibility==Visibility.Visible)&&nav.ActualWidth>=144,"Named navigation was hidden or collapsed.");
                     Save(shell,1040,760,Path.Combine(output,"named-menu-shell-wide-"+theme+".png"));checks.Add("named menu and compact real main chrome "+theme);
                     Layout(shell,640,600);
                     Require(nav.Items.OfType<ListBoxItem>().Select(i=>(TextBlock)i.Content).All(t=>t.Visibility==Visibility.Visible),"Narrow window hides its menu labels.");
+                    var rowDeletes=Find<Button>(list).Where(b=>System.Windows.Automation.AutomationProperties.GetName(b).StartsWith("Delete dictation")).ToArray();
+                    var deleteRight=rowDeletes.Select(b=>b.TransformToAncestor(list).Transform(new Point(b.ActualWidth,0)).X).ToArray();
+                    Require(deleteRight.Length>=2&&deleteRight.Max()-deleteRight.Min()<1,"History row delete targets drift horizontally with transcript length.");
                     Save(shell,640,600,Path.Combine(output,"named-menu-shell-compact-"+theme+".png"));checks.Add("named menu retained at compact width "+theme);
                     alert.Text="Windows could not restore the previous clipboard yet. Its backup is kept and restoration will retry automatically. A newer copy takes priority.";
                     connection.Text="The local transcription service is unavailable. Reconnect after checking its status.";saved.Text="Settings could not be saved. The previous valid settings are still active.";

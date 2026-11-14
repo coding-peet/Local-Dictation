@@ -101,6 +101,21 @@ static class AfterRecordingChecks
             Require(ReferenceEquals(Call(window,"SearchTarget","compatibility",compatibility),compatibility)&&compatibility.Focusable,"Compatibility search did not retain a focusable status when reset was hidden.");
             Require(JsonSerializer.Serialize(owner.Settings)==before,"Prerequisite search routing changed saved settings.");
             checks.Add($"{theme}: unsupported live search reveals model prerequisite and compatibility search targets its visible action");
+            var hold=Get<RadioButton>(window,"shortcutHold");var press=Get<RadioButton>(window,"shortcutPress");
+            var holdBefore=hold.IsChecked;var pressBefore=press.IsChecked;
+            foreach(var keyword in new[]{"hold","press","release","toggle","push to talk"})
+            {
+                shell.Search.Query=keyword;
+                var matches=Get<ListBox>(shell.Search,"results").Items.Cast<SettingsSearchEntry>();
+                var mode=matches.SingleOrDefault(entry=>entry.Id=="shortcut-mode");
+                Require(mode!=null,"Recording shortcut behavior is missing from search for "+keyword+".");
+                Call(window,"OpenSearchSetting",mode!);
+                Require(Get<ListBox>(window,"navigation").SelectedIndex==3&&!shell.Search.IsQueryActive&&hold.IsChecked==holdBefore&&press.IsChecked==pressBefore&&JsonSerializer.Serialize(owner.Settings)==before,
+                    "Mode search changed a setting or did not reveal its page.");
+                Require(ReferenceEquals(Call(window,"SearchTarget","shortcut-mode",hold),hold),"Mode search does not target its actual control.");
+            }
+            Get<ListBox>(window,"navigation").SelectedIndex=0;
+            checks.Add($"{theme}: Hold/Press/release/toggle search reveals recording behavior without changing it");
             outputMode.SelectedIndex=-1;
             Require(!(bool)Call(window,"SaveSelections",false)!&&JsonSerializer.Serialize(owner.Settings)==before,
                 "An unknown output selection silently re-enabled direct insertion while saving an unrelated option.");
@@ -109,7 +124,7 @@ static class AfterRecordingChecks
             foreach(var width in new[]{640,1040})
             {
                 Layout(frame,width,760);
-                Require(shell.Header.ActualHeight<=100&&shell.Navigation.ActualWidth>=150,"Settings search/help expanded the compact header or lost named navigation.");
+                Require(shell.StatusBar.ActualHeight<=100&&shell.Navigation.ActualWidth>=150,"Settings search/help expanded the status bar or lost named navigation.");
                 Save(frame,Path.Combine(output,$"settings-preview-{theme.ToLowerInvariant()}-{width}.png"));
             }
             Require(new WindowInteropHelper(window).Handle==0,"Settings checks created a native window.");

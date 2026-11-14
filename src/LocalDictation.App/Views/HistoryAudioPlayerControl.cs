@@ -21,7 +21,7 @@ public sealed class HistoryAudioPlayerControl : UserControl,IDisposable
 {
     readonly HistoryAudioPlayback playback;
     readonly Slider timeline=new RecordingTimeline(){Minimum=0,Maximum=1,MinHeight=48,SmallChange=1,LargeChange=5,IsMoveToPointEnabled=true,VerticalAlignment=VerticalAlignment.Center};
-    readonly TextBlock time=Ui.Text("00:00 / 00:00",12),status=Ui.Text("Select a dictation",12);
+    readonly TextBlock time=Ui.Text("00:00 / 00:00",12);
     readonly AudioWaveformView waveform=new(){Height=40,Margin=new(28,0,28,0),Opacity=.28,VerticalAlignment=VerticalAlignment.Center};
     readonly Button play,pause,stop;
     readonly DispatcherTimer timer;
@@ -32,7 +32,6 @@ public sealed class HistoryAudioPlayerControl : UserControl,IDisposable
     public HistoryAudioPlayerControl(HistoryAudioPlayback playback)
     {
         this.playback=playback??throw new ArgumentNullException(nameof(playback));
-        var content=new StackPanel();
         var row=new Grid();row.ColumnDefinitions.Add(new(){Width=GridLength.Auto});row.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});row.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
         play=Ui.IconButton(PackIconKind.Play,"Play original recording",()=>Run(playback.Play));
         pause=Ui.IconButton(PackIconKind.Pause,"Pause playback",()=>Run(playback.Pause));
@@ -40,10 +39,8 @@ public sealed class HistoryAudioPlayerControl : UserControl,IDisposable
         foreach(var button in new[]{play,pause,stop}){button.Margin=new(0);button.Width=button.Height=48;}
         play.SetResourceReference(Control.ForegroundProperty,"Accent");
         row.Children.Add(Ui.Row(play,pause,stop));
-        status.Margin=new(12,0,8,0);status.VerticalAlignment=VerticalAlignment.Center;status.TextWrapping=TextWrapping.NoWrap;status.TextTrimming=TextTrimming.CharacterEllipsis;status.SetResourceReference(TextBlock.ForegroundProperty,"Muted");
-        Grid.SetColumn(status,1);row.Children.Add(status);
         time.Margin=new(8,0,8,0);time.VerticalAlignment=VerticalAlignment.Center;time.TextWrapping=TextWrapping.NoWrap;time.SetResourceReference(TextBlock.ForegroundProperty,"Muted");
-        AutomationProperties.SetName(time,"Playback elapsed and total time");Grid.SetColumn(time,2);row.Children.Add(time);content.Children.Add(row);
+        AutomationProperties.SetName(time,"Playback elapsed and total time");Grid.SetColumn(time,2);row.Children.Add(time);
         timeline.SetResourceReference(FrameworkElement.StyleProperty,"MaterialDesign3.MaterialDesignSlider");
         timeline.SetResourceReference(Control.ForegroundProperty,"Accent");
         timeline.Background=Brushes.Transparent;timeline.Margin=new(4,0,4,0);
@@ -61,8 +58,9 @@ public sealed class HistoryAudioPlayerControl : UserControl,IDisposable
         }));
         waveform.SetResourceReference(Control.ForegroundProperty,"Muted");waveform.SetResourceReference(AudioWaveformView.PlayedBrushProperty,"Accent");
         AutomationProperties.SetName(waveform,"Original recording energy waveform");
-        var seekRow=new Grid{Height=48};seekRow.Children.Add(waveform);seekRow.Children.Add(timeline);content.Children.Add(seekRow);
-        var card=Ui.Card(content);card.Padding=new(12,6,12,6);card.Margin=new(0);Content=card;
+        var seekRow=new Grid{Height=48};seekRow.Children.Add(waveform);seekRow.Children.Add(timeline);Grid.SetColumn(seekRow,1);row.Children.Add(seekRow);
+        var card=Ui.Card(row);card.Padding=new(12,6,12,6);card.Margin=new(0);Content=card;
+        AutomationProperties.SetName(this,"Original recording player");
         timer=new DispatcherTimer(TimeSpan.FromMilliseconds(100),DispatcherPriority.Background,(_,_)=>RefreshPlayback(),Dispatcher);
         timer.Stop();Loaded+=(_,_)=>{if(!disposed)timer.Start();};Unloaded+=(_,_)=>timer.Stop();
         Update();
@@ -104,8 +102,9 @@ public sealed class HistoryAudioPlayerControl : UserControl,IDisposable
             play.IsEnabled=playback.HasAudio&&playback.State!=HistoryPlaybackState.Playing;
             pause.IsEnabled=playback.State==HistoryPlaybackState.Playing;
             stop.IsEnabled=playback.HasAudio&&(playback.State is HistoryPlaybackState.Playing or HistoryPlaybackState.Paused||playback.Position>TimeSpan.Zero);
-            status.Text=failed?"Playback unavailable":playback.State switch
+            var status=failed?"Playback unavailable":playback.State switch
             {HistoryPlaybackState.Empty=>"Select a dictation",HistoryPlaybackState.Playing=>"Playing",HistoryPlaybackState.Paused=>"Paused",_=>"Ready"};
+            ToolTip=status;AutomationProperties.SetHelpText(this,status);
             waveform.Peaks=playback.Peaks;UpdatePosition();
         }
         finally{updating=false;}

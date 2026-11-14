@@ -43,11 +43,11 @@ static class ReviewWorkflowChecks
         Set(controller,"canonicalReviews",new Dictionary<string,ReviewDocument>{{document.Id,document}});
         Set(controller,"destinations",new Dictionary<string,ITextDelivery>());Set(controller,"inserting",new HashSet<string>());
         Property(controller,"History",new List<HistoryEntry>{new(document,4)});
-        Property(controller,"Settings",new Settings{Language="en",PrimaryModel="first"});
+        Property(controller,"Settings",new Settings{Language="en",PrimaryModel="first"});Property(controller,"ShortcutMessage","");
         Property(controller,"Models",new List<ModelInfo>{new(){Id="first",Name="First model",Languages=["en"],Installed=true,Compatible=true,RuntimeTested=true},new(){Id="second",Name="Second model",Languages=["en"],Installed=true,Compatible=true,RuntimeTested=true}});
         // Avoid a History update path: insertion tests use only the protected pending store.
         if(worker!=null)Property(controller,"History",new List<HistoryEntry>());
-        var input=(GlobalInput)RuntimeHelpers.GetUninitializedObject(typeof(GlobalInput));Property(input,"Epoch",new DestinationEpoch());Set(controller,"input",input);
+        var input=(GlobalInput)RuntimeHelpers.GetUninitializedObject(typeof(GlobalInput));Property(input,"Epoch",new DestinationEpoch());Set(input,"commands",new InputCommands());Set(controller,"input",input);
         Set(controller,"insertionForegroundWindow",(Func<nint>)(()=>42));if(worker!=null)Set(controller,"automation",worker);
         return controller;
     }
@@ -163,6 +163,35 @@ static class ReviewWorkflowChecks
     }
     public static void Render(string theme,string output,List<string> checks)
     {
+        using(var worker=new AutomationWorker())
+        {
+            var failedDocument=Document();failedDocument.ManualFinalDraft="Edited wording remains available.";
+            var owner=Controller(output,failedDocument,worker);Set(owner,"bannerProgress",new CompactReviewProgress(failedDocument));
+            Set(owner,"captureInsertionTarget",(Func<CancellationToken,ITextDelivery>)(_=>throw new System.ComponentModel.Win32Exception(87)));
+            var failedBanner=new BannerWindow(owner);Set(owner,"banner",failedBanner);
+            var view=new CompactReviewWindow(owner);
+            var previous=SynchronizationContext.Current;
+            var dispatcher=System.Windows.Threading.Dispatcher.CurrentDispatcher;
+            SynchronizationContext.SetSynchronizationContext(new System.Windows.Threading.DispatcherSynchronizationContext(dispatcher));
+            try
+            {
+                var task=owner.ApplyBannerReviewAtSelectedCursor();
+                if(!task.IsCompleted)
+                {
+                    var frame=new System.Windows.Threading.DispatcherFrame();
+                    _=task.ContinueWith(_=>dispatcher.BeginInvoke((Action)(()=>frame.Continue=false)),TaskScheduler.Default);
+                    System.Windows.Threading.Dispatcher.PushFrame(frame);
+                }
+                task.GetAwaiter().GetResult();
+                view.Refresh();
+                Require(LogicalFind<TextBlock>((DependencyObject)view.Content).Any(t=>t.Text.StartsWith("The selected field could not be validated",StringComparison.Ordinal)),
+                    "Failed Insert is hidden behind generic cursor instructions, especially with an edited draft.");
+                Require(failedDocument.InsertedAt==null&&owner.BannerReview==failedDocument&&failedDocument.OutputText=="Edited wording remains available.",
+                    "Failed Insert closed Review or changed the edited text.");
+                checks.Add("failed selected-cursor Insert remains visible in edited Review "+theme);
+            }
+            finally{SynchronizationContext.SetSynchronizationContext(previous);view.Close();failedBanner.Close();}
+        }
         CheckDetailsRetranscription(theme,output,checks);
         {
             var dismissed=Document();var owner=Controller(output,dismissed);
@@ -246,7 +275,7 @@ static class ReviewWorkflowChecks
         var outputs=0;using var playback=new HistoryAudioPlayback(_=>{outputs++;return new Output();});playback.Load(wave);playback.Seek(TimeSpan.FromSeconds(1.6));
         using var player=new HistoryAudioPlayerControl(playback);
         player.Measure(new Size(680,double.PositiveInfinity));var playerHeight=(int)Math.Ceiling(player.DesiredSize.Height);
-        Require(playerHeight<=112,"History player is still taller than the compact transport.");Layout(player,680,playerHeight);
+        Require(playerHeight<=64,"History player is still taller than the single-row transport.");Layout(player,680,playerHeight);
         Require(outputs==0&&playback.Peaks.Any(p=>p>0),"Rendering opened audio hardware or lost the original-audio waveform.");
         Require(Find<Slider>(player).Single().Maximum==4,"Seek slider duration does not match the recording.");
         Save(player,680,playerHeight,Path.Combine(output,"history-audio-player-"+theme+".png"));checks.Add("silent seekable History waveform player "+theme);

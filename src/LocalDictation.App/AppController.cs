@@ -55,7 +55,10 @@ public sealed class AppController : IDisposable
     readonly HashSet<Task> recordingTasks=[];
     bool exiting,disposed,restoringClipboard;
     ReviewDocument? placementReview;
+    Run? heldShortcutRun;
     CompactReviewProgress? bannerProgress;
+    string? lastInsertionFailureId,lastInsertionFailure;
+    public string BannerInsertionError=>BannerReview?.Id==lastInsertionFailureId?lastInsertionFailure??"":"";
     string? applyingBannerId;
     public ReviewDocument? BannerReview=>bannerProgress?.Document;
     public bool IsReviewUnsaved(string id)=>pending.UnsavedIds.Contains(id);
@@ -344,6 +347,8 @@ public sealed class AppController : IDisposable
         input.UserEdited+=DestinationChanged;
         input.Cancel+=()=>System.Windows.Application.Current.Dispatcher.InvokeAsync(Cancel);
         input.Toggle+=()=>System.Windows.Application.Current.Dispatcher.InvokeAsync(Toggle);
+        input.HoldStart+=()=>System.Windows.Application.Current.Dispatcher.InvokeAsync(StartHeldShortcut);
+        input.HoldStop+=()=>System.Windows.Application.Current.Dispatcher.InvokeAsync(StopHeldShortcut);
         RecheckShortcut();
         banner=new BannerWindow(this);
         var menu=new Forms.ContextMenuStrip();
@@ -604,6 +609,11 @@ public sealed class AppController : IDisposable
         }
         catch(InvalidOperationException)
         {return new(false,"Click the editable destination field first, then click Insert. Your text is preserved.");}
+        catch(System.ComponentModel.Win32Exception error)
+        {
+            Diagnostics.Error("selected cursor insertion",error);
+            return new(false,$"The selected field could not be validated (Windows error {error.NativeErrorCode}). Your text is preserved. Select the destination cursor and try Insert again.");
+        }
         catch(Exception error)
         {Diagnostics.Error("selected cursor insertion",error);return new(false,"The selected field could not be validated. Your text is preserved; select a cursor and try Insert again.");}
         finally
@@ -749,13 +759,14 @@ public sealed class AppController : IDisposable
     async Task ApplyBannerReviewCore(bool selectedCursor)
     {
         if(IsBusy||IsApplyingReview||BannerReview is not {} document||!document.CanInsert)return;
+        lastInsertionFailureId=document.Id;lastInsertionFailure=null;
         applyingBannerId=document.Id;
         try
         {
             Changed?.Invoke();
             var result=selectedCursor?await InsertReviewAtSelectedCursor(document):await AcceptReview(document);
             if(!result.Success&&BannerReview?.Id==document.Id)
-            {document.Reason=result.Message;StateLabel="Review";SaveReview(document);}
+            {lastInsertionFailure=result.Message;document.Reason=result.Message;StateLabel="Review";SaveReview(document);}
         }
         finally
         {
@@ -798,12 +809,13 @@ public sealed class AppController : IDisposable
 
     public void RecheckShortcut()
     {
-        input.Shortcut=ShortcutSpec.Parse(Settings.Shortcut);
+        if(input.IsHoldingShortcut){ShortcutMessage="Shortcut changes apply after you release the current shortcut.";Changed?.Invoke();return;}
+        input.Shortcut=ShortcutSpec.Parse(Settings.Shortcut);input.Mode=Settings.ShortcutMode;
         var collision=GlobalInput.TypeWhisperRunning()&&Settings.Shortcut=="Ctrl+Shift";
         input.ShortcutEnabled=Settings.EnableShortcut&&!noHotkey&&!collision;
         ShortcutMessage=noHotkey?"Shortcut disabled for this test launch (--no-hotkey).":
             collision?"TypeWhisper is running. Quit it, then Recheck shortcut before using Ctrl+Shift here.":
-            !Settings.EnableShortcut?"Shortcut disabled in Settings.":Settings.Shortcut+" starts and stops dictation.";
+            !Settings.EnableShortcut?"Shortcut disabled in Settings.":Settings.ShortcutMode==ShortcutMode.Hold?"Hold "+Settings.Shortcut+" to record; release to finish.":Settings.Shortcut+" starts and stops dictation.";
         Changed?.Invoke();
     }
 
@@ -890,33 +902,46 @@ public sealed class AppController : IDisposable
         finally {refreshing=false;}
         Changed?.Invoke();
     }
+    readonly LocalServiceStartup apiStartup=new();
+    public Task InitializeConnection()=>StartLocalApi();
     public async Task StartLocalApi()
     {
-        if(Connected){await RefreshConnection();return;}
         try
         {
-            var sourceRoot=typeof(AppController).Assembly
-                .GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute),false)
-                .Cast<System.Reflection.AssemblyMetadataAttribute>()
-                .FirstOrDefault(attribute=>attribute.Key=="LocalDictation.SourceRoot")?.Value;
-            var script=string.IsNullOrWhiteSpace(sourceRoot)?null:Path.Combine(sourceRoot,"scripts","Start-CandidateServer.ps1");
-            if(script is null||!File.Exists(script))
-            {ConnectionMessage="This build's source checkout is unavailable. Rebuild from the current checkout, or start the Local Dictation API manually and Reconnect.";Changed?.Invoke();return;}
-            var port=Settings.ServerUri().Port;
-            var start=new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),@"WindowsPowerShell\v1.0\powershell.exe"))
-            {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
-            foreach(var arg in new[]{"-NoProfile","-NonInteractive","-File",script,"-Port",port.ToString(System.Globalization.CultureInfo.InvariantCulture)})start.ArgumentList.Add(arg);
-            using var process=Process.Start(start)??throw new IOException();
-            ConnectionMessage="Starting the local transcription service…";Changed?.Invoke();
-            var output=process.StandardOutput.ReadToEndAsync();var error=process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();await output;await error;
-            if(process.ExitCode!=0)ConnectionMessage="Service did not start, or is already starting. Reconnect after a moment.";
-            else ConnectionMessage="Local service is preparing its models. Reconnection is automatic.";
+            var endpoint=Settings.ServerUri();
+            var result=await apiStartup.EnsureStarted(endpoint,()=>LocalApiLauncher.IsListening(endpoint),async()=>
+            {
+                ConnectionMessage="Starting the local transcription service…";Changed?.Invoke();
+                await LocalApiLauncher.Start(endpoint.Port);
+            });
+            if(result==LocalServiceStartResult.UnsupportedEndpoint)
+            {ConnectionMessage="Use the Local Dictation session service address. Port 8123 belongs to the existing batch service.";Changed?.Invoke();return;}
+            await RefreshConnection();
         }
-        catch(Exception){ConnectionMessage="Could not start the local service. Check the local API launcher.";}
-        Changed?.Invoke();
+        catch(Exception error)
+        {
+            Diagnostics.Error("local service startup",error);
+            ConnectionMessage="Could not start the local service. Check its address and launcher, then try Start local API again.";
+            Changed?.Invoke();
+        }
     }
 
+    public bool SetShortcutCapture(bool capturing)
+    {
+        if(capturing&&(IsBusy||IsApplyingReview))return false;
+        input.CapturingShortcut=capturing;return true;
+    }
+    void StartHeldShortcut()
+    {
+        if(IsBusy)return;
+        Toggle();heldShortcutRun=active;
+    }
+    void StopHeldShortcut()
+    {
+        var owned=heldShortcutRun;heldShortcutRun=null;
+        if(owned!=null&&ReferenceEquals(active,owned)&&owned.Recording)Stop();
+        RecheckShortcut();
+    }
     public void Toggle()
     {
         if(exiting)return;
@@ -1231,6 +1256,9 @@ public sealed class AppController : IDisposable
     {
         languageWindow?.Close();
         if(IsApplyingReview||inserting.Count>0)return;
+        // Escape relinquishes the hold without a later Stop command; apply its deferred settings now.
+        if(heldShortcutRun!=null&&!input.IsHoldingShortcut)
+        {heldShortcutRun=null;RecheckShortcut();}
         if(active==null)
         {
             // Hide the banner; protected text remains available in History.

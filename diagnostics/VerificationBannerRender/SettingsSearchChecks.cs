@@ -35,7 +35,7 @@ static class SettingsSearchChecks
         var saved = new TextBlock { Text = "All changes saved" };
         saved.SetResourceReference(TextBlock.ForegroundProperty, "Ink");
         using var shell = new MainWindowShell(new ListBox(), pages,
-            ActionButton("Record in banner", true), ActionButton("Help"),
+            ActionButton("Record", true), ActionButton("Help"),
             new TextBlock { Text = "Connected" }, saved, new TextBlock(), _ => pageChanges++);
         shell.Search.SetEntries(new[]
         {
@@ -49,7 +49,7 @@ static class SettingsSearchChecks
             "Search has no usable field inside the narrow main window.");
         Require(AutomationProperties.GetName(box) == "Search settings" && box.Focusable,
             "Search is missing its accessible keyboard target.");
-        Require(shell.Header.ActualHeight <= 64.1, "Search inflates the normal 64-DIP header.");
+        Require(shell.StatusBar.ActualHeight <= 64.1, "Search inflates the compact bottom status bar.");
         Require(shell.Navigation.Items.Count == 4 && shell.Navigation.Items.Cast<ListBoxItem>().All(item => item.ActualWidth >= 140),
             "Search hides or narrows the four named navigation destinations.");
         var originalPageChanges = pageChanges;
@@ -71,7 +71,7 @@ static class SettingsSearchChecks
             "Search results lose label-prefix ranking.");
         Require(selected == null && pageChanges == originalPageChanges,
             "Typing a query navigates or applies settings before the user selects a result.");
-        Require(results.ActualHeight > 400 && results.ActualWidth >= 400 && shell.Header.ActualHeight <= 64.1,
+        Require(results.ActualHeight > 400 && results.ActualWidth >= 400 && shell.StatusBar.ActualHeight <= 64.1,
             "Narrow search results do not receive the available content space.");
         Save(shell, 640, 720, Path.Combine(output, "settings-search-compact-" + theme + ".png"));
         Require(Find<SmartHint>(shell.Search).Single().IsHintInFloatingPosition,

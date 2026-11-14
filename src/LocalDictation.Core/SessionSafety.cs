@@ -33,18 +33,48 @@ public sealed class AudioBudget
     }
 }
 
-public enum InputCommand {None,Toggle,Cancel}
+public enum InputCommand {None,Toggle,Cancel,Start,Stop}
 public readonly record struct InputDecision(InputCommand Command,bool Suppress);
 public sealed class InputCommands
 {
+    ShortcutMode mode=ShortcutMode.Toggle;
+    public ShortcutMode Mode
+    {
+        get=>mode;
+        set{if(mode==value)return;mode=value;Reset();}
+    }
+    public bool IsHoldingShortcut {get;private set;}
+    bool capturingShortcut;
+    public bool CapturingShortcut
+    {
+        get=>capturingShortcut;
+        set{if(capturingShortcut==value)return;capturingShortcut=value;Reset();}
+    }
     ModifierChord chord=new();
     ShortcutSpec shortcut=ShortcutSpec.Parse("Ctrl+Shift");
     readonly HashSet<int> down=[];
+    readonly HashSet<int> holdDown=[];
+    ShortcutSpec? holdGesture;
+    int suppressedHoldKey;
     bool armed;
-    public ShortcutSpec Shortcut {get=>shortcut;set {shortcut=value;down.Clear();armed=false;chord=new();}}
+    public ShortcutSpec Shortcut {get=>shortcut;set {Reset();shortcut=value;}}
+    void Reset()
+    {
+        // Keep a live hold and its original key state through configuration/capture changes.
+        if(Mode==ShortcutMode.Hold&&holdGesture is null&&holdDown.Any(k=>IsShortcutKey(shortcut,k)))
+            holdGesture=shortcut;
+        down.Clear();armed=false;
+        // Reconfiguration must retain ownership of a consumed Escape until its physical release.
+        escapeConsumed=escapeConsumed&&holdDown.Contains(0x1B);chord=new();
+    }
     bool escapeConsumed;
     public InputDecision Update(int key,bool pressed,bool sessionActive,bool shortcutEnabled)
     {
+        var holdFirst=pressed&&holdDown.Add(key);
+        var released=!pressed&&holdDown.Remove(key);
+        if(Mode==ShortcutMode.Hold||holdGesture is not null)
+            return UpdateHold(key,pressed,holdFirst,released,sessionActive,shortcutEnabled);
+        if(CapturingShortcut)return new(InputCommand.None,false);
         bool toggle=false,suppress=false;
         if(shortcut.Key==0)toggle=chord.Update(key,pressed);
         else
@@ -69,6 +99,54 @@ public sealed class InputCommands
         }
         return new(toggle&&shortcutEnabled?InputCommand.Toggle:InputCommand.None,suppress);
     }
+
+    InputDecision UpdateHold(int key,bool pressed,bool first,bool released,bool sessionActive,bool shortcutEnabled)
+    {
+        var suppress=suppressedHoldKey!=0&&key==suppressedHoldKey;
+        if(!pressed&&suppress)suppressedHoldKey=0;
+        var command=InputCommand.None;
+        if(holdGesture is not null)
+        {
+            if(!CapturingShortcut&&shortcutEnabled&&pressed&&key==holdGesture.Key&&MatchesHold(holdGesture))
+            {if(first)suppressedHoldKey=key;suppress=true;}
+            if(IsHoldingShortcut&&((released&&IsShortcutKey(holdGesture,key))||!MatchesHold(holdGesture)))
+            {IsHoldingShortcut=false;command=InputCommand.Stop;}
+            // A partial release/repress remains one gesture until its original keys are neutral.
+            if(!holdDown.Any(k=>IsShortcutKey(holdGesture,k)))holdGesture=null;
+        }
+        if(!CapturingShortcut&&key==0x1B)
+        {
+            if(pressed&&sessionActive)
+            {
+                var cancel=!escapeConsumed;escapeConsumed=true;IsHoldingShortcut=false;
+                return new(cancel?InputCommand.Cancel:InputCommand.None,true);
+            }
+            if(!pressed&&escapeConsumed){escapeConsumed=false;return new(command,true);}
+        }
+        if(command==InputCommand.Stop)return new(command,suppress);
+        if(!CapturingShortcut&&Mode==ShortcutMode.Hold&&holdGesture is null&&first&&MatchesHold(shortcut))
+        {
+            holdGesture=shortcut;
+            if(shortcutEnabled)
+            {
+                suppress=shortcut.Key!=0&&key==shortcut.Key;
+                // Balance a primary key-down delivered before the modifiers with its key-up.
+                if(suppress)suppressedHoldKey=shortcut.Key;
+                if(!sessionActive){IsHoldingShortcut=true;return new(InputCommand.Start,suppress);}
+            }
+        }
+        return new(InputCommand.None,suppress);
+    }
+
+    bool MatchesHold(ShortcutSpec value)=>value.Matches(holdDown)&&
+        (value.Key==0||holdDown.Contains(value.Key))&&holdDown.All(k=>IsShortcutKey(value,k));
+    static bool IsShortcutKey(ShortcutSpec value,int key)=>key switch
+    {
+        0x11 or 0xA2 or 0xA3=>value.Ctrl,
+        0x10 or 0xA0 or 0xA1=>value.Shift,
+        0x12 or 0xA4 or 0xA5=>value.Alt,
+        _=>value.Key!=0&&key==value.Key
+    };
 }
 
 public static class ModelEligibility

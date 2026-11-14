@@ -32,6 +32,7 @@ public sealed class CompactReviewWindow : Window
             model=>controller.BannerReview is {} document?controller.StartSavedVerification(document,model):"Select a saved dictation first.");
         root.Children.Add(transcription);
         verify=Ui.Button("Transcribe again",transcription.Toggle);
+        transcription.ReturnFocusTarget=verify;
         var actions=new WrapPanel{HorizontalAlignment=HorizontalAlignment.Right,Margin=new(0,16,0,0)};
         actions.Children.Add(Ui.Button("Close",Close));actions.Children.Add(verify);actions.Children.Add(insert);root.Children.Add(actions);
         status.SetResourceReference(TextBlock.ForegroundProperty,"Muted");status.Margin=new(0,8,0,0);root.Children.Add(status);
@@ -40,7 +41,12 @@ public sealed class CompactReviewWindow : Window
         controller.Changed+=Refresh;
         Closed+=(_,_)=>controller.Changed-=Refresh;
         Closing+=(_,e)=>{if(controller.IsApplyingReview)e.Cancel=true;};
-        PreviewKeyDown+=(_,e)=>{if(e.Key==Key.Escape&&!controller.IsApplyingReview){e.Handled=true;Close();}};
+        PreviewKeyDown+=(_,e)=>
+        {
+            if(e.Key!=Key.Escape||controller.IsApplyingReview)return;
+            e.Handled=true;
+            if(!e.IsRepeat&&!transcription.Cancel())Close();
+        };
         Refresh();
     }
     public void Refresh()
@@ -55,7 +61,9 @@ public sealed class CompactReviewWindow : Window
         if(controller.IsBusy)status.Text="Transcribing the original recording…";
         else if(choosingModel)status.Text="Choose a model and confirm Transcribe. Your current text is kept.";
         else
-        status.Text=controller.IsApplyingReview?"Inserting…":document==null?"Your pending text is kept in History.":document.InsertedAt!=null?"Previously inserted. Its original recording can still be compared with another model.":"Select a destination cursor, then click Insert. Closing keeps your text and choices.";
+        status.Text=controller.IsApplyingReview?"Inserting…":controller.BannerInsertionError is {Length:>0} failure?failure:
+            document==null?"Your pending text is kept in History.":document.InsertedAt!=null?"Previously inserted. Its original recording can still be compared with another model.":"Select a destination cursor, then click Insert. Closing keeps your text and choices.";
+        status.SetResourceReference(TextBlock.ForegroundProperty,controller.BannerInsertionError.Length>0?"Warning":"Muted");
         if(IsVisible&&(document==null||!openedInserted&&document.InsertedAt!=null)&&!controller.IsApplyingReview)Close();
     }
 }

@@ -1,7 +1,7 @@
 # Local Dictation product requirements
 
 Status: current input specification, consolidated from Peter's requests on
-10–13 November 2026. Update this document when the user changes a requirement.
+10â€“14 November 2026. Update this document when the user changes a requirement.
 Older design documents explain decisions; this file defines current behavior.
 
 ## Purpose and scope
@@ -42,8 +42,32 @@ punctuation, whitespace, and Unicode must be preserved.
   A successful download or test does not prove quality or live suitability.
 - The default shortcut is Ctrl+Shift. Make it configurable in Settings, with
   repeat suppression and a clear disabled/collision state.
-- Keep the Settings header compact, with connection and autosave in one status
-  row. Avoid duplicate Recording/Text and verification headings and introductory
+  Keep Enable in the section heading, followed by one mutually exclusive choice:
+  Press to start/stop (default), or Hold to record. Hold starts on the complete
+  shortcut key-down and finishes when a participating key is released. Preserve
+  recording ownership, repeat suppression, quick release and cancellation. Apply
+  deferred configuration on release or cancellation; never strand a disabled or
+  changed binding. A held gesture must not stop an unrelated recording.
+  Show the binding as keycaps beside a compact edit icon, without a stretched
+  input-field outline. Focus alone must not arm capture. Activate the edit icon
+  to enter Listening, acquire keyboard focus and show pressed keycaps. Save only
+  after all keys are released, then resume commands. Escape, Tab, blur or cancel
+  abandons the change. Invalid input/save failure retains the prior binding.
+  Block shortcut capture while recording/transcription is busy, so it cannot
+  consume the release needed to finish recording.
+- Start the session API automatically when the application opens, using the
+  existing local launcher only if no listener is present. Preserve occupied ports,
+  preparing services, the separate port 8123 API, models and user data. Serialize
+  launch requests and allow warm-up without duplicate processes. Show readiness
+  and actionable errors; retain Start local API for retry. Client Exit leaves the
+  service running. This does not install a Windows service or a login task.
+- Do not repeat Local Dictation inside the client content; the native title bar
+  already identifies the application. Put ordinary recording/connection state in
+  a compact bottom status bar, with routine saving feedback on Dictation/Settings.
+  Hide routine saving on History/Models/search; keep saving failures visible on
+  every page. Actionable global alerts remain expanded above the content. Let
+  long status/errors wrap without covering content. See docs/UI_DESIGN.md.
+  Avoid duplicate Recording/Text and verification headings and introductory
   paragraphs on the Dictation tab. Put Insert live text at the cursor immediately
   after Live transcription. Separate Verify after recording with spacing/a rule;
   reveal its model/details only while enabled, retaining the eligible selection
@@ -77,12 +101,15 @@ punctuation, whitespace, and Unicode must be preserved.
 
 ## Input language and correction
 
-- Show a discreet language indicator in the banner: `Auto · SK` / `Auto · EN`
-  from the actual primary detector, or the explicit language code. Show `Auto · …`
+- Show a discreet language indicator in the banner: `Auto Â· SK` / `Auto Â· EN`
+  from the actual primary detector, or the explicit language code. Show `Auto Â· â€¦`
   before a result. A fixed Slovak-only model shows `SK`, without claiming detection.
 - Configure preferred Auto languages as removable tags with a `+` add button.
-  Use the heading "Preferred Auto languages (supported by installed models)"
-  without a helper sentence under the tags. Keep removal marks visually quieter
+  Use the heading "Preferred Auto languages" and a smaller muted qualifier
+  "(supported by installed models)". A local info icon explains Auto preferences
+  and possible live-preview latency. Keep latency guidance out of a permanent
+  paragraph; retain actionable model warnings. Do not add a helper sentence
+  under the tags. Keep removal marks visually quieter
   than the language codes. Leave enough banner width to display elapsed time
   and the complete detected language, including a queued correction.
   Populate choices from installed models' actual supported language metadata.
@@ -115,7 +142,7 @@ punctuation, whitespace, and Unicode must be preserved.
 - Retain every accepted original sample through the configured recording limit.
   Slow recognition must not stop capture merely because 32 seconds are queued.
 - Use the evaluated adaptive live policy: growing previews after about three
-  seconds of audio, quiet-valley commits within 12–24 seconds, and a final
+  seconds of audio, quiet-valley commits within 12â€“24 seconds, and a final
   whole-recording primary pass. Suppress isolated quiet live fragments.
 - Final primary refinement is separate from optional second-model verification.
   Avoid decoding a tail that will immediately be replaced by the whole pass;
@@ -135,11 +162,14 @@ punctuation, whitespace, and Unicode must be preserved.
 
 ## Banner and live cursor delivery
 
-- Use the selected named-menu desktop layout: an ordinary 64-DIP header and a
-  roughly 160-DIP navigation column with visible Dictation/Models/History/Settings
-  labels. Keep Help in the header and let native title-bar Close close Settings.
-  Empty alerts take no space; connection, saving and recovery errors can wrap
-  and expand. Preserve all autosave, recording and keyboard behavior.
+- Use the named-menu desktop layout with a roughly 160-DIP navigation column
+  and visible Dictation/Models/History/Settings labels. Search is at the upper
+  left, level with the workspace; do not reserve a duplicate title/header row.
+  Place Record above Help in the navigation footer, keeping both available on
+  every page; Help is also available with F1. Use Record/Stop labels and explain
+  Review recording from the app versus cursor delivery by shortcut. Let native
+  title-bar Close close Settings. Preserve autosave, recording and key behavior.
+  Empty alerts take no space; actionable errors can wrap and expand.
 
 - Use Material Design 3 throughout the WPF application through the compatible
   MaterialDesignInXamlToolkit controls and MaterialDesign3 defaults. Preserve the
@@ -176,6 +206,10 @@ punctuation, whitespace, and Unicode must be preserved.
   surrounding text. Switching focus pauses delivery; returning to the same
   unchanged field resumes it, including after a click within that field.
 - Explicit Insert places ready Review text at a freshly selected external caret.
+  Show a failed Insert result in compact Review even while a manual draft is
+  authoritative; generic cursor instructions must not hide it. Preserve the
+  draft and keep retry available. Windows access-check failures retain their
+  native error code and queried process ID in metadata-only diagnostics.
   Keep the compact Review reachable above the destination. Clicking its Insert
   must preserve that external focus; ordinary editing and wording choices may
   activate Review normally. Capture and validate the selected field after the
@@ -372,13 +406,20 @@ punctuation, whitespace, and Unicode must be preserved.
   Storage lifetimes remain independent: the 20-recording limit never evicts
   protected unfinished text. Explicit Delete removes the selected dictation and
   closes its matching editors before deleting audio/text/choices.
+  Put a small Ã— on each row with an accessible 48-DIP interaction target. Confirm
+  the clicked ID with date/time and Cancel as default; modal selection changes must
+  not redirect deletion. Share this path with More â†’ Delete. Preserve unrelated
+  playback and retain existing busy guards. Verify only synthetic deletions.
 
 - History follows the selected second layout: short date/duration rows, status
   when useful and at most two preview lines. The selected transcript receives
   the remaining vertical space. Review/Copy/More sit with the detail; More opens
   Change language, Save audio and Delete. Playback remains pinned across both
   History columns. Keep named navigation visible even when detail/list stack.
-  All selected row text uses the semantic selection foreground in high contrast.
+  All selected row text and delete icons use the semantic selection foreground
+  in high contrast. Remove the repeated History heading above the list; show
+  the count in the existing detail title row. Empty history explains that the
+  first completed dictation will appear here and keeps detail actions disabled.
 - Embed the complete Recent dictations workspace in the main window's History
   section: list, selected transcript/model/language, player and existing actions.
   History in the notification-area menu opens that same section and main window.
@@ -394,8 +435,10 @@ punctuation, whitespace, and Unicode must be preserved.
   DPAPI. Pending Review is separate and must not be evicted by the history limit.
 - Provide Play, Pause and Stop icons, elapsed/total time, a seekable timeline
   with a round thumb, and a faint RMS waveform under the slider. Keep the
-  transport approximately 108 DIPs tall and text actions above it. Use a fixed
+  transport approximately 60 DIPs tall: the existing 48-DIP buttons, seek track
+  and time share one row. Keep text actions above it. Use a fixed
   -54 to -12 dBFS RMS display scale, never per-recording maximum normalization.
+  Playback state remains available in its tooltip/accessibility; errors stay visible.
   This is an energy aid rather than speech/noise classification. Support
   keyboard seeking. Stop returns to the beginning; Pause retains position.
   Load/render/seek before Play must not open an audio output device. Retire the
@@ -450,3 +493,40 @@ change security controls as an implementation shortcut.
 See the latest dated validation record and README for deployed build status and
 remaining manual checks. A process crash between insertion and receipt persistence,
 especially when every write fails, is not claimed to have transactional recovery.
+
+## Usability audit follow-up (14 November 2026)
+
+- Dictation model selection offers only installed models. Retain the saved missing
+  model warning instead of offering choices that autosave will reject.
+- An inline further-transcription picker focuses its model choice. First Escape
+  cancels only the picker and returns focus to its trigger; the next Escape closes
+  Review as before. Preserve draft, choices and insertion receipts.
+- Model table status text must fit its cells at narrow width. Idle download progress
+  is hidden; active work remains visible alongside actionable status/error text.
+
+## Dialog and workspace refinements (14 November 2026)
+
+- Confirm History deletion in a theme-aware Material-styled owner modal, without
+  the native Windows question box. Use timestamp identity without transcript text,
+  explicit irreversible scope, Cancel as initial/default action and explicit Delete.
+  Escape, Alt+F4 and close cancel; focused Delete remains keyboard accessible.
+  The dialog makes no data changes. Isolate global shortcuts during the modal and
+  restore them in finally; busy operations refuse the prompt and deletion retains
+  its post-modal operation/identity guards.
+- Use 10-DIP scrollbars scoped to History without replacing their Material template.
+  Provide an accessible draggable divider between list/transcript in wide layout.
+  Hide its grip while idle; reveal a quiet hover cue and clear keyboard focus.
+  Preserve its hit target, resize cursor and keyboard/drag behavior.
+  Keep minimum 160/240-DIP panes, clamp to available space, retain preferred width
+  through narrow/wide transitions, and hide the divider while the panes stack.
+  Preserve selected dictation, text and audio lifetime during resizing.
+- Preserve the existing Local Dictation waveform icon.
+
+## Search-first shell follow-up (14 November 2026)
+
+- The native window title is the only application heading. Search begins at the
+  upper left; Record/Stop sits above Help in the navigation footer.
+- Ordinary recording/connection status belongs at the bottom. Keep actionable
+  global warnings prominent above content and settings-save errors visible.
+- Settings search includes Recording shortcut behavior and its Hold, Press,
+  release, toggle and push-to-talk terms. Revealing it must not change the mode.

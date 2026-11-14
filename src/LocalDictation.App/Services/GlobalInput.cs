@@ -24,8 +24,13 @@ public sealed class GlobalInput : IDisposable
     [DllImport("user32.dll")] static extern bool UnhookWinEvent(nint hook);
     nint keyboard, mouse;
     public event Action? Toggle;
+    public event Action? HoldStart;
+    public event Action? HoldStop;
     public event Action<DestinationInput>? UserEdited;
     public bool ShortcutEnabled { get; set; }
+    public ShortcutMode Mode {get=>commands.Mode;set=>commands.Mode=value;}
+    public bool IsHoldingShortcut=>commands.IsHoldingShortcut;
+    public bool CapturingShortcut {get=>commands.CapturingShortcut;set=>commands.CapturingShortcut=value;}
     public ShortcutSpec Shortcut {get=>commands.Shortcut;set=>commands.Shortcut=value;}
     delegate nint Hook(int code, nint message, nint data);
 
@@ -67,6 +72,8 @@ public sealed class GlobalInput : IDisposable
                 var decision=commands.Update((int)key.Key,pressed,SessionActive,ShortcutEnabled);
                 if(pressed&&!decision.Suppress&&!ShortcutSpec.IsModifier((int)key.Key))ObserveEdit("Cursor delivery paused while you type. Return to the original unchanged field to resume.");
                 if(decision.Command==InputCommand.Toggle)Toggle?.Invoke();
+                if(decision.Command==InputCommand.Start)HoldStart?.Invoke();
+                if(decision.Command==InputCommand.Stop)HoldStop?.Invoke();
                 if(decision.Command==InputCommand.Cancel)Cancel?.Invoke();
                 if(decision.Suppress)return 1;
             }

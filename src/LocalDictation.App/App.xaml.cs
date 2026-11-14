@@ -37,7 +37,7 @@ public partial class App : System.Windows.Application
         {
             controller=new AppController(e.Args.Contains("--no-hotkey"));
             controller.ShowSettings();
-            _=controller.RefreshConnection();
+            _=controller.InitializeConnection();
         }
         catch(Exception)
         {

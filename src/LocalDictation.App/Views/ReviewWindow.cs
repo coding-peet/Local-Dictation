@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
+using System.Windows.Input;
 using System.Windows.Media;
 using LocalDictation.Core;
 
@@ -52,6 +53,14 @@ public sealed class ReviewWindow : Window
         SizeChanged+=(_,_)=>UpdateColumns();
         Closing+=(_,e)=>{if(IsApplying){e.Cancel=true;note.Text="Finishing the insertion check…";}};
         BuildContent();
+        PreviewKeyDown+=OnReviewKeyDown;
+    }
+
+    void OnReviewKeyDown(object sender,KeyEventArgs e)
+    {
+        if(e.Key!=Key.Escape||IsApplying||IsTranscribing)return;
+        e.Handled=true;
+        if(!e.IsRepeat&&!transcription.Cancel())Close();
     }
 
     public void Rebind(ReviewDocument value)
@@ -99,6 +108,7 @@ public sealed class ReviewWindow : Window
         LocalDictation.App.Services.SelectedCaretInsertActivation.Attach(this,acceptButton);
         transcription=new RetranscriptionPicker(()=>verificationModels(),model=>verificationAction(model));
         verifyButton=Ui.Button("Transcribe again",transcription.Toggle);verifyButton.IsEnabled=false;
+        transcription.ReturnFocusTarget=verifyButton;
         copy=Ui.Button("_Copy reviewed text",Copy);
         undo=Ui.Button("_Undo choice",()=>{document.Undo();Changed();});
         var keep=Ui.Button("_Keep remaining dictation",()=>{document.KeepRemaining();Changed();});
