@@ -81,6 +81,9 @@ static class Program
             DeleteDialogChecks.Run(output,checks);
             ShellPlacementChecks.Run(output,checks);
             HistoryLayoutChecks.Run(output,checks);
+            HistorySearchChecks.Run(output,checks);
+            PrivateFlowChecks.Run(output,checks);
+            DictionaryDraftChecks.Run(output,checks);
             SettingsContextHelpChecks.Run(output,checks);
             PickerKeyboardChecks.Run(output,checks);
             var invalidSettingsController=(AppController)RuntimeHelpers.GetUninitializedObject(typeof(AppController));

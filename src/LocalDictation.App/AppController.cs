@@ -9,7 +9,7 @@ using Forms=System.Windows.Forms;
 
 namespace LocalDictation.App;
 
-public sealed class AppController : IDisposable
+public sealed partial class AppController : IDisposable
 {
     sealed class Run(Settings settings)
     {
@@ -107,7 +107,7 @@ public sealed class AppController : IDisposable
     public float Level => active?.Capture.Level??0;
     public bool IsRecording => active?.Recording==true;
     public bool AtCursor=>active?.CanDeliver==true;
-    public bool IsBusy => active!=null;
+    public bool IsBusy => active!=null||IsImporting;
     public bool HasClipboardRecovery=>ClipboardRecovery.HasPending;
     public bool ShowBanner => active is {DestinationChecked:true}||BannerReview is {InsertedAt:null}||DateTimeOffset.Now<hideAt;
     public string MicrophoneLabel=>active?.Capture.DeviceName??"Microphone";
@@ -220,6 +220,7 @@ public sealed class AppController : IDisposable
             ReviewFallback=previous.ReviewFallback==null?null:
                 previous.Review.Primary.Length>0||previous.Review.ManualFinalDraft!=null?previous.Review:previous.ReviewFallback};
         run.Review.RetranscriptionOf=previous.Review.Id;
+        run.Review.IsPrivate=previous.Review.IsPrivate;
         run.Review.RequiresExplicitInsert|=previous.Review.RequiresExplicitInsert;
         run.Review.DraftWithdrawn=previous.Review.DraftWithdrawn;
         if(run.Delivery!=null&&!TransferReplayDestination(previous.Review,run.Review,run.Delivery))
@@ -697,7 +698,7 @@ public sealed class AppController : IDisposable
         reviewWindow?.Close();
         bannerProgress=new CompactReviewProgress(document);
         StateLabel=document.UnresolvedCount>0?"Review":"Ready to insert";
-        DetailLabel=document.UnresolvedCount>0?"Choose the wording in Review.":"Your text is saved. Use Insert when you are ready.";
+        DetailLabel=document.IsPrivate?"Private text stays in memory until you discard it or exit.":document.UnresolvedCount>0?"Choose the wording in Review.":"Your text is saved. Use Insert when you are ready.";
         hideAt=DateTimeOffset.MinValue;
         Changed?.Invoke();banner.Refresh();
         if(openEditor)
@@ -912,6 +913,7 @@ public sealed class AppController : IDisposable
                 throw new InvalidOperationException("This server supports batch transcription only. Start the Local Dictation session API.");
             Models=await api.Models();
             Connected=health.GetProperty("ready").GetBoolean();
+            if(importCancel==null&&importCleanupPending&&Settings.Endpoint==importCleanupEndpoint&&Connected&&!health.GetProperty("busy").GetBoolean())importCleanupPending=false;
             ConnectionMessage=Connected?(health.GetProperty("busy").GetBoolean()?"Another transcription is running":"Ready · Local transcription"):
                 "API preparing or unavailable. Wait for runtime readiness, then Reconnect.";
         }
@@ -975,6 +977,7 @@ public sealed class AppController : IDisposable
     public void ToggleReview(){if(IsRecording)Stop();else Start(true);}
     public void Start(bool reviewOnly=false)
     {
+        if(IsImporting)return;
         if(ClipboardRecovery.HasPending){ShowClipboardRecovery();_=RetryClipboardRestorationAsync();return;}
         if(exiting||reviewWindow?.IsApplying==true||IsApplyingReview||inserting.Count>0||deliveryBusy||active?.Closing==true)return;
         placementReview=null;
@@ -994,7 +997,7 @@ public sealed class AppController : IDisposable
         var destination=input.Epoch.Capture((long)WindowsTextDelivery.ForegroundWindow);
         bannerAnchor=(nint)destination.Window;
         var run=new Run(snapshot){Destination=destination};
-        active=run;input.SessionActive=true;
+        active=run;ClaimPrivateRecording(run);input.SessionActive=true;
         StateLabel="Preparing";DetailLabel="Opening the selected microphone…";hideAt=DateTimeOffset.MinValue;
         TrackRecording(Record(run));
     }
@@ -1115,7 +1118,7 @@ public sealed class AppController : IDisposable
             var audio=replay??run.Capture.TakeAudio();
             try
             {
-                if(audio.Length>0)
+                if(audio.Length>0&&!run.Review.IsPrivate)
                 {
                     historyStore.Add(run.Review,audio);
                     History=historyStore.Load();
@@ -1275,6 +1278,7 @@ public sealed class AppController : IDisposable
     }
     public void Cancel()
     {
+        if(IsImporting){CancelAudioImport();return;}
         languageWindow?.Close();
         if(IsApplyingReview||inserting.Count>0)return;
         // Escape relinquishes the hold without a later Stop command; apply its deferred settings now.
@@ -1303,6 +1307,7 @@ public sealed class AppController : IDisposable
     {
         if(canonicalReviews.TryGetValue(document.Id,out var current))
         {
+            if(current.IsPrivate)document.IsPrivate=true;
             // Detached History/UI snapshots cannot replace current edits or erase a receipt.
             if(current.InsertedAt!=null||document.InsertedAt==null)return current;
         }
@@ -1313,7 +1318,8 @@ public sealed class AppController : IDisposable
     public void SaveReview(ReviewDocument document)
     {
         document=CanonicalReview(document);
-        if(document.Primary.Length==0&&document.Verification.Length==0)return;
+        if(document.IsPrivate){KeepPrivateReview(document);return;}
+        if(document.Primary.Length==0&&document.Verification.Length==0&&document.OutputText.Length==0)return;
         if(History.Any(e=>e.Id==document.Id))
         {
             try{historyStore.Update(document);History=historyStore.Load();}
@@ -1328,7 +1334,7 @@ public sealed class AppController : IDisposable
         // proof already published so History cannot lose an insertion receipt.
         if(destinations.TryGetValue(id,out var existing))existing.Invalidate();
         DrainConfirmedPastes();
-        pending.Dismiss(id);
+        if(privateReviews?.Remove(id)==true)canonicalReviews.Remove(id);else pending.Dismiss(id);
         if(BannerReview?.Id==id)bannerProgress=null;
         if(destinations.Remove(id,out var target))target.Invalidate();
         Changed?.Invoke();
@@ -1441,6 +1447,7 @@ public sealed class AppController : IDisposable
     async Task<bool> PrepareForExit()
     {
         languageWindow?.Close();
+        CancelAudioImport();
         if(ClipboardBlocksExit())return false;
         exiting=true;
         // Serialize invalidation with any final readback publication, then drain
@@ -1450,6 +1457,7 @@ public sealed class AppController : IDisposable
         EmergencyReview();active?.Capture.Stop();
         // Include older runs cancelled when a new recording superseded verification.
         await Task.WhenAll(recordingTasks.ToArray());
+        if(importCleanupPending){exiting=false;ConnectionMessage="Audio import cleanup is not yet confirmed. Wait for the local API to become idle.";Changed?.Invoke();return false;}
         if(ClipboardBlocksExit())return false;
         return true;
     }
@@ -1457,8 +1465,10 @@ public sealed class AppController : IDisposable
     async void Exit()
     {
         if(exiting)return;
+        if(DictionaryEditorDraft!=null&&!ConfirmDictionaryDraftExit()){ShowSettings();return;}
         if(ClipboardBlocksExit())return;
-        if(IsBusy&&MessageBox.Show("Stop this session and exit? Received text and its original recording will be saved before closing.",
+        if((PrivateReviewCount>0||active?.Review.IsPrivate==true)&&!ConfirmPrivateExit())return;
+        if(PrivateReviewCount==0&&active?.Review.IsPrivate!=true&&IsBusy&&MessageBox.Show("Stop this session and exit? Received text and its original recording will be saved before closing.",
             "Exit Local Dictation",MessageBoxButton.YesNo,MessageBoxImage.Question)!=MessageBoxResult.Yes)return;
         // The confirmation pumps the dispatcher; insertion may have started while it was open.
         if(IsApplyingReview||reviewWindow?.IsApplying==true||inserting.Count>0)

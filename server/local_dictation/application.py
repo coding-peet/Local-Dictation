@@ -15,6 +15,7 @@ from .sessions import AudioSession, Admission, BusyError
 from .workers import run_worker, join
 from .installation import supports_language
 from .uploads import read_multipart
+from .audio_normalization import create_normalization_endpoint
 from .saved_verification import create_verification_endpoint
 from language_policy import normalize_language, preferred_for_model
 
@@ -47,7 +48,7 @@ def create_app(config, engine, catalog=None):
         runtime=engine.status() if hasattr(engine,"status") else {}
         return JSONResponse({"service":"local-dictation","protocol_version":1,"process_id":os.getpid(),
                              "ready":not admission.unavailable and runtime.get("ready",True),"busy":admission.lock.locked(),
-                             "phase":admission.kind,"max_seconds":config.max_seconds,"runtime":runtime})
+                             "phase":admission.kind,"max_seconds":config.max_seconds,"capabilities":{"audio_normalization":True,"vocabulary_prompt":True},"runtime":runtime})
 
     def ready():
         return not admission.unavailable and (not hasattr(engine,"status") or engine.status().get("ready",True))
@@ -60,6 +61,8 @@ def create_app(config, engine, catalog=None):
             raise ValueError("Start with protocol_version 1.")
         model = catalog.require(options.get("model",""))
         verifier = options.get("verification_model") or None
+        prompt=options.get("prompt","")
+        if not isinstance(prompt,str) or len(prompt)>1024:raise ValueError("Use a vocabulary hint string of at most 1024 characters.")
         live = options.get("live",True)
         if not isinstance(live,bool): raise ValueError("live must be a boolean.")
         if live and not model.get("live_supported"):
@@ -77,7 +80,7 @@ def create_app(config, engine, catalog=None):
             if any(candidate not in verified["languages"] for candidate in candidates):
                 raise ValueError("The verification model must support every candidate source language.")
         return {**options,"model":model["id"],"verification_model":verifier,
-                "live":live,"language":language,"requested_language":requested,"preferred_languages":preferred,
+                "prompt":prompt,"live":live,"language":language,"requested_language":requested,"preferred_languages":preferred,
                 "language_mode":"model_fixed" if len([l for l in model["languages"] if l!="auto"])==1 else "forced" if language!="auto" else None,
                 "primary_revision":model.get("installed_revision",model.get("revision")),
                 "verification_revision":verified.get("installed_revision",verified.get("revision")) if verifier else None}
@@ -182,6 +185,7 @@ def create_app(config, engine, catalog=None):
         except Exception: return error("Transcription failed. Check candidate API availability.",500)
 
     routes=[Route("/health",health),Route("/v1/models",models),
+            Route("/v1/audio/normalizations",create_normalization_endpoint(config,admission,ready,error),methods=["POST"]),
             Route("/v1/audio/transcriptions",batch,methods=["POST"]),
             Route("/v1/audio/verifications",create_verification_endpoint(config,engine,catalog,admission,ready,error),methods=["POST"]),
             Route("/v1/models/test",batch,methods=["POST"]),

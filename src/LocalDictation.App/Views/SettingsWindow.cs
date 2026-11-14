@@ -147,6 +147,7 @@ public sealed partial class SettingsWindow : Window
         recording.Children.Add(liveInsertRow);
         outputDependency.SetResourceReference(TextBlock.ForegroundProperty,"Muted");recording.Children.Add(outputDependency);
         page.Children.Add(Ui.Card(recording));
+        page.Children.Add(Ui.Card(PrivacySection()));
         page.Children.Add(Ui.SwitchRow("Verify after recording",verify,"Compare with a second local model. With Insert directly, matching results insert and differences open Review. With Preview first, both outcomes open Review without inserting."));
         Ui.Label(verificationDetails,"Verification model",verifier);
         verificationStatus.FontSize=12;verificationStatus.SetResourceReference(TextBlock.ForegroundProperty,"Muted");verificationDetails.Children.Add(verificationStatus);
@@ -162,6 +163,7 @@ public sealed partial class SettingsWindow : Window
         page.Children.Add(Section(appearance));
         page.Children.Add(Section(ShortcutSection()));
         page.Children.Add(Section(HistorySection()));
+        page.Children.Add(Section(DictionarySection()));
         var service=new StackPanel();service.Children.Add(Ui.Text("Local transcription service",18,true));
         Ui.Label(service,"Local service address",endpoint,"The session service supplies your installed models and transcriptions.");
         service.Children.Add(Ui.Row(Ui.Button("Reconnect",()=>_ = Reconnect()),Ui.Button("Start local API",()=>_ = controller.StartLocalApi())));
@@ -292,10 +294,10 @@ public sealed partial class SettingsWindow : Window
             resetCompatibility.Visibility=controller.Settings.FinalOnlyApplications.Count>0?Visibility.Visible:Visibility.Collapsed;
             compatibility.Text=controller.Settings.FinalOnlyApplications.Count==0?"No applications remembered.":"Final-only: "+string.Join(", ",controller.Settings.FinalOnlyApplications.OrderBy(name=>name,StringComparer.OrdinalIgnoreCase));
             shortcut.Text=shortcutCapturing?"Current shortcut: "+controller.Settings.Shortcut:controller.ShortcutMessage;
-            record.Content=controller.IsRecording?"Stop":"Record";
+            record.Content=controller.IsRecording?"Stop":controller.PrivateNextRecording?"Record privately":"Record";
             record.ToolTip=controller.IsRecording?"Finish the current dictation.":"Record a dictation for Review. To dictate at an external cursor, use your recording shortcut.";
             System.Windows.Automation.AutomationProperties.SetName(record,(string)record.Content);
-            record.IsEnabled=!controller.HasClipboardRecovery&&(controller.IsRecording||controller.Connected);
+            record.IsEnabled=!controller.HasClipboardRecovery&&!controller.IsImporting&&(controller.IsRecording||controller.Connected);
             var selected=primary.SelectedValue as string??controller.Settings.PrimaryModel;
             primary.ItemsSource=controller.Models.Where(m=>m.Installed).ToList();primary.SelectedValue=selected;
             if(initial)
@@ -309,7 +311,7 @@ public sealed partial class SettingsWindow : Window
                 language.SelectedItem=controller.Settings.Language;LoadMicrophones();
             }
             UpdateModelChoices(false);
-            UpdateOutputDependencies();UpdateShortcutOptions();RefreshHistoryOptions(initial);
+            UpdateOutputDependencies();UpdateShortcutOptions();RefreshHistoryOptions(initial);RefreshPrivate();
             UpdateSaveStatus();
             var selectedInstalled=SelectedInstalledModel()?.Id;
             var installed=controller.Models.Where(m=>m.Installed).Select(m=>new InstalledModelRow(m)).ToList();

@@ -119,7 +119,9 @@ class AudioSession:
                 raise ValueError("Primary source language is unavailable for verification.")
             arguments=(pcm,model,language,self.cancelled)
             preferred=self.options.get("preferred_languages")
-            if model==self.options["model"] and language=="auto" and preferred is not None:arguments+=(preferred,)
+            prompt=self.options.get("prompt","") if model==self.options["model"] else ""
+            if prompt:arguments+=(preferred if language=="auto" else None,prompt)
+            elif model==self.options["model"] and language=="auto" and preferred is not None:arguments+=(preferred,)
             result=await run_worker(self.engine.transcribe_pcm,*arguments,
                 cancelled=self.cancelled,timeout=self.config.inference_timeout_seconds)
             if model==self.options["model"]:
@@ -134,7 +136,7 @@ class AudioSession:
     def primary_profile(self):
         preferred=self.options.get("preferred_languages")
         return (self.options["model"],self.options.get("language","sk"),self.options.get("primary_revision"),
-                None if preferred is None else tuple(sorted(preferred)))
+                None if preferred is None else tuple(sorted(preferred)),self.options.get("prompt",""))
 
     async def cleanup(self):
         if not self.needs_cleanup:return
@@ -156,7 +158,7 @@ class AudioSession:
     async def announce_limit(self):
         if self.limit_reached and not self.limit_announced:
             self.limit_announced=True
-            await self.emit("recording.limit_reached",message="Recording stopped at its RAM/audio limit. Accepted audio is being transcribed.")
+            await self.emit("recording.limit_reached",audio_received_seconds=self.total_bytes/32000,max_seconds=self.config.max_seconds,message="Recording stopped at its RAM/audio limit. Accepted audio is being transcribed.")
 
     def cut(self):
         if len(self.buffer)<24*32000:return len(self.buffer)

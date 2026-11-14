@@ -69,8 +69,8 @@ static class HistoryDeleteChecks
             confirm.SetValue(panel,(Func<DictationItem,bool>)(entry=>{Require(entry.Id==first.Id,"More Delete did not share row confirmation.");return false;}));
             moreDelete.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));Require(owner.Dictations.Count==1&&audio.HasAudio,"Cancelling More Delete changed the dictation.");
             confirm.SetValue(panel,(Func<DictationItem,bool>)(_=>true));moreDelete.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));Layout();
-            Require(owner.Dictations.Count==0&&list.Items.Count==0&&Find<TextBlock>(panel).Any(t=>t.Text=="0 items")&&Find<TextBlock>(panel).Any(t=>t.Text=="No dictations yet"),"Deleting the final dictation lost the empty state or count.");
-            Require(Find<TextBox>(panel).Single().Text=="Record a dictation to see its transcript and original audio here."&&player.Visibility==Visibility.Collapsed&&!audio.HasAudio,"Empty History does not explain the next step or retains audio.");
+            Require(owner.Dictations.Count==0&&list.Items.Count==0&&Find<TextBlock>(panel).Any(t=>t.Text=="0 / 0")&&Find<TextBlock>(panel).Any(t=>t.Text=="No dictations yet"),"Deleting the final dictation lost the empty state or count.");
+            Require(Find<TextBox>(panel).Single(t=>AutomationProperties.GetName(t)=="Selected dictation transcript").Text=="Record a dictation or import audio to see its transcript here."&&player.Visibility==Visibility.Collapsed&&!audio.HasAudio,"Empty History does not explain the next step or retains audio.");
             Require(Find<Button>(panel).Where(b=>new[]{"Open Review","Copy text","More actions"}.Contains(AutomationProperties.GetName(b))).All(b=>!b.IsEnabled),"Empty History keeps detail actions enabled.");
             checks.Add("History row and More delete confirmation, cancellation, stable clicked ID, busy guard, selected audio lifetime, empty/audio/pending/text-only removal and zero-item guidance with synthetic stores");
         }

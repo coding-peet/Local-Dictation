@@ -60,7 +60,7 @@ public static class HistoryLayoutChecks
         var splitter=Find<GridSplitter>(panel).SingleOrDefault();Require(splitter!=null,"History is missing the draggable list/detail divider.");
         splitter!.ApplyTemplate();
         Require(splitter.Template.FindName("Grip",splitter) is Border grip&&grip.Opacity==0,"History divider still shows a permanent idle line.");
-        var body=(Grid)splitter!.Parent;var list=Find<ListBox>(panel).Single();var text=Find<TextBox>(panel).Single();
+        var body=(Grid)splitter!.Parent;var list=Find<ListBox>(panel).Single();var text=Find<TextBox>(panel).Single(t=>AutomationProperties.GetName(t)=="Selected dictation transcript");
         var player=Find<HistoryAudioPlayerControl>(panel).Single();var playback=(HistoryAudioPlayback)typeof(HistoryAudioPlayerControl).GetField("playback",Fields)!.GetValue(player)!;
         var audioField=typeof(HistoryAudioPlayback).GetField("audio",Fields)!;var outputField=typeof(HistoryAudioPlayback).GetField("output",Fields)!;
         var originalAudio=audioField.GetValue(playback);var originalPeaks=playback.Peaks;playback.Seek(TimeSpan.FromMilliseconds(375));

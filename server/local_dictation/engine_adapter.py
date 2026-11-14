@@ -31,7 +31,7 @@ class EngineAdapter:
             raise failure[0](failure[1]) from None
         return result
 
-    def transcribe_pcm(self, pcm, model, language, cancelled, preferred_languages=None):
+    def transcribe_pcm(self, pcm, model, language, cancelled, preferred_languages=None, prompt=""):
         if cancelled.is_set():
             raise RuntimeError("Cancelled.")
         stream = BytesIO()
@@ -41,7 +41,7 @@ class EngineAdapter:
             wav.setframerate(16000)
             wav.writeframes(pcm)
         self.register(model)
-        return self._call(stream.getvalue(),"",model,language,cancelled,preferred_languages)
+        return self._call(stream.getvalue(),prompt,model,language,cancelled,preferred_languages)
 
     def transcribe(self, data, prompt, model, language, cancelled, preferred_languages=None):
         self.register(model)

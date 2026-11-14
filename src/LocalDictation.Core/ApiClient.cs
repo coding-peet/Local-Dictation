@@ -41,7 +41,7 @@ public static class Protocol
         type="start",protocol_version=1,model=settings.PrimaryModel,language=settings.Language,
         // Empty tags restore unrestricted Auto; the API rejects an empty allowlist.
         preferred_languages=settings.PreferredLanguages.Count>0?settings.PreferredLanguages:null,
-        live=settings.Live,verification_model=settings.VerifyAfterRecording?settings.VerificationModel:null
+        prompt=settings.VocabularyPrompt,live=settings.Live,verification_model=settings.VerifyAfterRecording?settings.VerificationModel:null
     };
     public static JsonSerializerOptions Json { get; } = new()
     {
@@ -119,6 +119,25 @@ public sealed class ApiClient : IDisposable
         content.Add(new StringContent(language), "language");
         using var response = await http.PostAsync("/v1/models/test", content, token);
         await Read(response, token);
+    }
+    public async Task<byte[]> NormalizeRecording(byte[] encoded,CancellationToken token)
+    {
+        if(encoded.Length==0||encoded.Length>AudioImportSource.MaxEncodedBytes)throw new InvalidDataException("Choose a nonempty audio file below 26 MiB.");
+        using var content=new MultipartFormDataContent();content.Add(new ByteArrayContent(encoded),"file","recording.audio");
+        using var request=new HttpRequestMessage(HttpMethod.Post,"/v1/audio/normalizations"){Content=content};
+        using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,token);
+        if(response.StatusCode==System.Net.HttpStatusCode.NotFound)throw new AudioImportException("This local API needs the audio-import update. Standard 16 kHz mono PCM16 WAV files can still be imported.");
+        if(!response.IsSuccessStatusCode){await Read(response,token);throw new InvalidDataException("Audio preparation failed.");}
+        const int limit=600*32000+44;
+        if(response.Content.Headers.ContentType?.MediaType!="audio/wav"||response.Content.Headers.ContentLength>limit)throw new InvalidDataException("Invalid normalized audio response.");
+        await using var input=await response.Content.ReadAsStreamAsync(token);using var output=new MemoryStream();var buffer=new byte[65536];
+        try
+        {
+            int read;while((read=await input.ReadAsync(buffer,token))>0)
+            {if(output.Length+read>limit)throw new InvalidDataException("Normalized audio exceeds ten minutes.");output.Write(buffer,0,read);}
+            return output.ToArray();
+        }
+        finally{System.Security.Cryptography.CryptographicOperations.ZeroMemory(buffer);if(output.TryGetBuffer(out var bytes))System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes.AsSpan());}
     }
     public async Task<SavedVerificationResult> VerifyRecording(byte[] wave,ReviewDocument source,string verifier,string language,
         IReadOnlyList<string> preferred,CancellationToken token)

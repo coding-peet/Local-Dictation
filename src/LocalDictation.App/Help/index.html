@@ -153,6 +153,9 @@
             <li><a href="#destination">Choose a destination</a></li>
             <li><a href="#models">Models and languages</a></li>
             <li><a href="#history">History and audio</a></li>
+            <li><a href="#import-audio">Import audio files</a></li>
+            <li><a href="#private-recording">Private recording</a></li>
+            <li><a href="#personal-dictionary">Personal dictionary</a></li>
             <li><a href="#settings">Settings and shortcuts</a></li>
             <li><a href="#troubleshooting">Troubleshooting</a></li>
             <li><a href="#privacy">Local files and privacy</a></li>
@@ -223,7 +226,7 @@
         <h3>Clipboard</h3>
         <p>Every insertion attempt temporarily backs up your current clipboard and returns it automatically, whether insertion succeeds or not. A newer copy you make takes priority. You do not need to manage clipboard recovery.</p>
         <p>If Windows temporarily refuses clipboard access, the app keeps the backup and retries its return automatically. Insert becomes available when that return finishes. The explicit <strong>Copy text</strong> and <strong>Copy this original</strong> actions put your chosen text on the clipboard for you to use.</p>
-        <p>Confirmed insertion closes the banner. Otherwise your transcript stays in the banner with <strong>Insert</strong>. Select the destination cursor and click Insert to make a new attempt with a fresh backup of your current clipboard. The banner stays open until insertion is confirmed or you close it with <strong>X</strong>; closing keeps your text in History.</p>
+        <p>Confirmed insertion closes the banner. Otherwise your transcript stays in the banner with <strong>Insert</strong>. Select the destination cursor and click Insert to make a new attempt with a fresh backup of your current clipboard. The banner stays open until insertion is confirmed or you close it with <strong>X</strong>; closing keeps ordinary text in History. Private text stays in memory only.</p>
       </section>
 
       <section id="review" aria-labelledby="review-title">
@@ -327,6 +330,7 @@
         <p>Move the pointer into the gap between the recording list and transcript, then drag to resize them. The divider line is hidden until you hover or focus it with the keyboard. With the divider focused, use the arrow keys for small adjustments. Narrow windows stack the panes and hide the divider; widening restores your preferred width. The thin scrollbars keep more space for the content.</p>
         <p>The record count appears in the selected detail header. Empty History explains how to create the first dictation.</p>
         <p>Select <strong>History</strong> in the main window. <strong>History</strong> in the notification-area menu opens this same section. The list includes recordings and text marked Needs review. Text-only items remain available even when their original audio is gone.</p>
+        <p><strong>Search dictations</strong> searches complete original and edited text, including older manual versions, dates and model IDs. Matching ignores case and accents without changing stored text. Open <strong>Filters</strong> for inclusive local From/To dates, either model used in a recording, Needs review, Text only and Inserted. Enabled filters combine. The counter shows matching/total items; Clear filters restores the selected dictation when it is still available. Searching never plays, inserts or deletes text.</p>
         <ul>
           <li>The <strong>Play</strong>, <strong>Pause</strong> and <strong>Stop</strong> icons control the selected original recording. Pause keeps your position; Stop returns to the beginning. The compact player keeps the buttons, timeline and elapsed/total time on one line. Hover for playback state; playback failures remain visible.</li>
           <li>Drag the round timeline thumb to seek. Elapsed/total time show your position. The faint waveform behind the slider shows RMS energy on a fixed scale; loud isolated peaks do not shrink the rest of the recording. With the slider focused, Left/Right move one second; Page Up/Page Down move five seconds. Selecting a recording does not play it.</li>
@@ -352,6 +356,33 @@
         <p>An item marked <strong>Already inserted</strong> shows the saved text with insertion and phrase editing disabled. Its original choices and recording information remain available through <strong>Details</strong>. Use <strong>Copy text</strong> if you want to reuse that text manually.</p>
         <p>Open Review, Copy text and More actions sit beneath the selected text. The player stays below both columns. History list entries show short previews, while the detail uses the available height. At narrower sizes, the list moves above the selected transcript; scroll the page to reach the actions and player. Leaving History or closing the main window stops playback. Returning keeps the selected dictation and does not play it automatically.</p>
         <p>History is protected for your Windows account. Exported WAV files are ordinary, unencrypted audio; export recordings you need beyond the limit.</p>
+      </section>
+
+      <section id="import-audio" aria-labelledby="import-audio-title">
+        <h2 id="import-audio-title">Import audio files</h2>
+        <ol>
+          <li>Open History and select <strong>Import audio...</strong>. Select one or several local WAV, MP3, FLAC, M4A, OGG or Opus files.</li>
+          <li>Review the file count and current dictation model, language and optional verification model. These choices are copied for the complete batch.</li>
+          <li>Select <strong>Start import</strong>. Files run one at a time. Preparing, Transcribing, Saving and the final state appear beside each filename.</li>
+          <li>Use <strong>Cancel import</strong> to stop the active file and remaining jobs. The app waits for the local worker to release its operation. Already completed results remain in History; received incomplete text remains available for Review.</li>
+        </ol>
+        <p>Import leaves original files unchanged and creates protected History copies with the normal recording-retention policy. It never opens the microphone, plays sound, captures an external cursor or inserts automatically. Open a result in Review and choose Insert explicitly.</p>
+        <p>Each source must fit below the 26 MiB transport limit, including request overhead, and decode to at most ten minutes. Over-limit audio is refused without truncation. Changed or unreadable files fail individually; other files can continue. If protected saving fails, keep the app open and recover the in-memory text before exiting.</p>
+        <p>Compressed and nonstandard WAV files require the updated local API with audio normalization. An older API can still accept standard 16 kHz mono PCM16 WAV imports; an incompatible API produces a per-file update message. This is separate from installing the client update. A queue does not resume automatically after the app closes.</p>
+      </section>
+
+      <section id="private-recording" aria-labelledby="private-recording-title">
+        <h2 id="private-recording-title">Private microphone recording</h2>
+        <p>In Dictation, enable <strong>Private for next microphone recording</strong> before starting. The choice applies to one successfully owned recording and its language retry. A Private indicator appears in the recording banner and Review.</p>
+        <p>Private audio and text are not written to History, saved Review or export. Text can remain in memory for editing or insertion. Closing Review retains that memory while the app remains open; use <strong>Open private transcript</strong> in Dictation to return to it. Discarding private text or exiting the app loses it, with explicit confirmation.</p>
+        <p>Audio imports are saved jobs and cannot start while private-next is armed. An import does not consume this choice. Automatic incognito detection is not available. This mode does not erase Windows paging/crash records, clipboard history or records made by the destination application.</p>
+      </section>
+
+      <section id="personal-dictionary" aria-labelledby="personal-dictionary-title">
+        <h2 id="personal-dictionary-title">Personal dictionary preparation</h2>
+        <p>Settings contains separate <strong>Recognition hints</strong> and <strong>Exact corrections</strong>. Enter one hint per line, or one correction as <code>heard text =&gt; replacement</code>. Valid edits save automatically in a separate file protected for your Windows account.</p>
+        <p>Hints and corrections remain <strong>off pending paired evaluation</strong>. Saving entries does not enable recognition changes. The evaluation must compare the same labelled recordings before/after the change, including noise, missing dictionary terms and genuinely spoken repeated words. Existing model output is not independent reference text.</p>
+        <p>Prepared exact corrections match complete Unicode words/phrases with case sensitivity, prefer the longest source, and run once without recursive replacements. Original model transcripts stay separate and manual edits take precedence. Voice-formatting commands and additional silence/noise protection are also pending evaluation; no phrase blacklist or duplicate formatting layer is enabled.</p>
       </section>
 
       <section id="settings" aria-labelledby="settings-title">
@@ -491,7 +522,7 @@
             </tbody>
           </table>
         </div>
-        <p>Data locations can differ in a custom installation. History metadata, history audio, and unfinished text are protected with Windows DPAPI for the current user. Keep that account and its recovery arrangements in mind when backing up or moving data. Settings and explicit audio exports are ordinary files.</p>
+        <p>Data locations can differ in a custom installation. History metadata, history audio, and unfinished text are protected with Windows DPAPI for the current user. Keep that account and its recovery arrangements in mind when backing up or moving data. General settings and explicit audio exports are ordinary files. Personal dictionary entries are saved separately with current-user protection; private dictations bypass saved History and Review.</p>
         <p>Cursor insertion uses a temporary paste while preserving supported previous clipboard formats. Dictation payloads are marked to stay out of Windows clipboard history and cloud synchronization. Unsupported clipboard formats stop delivery before changing the clipboard.</p>
         <p class="top-link"><a href="#top">Back to the top</a></p>
       </section>

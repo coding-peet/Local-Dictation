@@ -41,6 +41,7 @@ public sealed class ReviewStore(string directory)
 
     public void Save(ReviewDocument document)
     {
+        PrivateDictationPolicy.RequirePersistent(document);
         var plain = JsonSerializer.SerializeToUtf8Bytes(document);
         try { AtomicFile.Write(PathFor(document.Id), UserProtection.Transform(plain, false)); }
         finally { CryptographicOperations.ZeroMemory(plain); }
@@ -123,6 +124,8 @@ public sealed class Settings
     [System.Text.Json.Serialization.JsonIgnore]
     public bool CanInsertLive => AfterRecording==AfterRecordingAction.InsertDirectly&&Live&&InsertAtCursor;
     public bool Live { get; set; } = true;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string VocabularyPrompt {get;set;}="";
     public List<string> FinalOnlyApplications { get; set; } = [];
     public string Language { get; set; } = "sk";
     public List<string> PreferredLanguages { get; set; } = ["sk","en"];

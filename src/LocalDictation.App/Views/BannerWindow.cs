@@ -157,7 +157,7 @@ public sealed class BannerWindow : Window
         }
         preview.Text=previewText;previewScroll.Visibility=showPreview?Visibility.Visible:Visibility.Collapsed;
         state.Text=controller.IsRecording?"Recording":controller.IsVerifying?"Verifying…":controller.IsBusy?"Finishing…":review is {CanInsert:true}?"Text ready":review!=null?"Review needed":controller.StateLabel=="Unavailable"?"Interrupted":controller.StateLabel;
-        model.Text=controller.BannerModelLabel;model.ToolTip=controller.BannerModelDetails;
+        model.Text=(controller.IsPrivateSession?"Private · ":"")+controller.BannerModelLabel;model.ToolTip=controller.BannerModelDetails;
         System.Windows.Automation.AutomationProperties.SetHelpText(model,controller.BannerModelDetails);
         timer.Text=showPreview?controller.ElapsedLabel:controller.IsRecording||controller.IsBusy?controller.ElapsedLabel:review is {CanInsert:true}?"Insert when ready":review!=null?"Open Review":"";
         if(controller.CanChangeInputLanguage)timer.Text+=" · "+controller.InputLanguageLabel;

@@ -48,7 +48,7 @@ public sealed class ReviewWindow : Window
     {
         this.document=document; this.save=save; this.dismiss=dismiss;
         this.accept=accept;this.chooseDestination=chooseDestination;
-        Title="Review · Local Dictation"; Width=1080; Height=740; MinWidth=650; MinHeight=540;
+        Title=document.IsPrivate?"Private Review · Local Dictation":"Review · Local Dictation"; Width=1080; Height=740; MinWidth=650; MinHeight=540;
         WindowStartupLocation=WindowStartupLocation.CenterScreen;
         SizeChanged+=(_,_)=>UpdateColumns();
         Closing+=(_,e)=>{if(IsApplying){e.Cancel=true;note.Text="Finishing the insertion check…";}};
@@ -87,7 +87,7 @@ public sealed class ReviewWindow : Window
         var root=new DockPanel { Margin=new(24) };
         System.Windows.Automation.AutomationProperties.SetName(transcript,"Working transcript with phrase choices");
         var header=new StackPanel();
-        header.Children.Add(Ui.Text("Review your dictation",22,true));
+        header.Children.Add(Ui.Text(document.IsPrivate?"Private dictation · Memory only":"Review your dictation",22,true));
         header.Children.Add(Ui.Text(document.Reason,13));
         var pinned=document.Provenance;
         static string Revision(string? value)=>string.IsNullOrEmpty(value)?"revision unknown":value[..Math.Min(value.Length,12)];
@@ -117,7 +117,7 @@ public sealed class ReviewWindow : Window
         foreach(var button in new[]{acceptButton,destinationButton,verifyButton,copy,undo,keep,close,remove}) { button.Margin=new(0,0,8,8); buttons.Children.Add(button); }
         footer.Children.Add(buttons);footer.Children.Add(transcription);
         footer.Children.Add(note);
-        footer.Children.Add(Ui.Text("Accept inserts the reviewed text and closes this window. Close keeps your saved text for later.",12));
+        footer.Children.Add(Ui.Text(document.IsPrivate?"Private text stays in memory only. Closing the app or discarding this Review loses it.":"Accept inserts the reviewed text and closes this window. Close keeps your saved text for later.",12));
         DockPanel.SetDock(footer,Dock.Bottom);root.Children.Add(footer);
 
         var working=new StackPanel();
@@ -131,7 +131,7 @@ public sealed class ReviewWindow : Window
         manualPanel.Children.Add(Ui.Button("Save text",()=>
         {
             document.KeepRemaining();Changed();
-            note.Text=saveSucceeded()?"Text saved. Insert is a separate action.":"Text could not be saved. Your edits are kept here; retry saving before closing.";
+            note.Text=document.IsPrivate?"Text kept in memory only. Insert is a separate action.":saveSucceeded()?"Text saved. Insert is a separate action.":"Text could not be saved. Your edits are kept here; retry saving before closing.";
         }));
         rebuild=Ui.Button("Rebuild from choices",()=>
         {
@@ -200,7 +200,7 @@ public sealed class ReviewWindow : Window
         var useSource=Ui.Button("Use this transcript",()=>
         {
             document.UseWholeTranscript(kind);Changed();
-            note.Text=saveSucceeded()?"Selected transcript saved. Insert is a separate action.":
+            note.Text=document.IsPrivate?"Selected transcript kept in memory only. Insert is a separate action.":saveSucceeded()?"Selected transcript saved. Insert is a separate action.":
                 "The selected transcript could not be saved. Your text is kept here; retry saving before closing.";
         });
         useSource.IsEnabled=confirmed&&document.InsertedAt==null;page.Children.Add(useSource);
@@ -312,7 +312,7 @@ public sealed class ReviewWindow : Window
     {note.Text=message;note.SetResourceReference(TextBlock.ForegroundProperty,"Warning");}
     void Dismiss()
     {
-        if(MessageBox.Show(this,"Remove these saved review choices? A saved recording, if available, remains in History.",
+        if(MessageBox.Show(this,document.IsPrivate?"Discard this private transcript? It exists only in memory and cannot be recovered.":"Remove these saved review choices? A saved recording, if available, remains in History.",
             "Dismiss Review",MessageBoxButton.YesNo,MessageBoxImage.Question)!=MessageBoxResult.Yes)return;
         dismiss(document.Id);Close();
     }

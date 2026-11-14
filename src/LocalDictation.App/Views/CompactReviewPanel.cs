@@ -372,6 +372,12 @@ public sealed class CompactReviewPanel : Border
             editingText&&manual!=null?"Your draft is saved. Save text keeps the complete result here. Insert is a separate action.":
             editingText?"Edit anywhere in your text. Enter never inserts it. Back to choices keeps the comparison unchanged.":
             manual!=null?"Saved. Click the text or press F2 to edit it. Insert when ready.":document.Reason;
+        if(document.IsPrivate)
+        {
+            progress.Text=inserted?"Already inserted":"Memory only";
+            status.Text=editingText&&manual?.Any(char.IsControl)==true?"Remove line breaks or control characters before inserting. Private text stays in memory only.":"Private text stays in memory only. Save text keeps edits here; discarding or exiting loses them.";
+            System.Windows.Automation.AutomationProperties.SetHelpText(directEditor,"Private edits stay in memory only. Save text does not write a file or insert. Enter never inserts.");
+        }
         status.Foreground=unsaved||editingText&&manual?.Any(char.IsControl)==true?Amber:Muted;
     }
 }

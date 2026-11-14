@@ -61,10 +61,12 @@ static class HistoryIntegrationChecks
             var seekBounds=slider.TransformToAncestor(player).TransformBounds(new Rect(slider.RenderSize));
             Require(transport.All(b=>Math.Abs(b.TransformToAncestor(player).Transform(new Point(0,24)).Y-seekBounds.Top-24)<1)&&seekBounds.Width>=120,"The compact player does not keep usable seeking beside its controls.");
             Require(!Find<TextBlock>(page).Any(t=>t.Text=="History"),"History repeats its navigation label above the list.");
-            Require(Find<TextBlock>(page).Any(t=>t.Text=="20 items"),"History lost the visible record count.");
+            Require(Find<TextBlock>(page).Any(t=>t.Text=="20 / 20"),"History lost the visible record count.");
             checks.Add("full History keeps wide playback visible "+theme);
             Save(page,760,560,Path.Combine(output,"layout-metrics-"+theme+".png"));
-            Require(transcript.ActualHeight>=300,$"The selected transcript still loses height to page chrome and actions: text={transcript.ActualHeight}, player={player.ActualHeight}, page={page.ActualHeight}.");
+            var searchToolbar=(FrameworkElement)((DockPanel)((ScrollViewer)page.GetType().GetProperty("Content")!.GetValue(page)!).Content).Children[0];
+            Require(searchToolbar.ActualHeight<=64,"History search/import uses more than one compact idle row.");
+            Require(transcript.ActualHeight>=240&&transcript.ActualHeight+searchToolbar.ActualHeight>=300,$"The selected transcript still loses height to page chrome and actions: text={transcript.ActualHeight}, player={player.ActualHeight}, page={page.ActualHeight}.");
             var open=Find<Button>(page).Single(b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Open Review");
             Require(open.TransformToAncestor(page).Transform(new Point()).X>=transcript.TransformToAncestor(page).Transform(new Point()).X-24,"Review actions are still detached from their selected text.");
             Require(Find<Button>(page).Any(b=>System.Windows.Automation.AutomationProperties.GetName(b)=="More actions"),"Secondary dictation actions are not grouped in More.");
@@ -105,7 +107,7 @@ static class HistoryIntegrationChecks
                 {
                     nav.SelectedIndex=2;Layout(shell,1040,760);
                     Require(shell.StatusBar.ActualHeight<=72&&shell.StatusArea.Visibility==Visibility.Collapsed,"Normal status bar did not stay compact.");
-                    Require(transcript.ActualHeight>=380,"The selected design did not allocate the gained window height to the transcript.");
+                    Require(transcript.ActualHeight>=300&&transcript.ActualHeight+searchToolbar.ActualHeight>=380,$"History content height regressed: transcript={transcript.ActualHeight}, page={page.ActualHeight}.");
                     Require(nav.Items.OfType<ListBoxItem>().Select(i=>(TextBlock)i.Content).All(t=>t.Visibility==Visibility.Visible)&&nav.ActualWidth>=144,"Named navigation was hidden or collapsed.");
                     Save(shell,1040,760,Path.Combine(output,"named-menu-shell-wide-"+theme+".png"));checks.Add("named menu and compact real main chrome "+theme);
                     Layout(shell,640,600);

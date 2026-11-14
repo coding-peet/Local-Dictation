@@ -21,7 +21,7 @@ public sealed class CompactReviewWindow : Window
         Width=560;MinWidth=400;SizeToContent=SizeToContent.Height;MaxHeight=740;
         WindowStartupLocation=WindowStartupLocation.CenterScreen;
         var root=new StackPanel{Margin=new(24)};
-        root.Children.Add(Ui.Text("Review your dictation",24));
+        root.Children.Add(Ui.Text(controller.BannerReview?.IsPrivate==true?"Private dictation · Memory only":"Review your dictation",24));
         root.Children.Add(Ui.Text("Choose the wording you want to keep, or edit your text.",14));
         panel=new CompactReviewPanel(controller);root.Children.Add(panel);
         insert=Ui.Button("Insert",()=>_=controller.ApplyBannerReviewAtSelectedCursor(),true);
@@ -34,6 +34,7 @@ public sealed class CompactReviewWindow : Window
         verify=Ui.Button("Transcribe again",transcription.Toggle);
         transcription.ReturnFocusTarget=verify;
         var actions=new WrapPanel{HorizontalAlignment=HorizontalAlignment.Right,Margin=new(0,16,0,0)};
+        if(controller.BannerReview?.IsPrivate==true)actions.Children.Add(Ui.Button("Discard private text",()=>{if(controller.BannerReview is {} d)controller.RequestDiscardPrivateReview(d.Id);}));
         actions.Children.Add(Ui.Button("Close",Close));actions.Children.Add(verify);actions.Children.Add(insert);root.Children.Add(actions);
         status.SetResourceReference(TextBlock.ForegroundProperty,"Muted");status.Margin=new(0,8,0,0);root.Children.Add(status);
         Content=new ScrollViewer{Content=root,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
@@ -62,7 +63,7 @@ public sealed class CompactReviewWindow : Window
         else if(choosingModel)status.Text="Choose a model and confirm Transcribe. Your current text is kept.";
         else
         status.Text=controller.IsApplyingReview?"Inserting…":controller.BannerInsertionError is {Length:>0} failure?failure:
-            document==null?"Your pending text is kept in History.":document.InsertedAt!=null?"Previously inserted. Your text and saved Review choices are preserved.":"Select a destination cursor, then click Insert. Closing keeps your text and choices.";
+            document?.IsPrivate==true?"Private text stays in memory only. Closing the app or discarding loses it.":document==null?"Your pending text is kept in History.":document.InsertedAt!=null?"Previously inserted. Your text and saved Review choices are preserved.":"Select a destination cursor, then click Insert. Closing keeps your text and choices.";
         status.SetResourceReference(TextBlock.ForegroundProperty,controller.BannerInsertionError.Length>0?"Warning":"Muted");
         if(IsVisible&&(document==null||!openedInserted&&document.InsertedAt!=null)&&!controller.IsApplyingReview)Close();
     }

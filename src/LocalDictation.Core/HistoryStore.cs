@@ -22,6 +22,7 @@ public sealed class HistoryStore(string directory)
     }
     public void Add(ReviewDocument document,byte[] pcm)
     {
+        PrivateDictationPolicy.RequirePersistent(document);
         if(pcm.Length==0||pcm.Length%2!=0)throw new ArgumentException("Expected PCM16 audio.");
         var audio=Wave(pcm);
         try {AtomicFile.Write(PathFor(document.Id,".audio"),UserProtection.Transform(audio,false));}
@@ -37,6 +38,7 @@ public sealed class HistoryStore(string directory)
     }
     public void Update(ReviewDocument document)
     {
+        PrivateDictationPolicy.RequirePersistent(document);
         var existing=Load().FirstOrDefault(e=>e.Id==document.Id);
         if(existing!=null)Save(existing with {Document=document});
     }

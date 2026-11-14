@@ -38,6 +38,9 @@ public sealed partial class SettingsWindow
         Add("live-transcription",0,live,"Live transcription","Recognize speech while you record.","banner preview real time");
         Add("after-recording",0,afterRecording,"After recording","Insert directly or Preview first in Review. Verification works with either choice.","finish output automatic paste manual");
         Add("live-insertion",0,insert,"Insert live text at the cursor","Update the original validated field while recording. Available with Insert directly and Live transcription.","delivery typing paste cursor");
+        Add("private-recording",0,privateNext,"Private for next microphone recording","Keep the next microphone recording out of saved History and Review.","privacy private incognito memory");
+        Add("dictionary-hints",3,dictionaryHints,"Recognition hints","Prepare personal names and technical terms; activation waits for paired evaluation.","dictionary vocabulary spelling names");
+        Add("dictionary-corrections",3,dictionaryCorrections,"Exact corrections","Prepare exact case-sensitive replacement pairs; activation waits for paired evaluation.","dictionary replace terminology");
         Add("verification",0,verify,"Verify after recording","Compare with a second local model. Preview first always opens Review.","verification compare accuracy differences");
         Add("verification-model",0,verifier,"Verification model","Choose another eligible installed model when Verify after recording is on.","second compare whisper");
         Add("installed-models",1,installedModels,"Installed models","Review model tests and live support.","whisper local download");

@@ -15,6 +15,8 @@ public sealed class ReviewDocument
     public DateTimeOffset? InsertedAt {get;set;}
     public bool DraftWithdrawn {get;set;}
     public bool RequiresExplicitInsert {get;set;}
+    // Retained by in-memory JSON clones; every persistent store rejects true.
+    public bool IsPrivate {get;set;}
     [JsonIgnore] public bool CanInsert=>InsertedAt==null&&UnresolvedCount==0;
     public ReviewProvenance? Provenance {get;set;}
     public string PrimaryModel { get; set; } = "";
@@ -22,6 +24,8 @@ public sealed class ReviewDocument
     public string? Language {get;set;}
     public string? LanguageMode {get;set;}
     public string? RetranscriptionOf {get;set;}
+    public ImportedAudioSource? ImportedAudio {get;set;}
+    public PersonalDictionarySnapshot? Dictionary {get;set;}
     public string? VerificationModel { get; set; }
     public string Primary { get; set; } = "";
     public string Verification { get; set; } = "";
@@ -44,7 +48,7 @@ public sealed class ReviewDocument
         Choices.TryGetValue(p.Id, out var choice)
             ? choice.Kind switch { "verification" => p.Verification, "custom" => choice.Custom ?? "", _ => p.Primary }
             : p.Primary));
-    [JsonIgnore] public string OutputText => ManualFinalDraft ?? WorkingText;
+    [JsonIgnore] public string OutputText => ManualFinalDraft ?? (Dictionary is {CorrectionsEnabled:true} snapshot?PersonalDictionary.Apply(WorkingText,snapshot.Settings).Text:WorkingText);
 
     public void AttachProvenance(ReviewProvenance value)
     {

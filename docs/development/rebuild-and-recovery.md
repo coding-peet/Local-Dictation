@@ -193,3 +193,31 @@ See settings-search-help-output-20261113.md for candidate, manifests and checks.
 
 See review-before-push-20261114.md for the full pre-push review, corrections,
 Help validation and the distinction between committed source and installed build.
+
+
+## Personal-tools API compatibility
+
+The personal-tools client can search local History independently of server
+capabilities. Standard mono 16 kHz PCM16 WAV imports use the session protocol.
+Other supported audio requires the updated API normalization endpoint.
+
+This command only reads service identity/readiness/capabilities. It does not
+restart a process, change settings, open an audio device or load a model:
+
+~~~powershell
+Invoke-RestMethod http://127.0.0.1:48125/health |
+    Select-Object process_id, ready, busy, max_seconds, capabilities
+~~~
+
+The new source advertises capabilities.audio_normalization and vocabulary_prompt.
+The latter confirms protocol plumbing, not per-model tokenizer or quality
+qualification. Dictionary activation remains off until the paired evaluation.
+
+An already running Python process retains its loaded source. Publishing a new
+client does not update that service. Preserve the existing API processes during
+development. A controlled session-API handover requires an idle service, normal
+client Exit, verified process/listener identity and specific authorization to
+replace that API process; keep the TypeWhisper API on 8123 unchanged.
+
+Synthetic import transport tests use their own fake API on 48226 and no real
+models or private files. See ../../diagnostics/ImportApiFixture/README.md.

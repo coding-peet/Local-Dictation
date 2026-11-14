@@ -11,7 +11,7 @@ using MaterialDesignThemes.Wpf;
 
 namespace LocalDictation.App.Views;
 
-public sealed class HistoryPanel : UserControl,IDisposable
+public sealed partial class HistoryPanel : UserControl,IDisposable
 {
     readonly AppController controller;
     readonly ListBox items=new(){MinHeight=150};
@@ -26,6 +26,8 @@ public sealed class HistoryPanel : UserControl,IDisposable
     bool refreshing,active,disposed;
     string? loadedAudioId;
     IReadOnlyList<DictationItem>? shown;
+    string? preferredSelectionId;
+    int totalItems;
 
     public HistoryPanel(AppController controller)
     {
@@ -38,6 +40,7 @@ public sealed class HistoryPanel : UserControl,IDisposable
         scrollStyle.Triggers.Add(new Trigger{Property=ScrollBar.OrientationProperty,Value=Orientation.Horizontal,Setters={new Setter(HeightProperty,10d),new Setter(WidthProperty,double.NaN)}});
         Resources[typeof(ScrollBar)]=scrollStyle;Resources[SystemParameters.VerticalScrollBarWidthKey]=10d;Resources[SystemParameters.HorizontalScrollBarHeightKey]=10d;
         var root=new DockPanel{MinHeight=420,Height=420};root.SetResourceReference(Panel.BackgroundProperty,"Canvas");
+        var toolbar=SearchToolbar();DockPanel.SetDock(toolbar,Dock.Top);root.Children.Add(toolbar);
         var footer=new StackPanel{Margin=new(0,8,0,0)};
         playback.PlaybackError+=text=>message.Text=text;footer.Children.Add(playback);
         message.Margin=new(0,4,0,0);message.SetResourceReference(TextBlock.ForegroundProperty,"Warning");
@@ -114,7 +117,7 @@ public sealed class HistoryPanel : UserControl,IDisposable
             ApplyWideWidth();
         };
         System.Windows.Automation.AutomationProperties.SetName(items,"Recent dictations");System.Windows.Automation.AutomationProperties.SetName(transcript,"Selected dictation transcript");
-        items.SelectionChanged+=(_,_)=>{if(!refreshing)Select();};controller.Changed+=Refresh;
+        items.SelectionChanged+=(_,_)=>{if(!refreshing){preferredSelectionId=Selected?.Id;Select();}};controller.Changed+=Refresh;
     }
 
     static ControlTemplate DividerTemplate()
@@ -178,13 +181,16 @@ public sealed class HistoryPanel : UserControl,IDisposable
     void Refresh()
     {
         if(disposed||!active)return;
-        var next=controller.Dictations;
+        RefreshImport();
+        var all=controller.Dictations;totalItems=all.Count;RefreshSearchModels(all);
+        var next=DictationSearch.Find(all,query);
         if(shown!=null&&shown.SequenceEqual(next)){UpdateText();return;}
-        shown=next;var id=Selected?.Id;refreshing=true;
+        shown=next;var id=preferredSelectionId??Selected?.Id;refreshing=true;
         try
         {
             items.ItemsSource=next;
-            items.SelectedItem=next.FirstOrDefault(e=>e.Id==id)??next.FirstOrDefault();
+            items.SelectedItem=id==null?next.FirstOrDefault():next.FirstOrDefault(e=>e.Id==id);
+            if(preferredSelectionId==null)preferredSelectionId=(items.SelectedItem as DictationItem)?.Id;
         }
         finally{refreshing=false;}
         Select();
@@ -203,10 +209,10 @@ public sealed class HistoryPanel : UserControl,IDisposable
     }
     void UpdateText()
     {
-        var selected=Selected;transcript.Text=selected?.Document.OutputText??"Record a dictation to see its transcript and original audio here.";
+        var selected=Selected;transcript.Text=selected?.Document.OutputText??(totalItems==0?"Record a dictation or import audio to see its transcript here.":shown?.Count==0?"No dictations match. Clear or change the filters.":"Select a dictation to see its transcript.");
         openReview.IsEnabled=copyText.IsEnabled=more.IsEnabled=selected!=null;
-        count.Text=$"{shown?.Count??0} items";
-        title.Text=selected?.Document.Created.LocalDateTime.ToString("g")??"No dictations yet";
+        count.Text=$"{shown?.Count??0} / {totalItems}";
+        title.Text=selected?.Document.Created.LocalDateTime.ToString("g")??(totalItems==0?"No dictations yet":shown?.Count==0?"No matches":"Select a dictation");
         state.Text=selected?.State??"";
         if(selected==null){detail.Text=language.Text="";return;}
         var model=controller.Models?.FirstOrDefault(m=>m.Id==selected.Document.PrimaryModel);

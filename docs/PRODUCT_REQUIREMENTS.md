@@ -546,3 +546,77 @@ especially when every write fails, is not claimed to have transactional recovery
 
 - Enable uses the same 18-DIP bold text and vertical center as Keyboard shortcut.
   Recording-mode labels use the semantic theme foreground in Light and Dark.
+
+
+## Approved next functions and quality evaluation (14 November 2026)
+
+Status: implemented and deployed on 15 November 2026; acoustic activation remains gated.
+See development/personal-tools-20261114.md for exact validation and rollout status.
+The source baseline is b7c4cd62d72054e63c36b3c2f585f616b8752064.
+
+- Personal dictionary: separate recognition hints supported by the actual local
+  runtime from explicit exact corrections after recognition. Measure benefit and
+  regressions on the same audio before enabling it. Preserve original transcripts.
+- History search: search complete content, date and model, with Needs review,
+  Text only and Inserted filters. Keep the existing combined History workspace.
+- File transcription: History -> Import audio..., multiple files, a serial queue,
+  progress and cancellation. Results belong in History. Preserve input files.
+  Import must never capture a destination or automatically insert external text.
+- Private dictation: decide privacy before capture/persistence and cover client,
+  API, temporary files and recovery paths. Automatic incognito activation is a
+  requested direction; the browser integration is not yet selected or verified.
+  Window-title guessing is not an established privacy detector.
+- Optional voice formatting: first measure current model behavior on the same
+  samples. Separate natural punctuation from explicit formatting commands. Avoid
+  duplicate formatting, preserve literal words, and retain original recognition.
+- Silence/noise protection: agree and evaluate tests before changing recognition.
+  Never blindly delete a phrase or legitimate repetitions from a transcript.
+
+Peter accepted a 12-recording test plan: eight speech cases and four no-speech
+controls, with three independent holdouts. He also explicitly requested reuse of
+existing recordings, including keyboard, microphone blowing, children shouting,
+office and household noise. Reuse suitable recordings, add an expanded noise
+regression set, and request new audio only for missing coverage/clean holdouts.
+Children/background voices can contain intelligible speech: do not assign an
+empty reference based on their noise label. Do not split identical audio or
+segments from one parent recording across tuning and holdout sets.
+
+Keep private audio, labels, references and results outside Git. Historical model
+outputs are not human reference text. Historical human intended/corrected wording
+is not automatically a verified verbatim listening transcript. Existing assessed
+recordings establish regressions, not a previously unseen holdout.
+
+See development/personal-asr-test-protocol-20261114.md for the agreed evaluation
+shape and explicit remaining reference/label limitations. The design proposal is
+superpowers/specs/2026-11-14-history-import-and-personal-tools-design.md.
+
+
+## Personal-tools candidate behavior (14 November 2026)
+
+- History search covers complete original/current/archived manual text, dates and
+  primary/verifier IDs, with case/accent-insensitive all-term matching. Local
+  From/To dates are inclusive; invalid input retains the last valid filter.
+  Model/status filters combine; selected identity survives filtering/clear.
+  Show matching/total. Keep Search, Filters and Import in one compact header row.
+- Import snapshots all source hashes and batch model/language/verification choices.
+  Decode serially in memory, preserve input files, and keep results/partial text
+  under existing protected History/recovery. Never capture a native destination,
+  insert automatically, open completion Review popups or start audio devices.
+  Check both advertised/session duration limits and receipt coverage; refuse
+  over-limit files without truncation. Cancel awaits worker admission release.
+- New API normalization supports tested WAV/MP3/FLAC/M4A/OGG/Opus. Older API
+  processes lack this endpoint: only standard 16 kHz mono PCM16 WAV can bypass it.
+  Updating a client does not hot-load server source into an existing process.
+- Private for next microphone recording is a one-shot controller choice consumed
+  only after session ownership. Propagate it to language retries. Protected History,
+  Review and pending stores refuse private documents; in-memory JSON clones retain
+  the private marker. Private Review stays in memory with explicit discard/Exit
+  warnings. Imports do not consume this choice and are blocked while it is armed.
+- Personal dictionary entries autosave separately with current-user protection.
+  Unsaved editor drafts survive Settings close/reopen in memory, including invalid,
+  busy and storage-error cases; Exit asks before discarding an unsaved draft.
+  Recognition hint and exact-correction activation remain off pending real runtime
+  qualification and paired labelled evaluation. The deterministic correction
+  implementation preserves originals/manual precedence and never recurses.
+- Keep native microphone, playback, Codex/Outlook insertion, automatic incognito
+  and acoustic-quality acceptance separate from synthetic/offscreen validation.
