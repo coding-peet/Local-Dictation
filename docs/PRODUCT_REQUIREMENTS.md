@@ -403,8 +403,8 @@ punctuation, whitespace, and Unicode must be preserved.
   saved status, including Text only items whose audio has expired. Deduplicate
   IDs and preserve current pending edits and durable insertion receipts. Remove
   the separate Pending Review navigation and use History's Open Review route.
-  Storage lifetimes remain independent: the 20-recording limit never evicts
-  protected unfinished text. Explicit Delete removes the selected dictation and
+  Storage lifetimes remain independent: audio expiry never removes protected
+  unfinished text. Explicit Delete removes the selected dictation and
   closes its matching editors before deleting audio/text/choices.
   Put a small Ã— on each row with an accessible 48-DIP interaction target. Confirm
   the clicked ID with date/time and Cancel as default; modal selection changes must
@@ -429,10 +429,21 @@ punctuation, whitespace, and Unicode must be preserved.
   Load its protected audio only while History is selected; leaving the section
   stops/clears playback. Closing the main window disposes its player/subscriptions.
 
-- Retain the latest 20 dictations with their original audio. Evict the oldest
-  history transcript and audio when adding a 21st item.
+- Keep transcripts until explicit deletion. In Settings / History, expose Keep
+  recordings for with a 7-day default, 1/7/30/90-day and 1-year choices, and Forever.
+  Persist AudioRetentionDays (0 Forever; valid 0..3650), preserving custom values.
+  Missing settings migrate to 7 days. Replace the old 20-item eviction policy;
+  adding a dictation must never evict another transcript.
+- Remove only expired audio belonging to validated history entries. Cleanup runs
+  on startup, hourly while idle, and on a saved retention change while idle.
+  Busy sessions/Review applications defer cleanup. Preserve text, edits, choices,
+  provenance, durations, receipts and separate pending storage. Unknown/corrupt
+  entries remain untouched; deletion failures retain files and show local warning.
+  Expired audio cannot be restored by choosing a longer retention period.
+- Show entries without audio as Text only, retaining Copy/Review/edit/Insert.
+  Disable playback/export/retranscription/language replay when audio is absent.
 - Protect saved transcripts and audio for the current Windows account with
-  DPAPI. Pending Review is separate and must not be evicted by the history limit.
+  DPAPI. Pending Review is separate and must not be evicted by audio cleanup.
 - Provide Play, Pause and Stop icons, elapsed/total time, a seekable timeline
   with a round thumb, and a faint RMS waveform under the slider. Keep the
   transport approximately 60 DIPs tall: the existing 48-DIP buttons, seek track
@@ -530,3 +541,8 @@ especially when every write fails, is not claimed to have transactional recovery
   global warnings prominent above content and settings-save errors visible.
 - Settings search includes Recording shortcut behavior and its Hold, Press,
   release, toggle and push-to-talk terms. Revealing it must not change the mode.
+
+## Shortcut heading refinement (14 November 2026)
+
+- Enable uses the same 18-DIP bold text and vertical center as Keyboard shortcut.
+  Recording-mode labels use the semantic theme foreground in Light and Dark.

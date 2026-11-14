@@ -98,6 +98,7 @@ static class Program
             AfterRecordingChecks.Controller(output,checks);
             HoldShortcutFlowChecks.Check(output,checks);
             ShortcutSettingsChecks.Run(output,checks);
+            HistoryRetentionChecks.Run(output,checks);
             HistoryDeleteChecks.Run(output,checks);
             var cancelledController=(AppController)RuntimeHelpers.GetUninitializedObject(typeof(AppController));
             var cancelledRunType=typeof(AppController).GetNestedType("Run",BindingFlags.NonPublic)!;

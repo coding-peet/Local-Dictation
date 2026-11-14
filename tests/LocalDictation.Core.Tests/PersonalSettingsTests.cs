@@ -40,7 +40,7 @@ public class PersonalSettingsTests
         finally {if(Directory.Exists(path))Directory.Delete(path,true);}
     }
 
-    [Fact] public void HistoryKeepsNewestTwentyAndRestoresOriginalAudio()
+    [Fact] public void HistoryKeepsAllTranscriptsAndRestoresOriginalAudio()
     {
         var path=Path.Combine(Path.GetTempPath(),"ld-history-"+Guid.NewGuid());
         try
@@ -54,15 +54,15 @@ public class PersonalSettingsTests
                 ids.Add(doc.Id);store.Add(doc,pcm);
             }
             var entries=store.Load();
-            Assert.Equal(20,entries.Count);
-            Assert.DoesNotContain(entries,e=>e.Id==ids[0]);
-            Assert.False(File.Exists(Path.Combine(path,ids[0]+".audio")));
+            Assert.Equal(21,entries.Count);
+            Assert.Contains(entries,e=>e.Id==ids[0]);
+            Assert.True(File.Exists(Path.Combine(path,ids[0]+".audio")));
             Assert.Equal("Text 20",entries[0].Document.Primary);
             var wave=store.ReadAudio(entries[0].Id);
             Assert.Equal("RIFF",System.Text.Encoding.ASCII.GetString(wave,0,4));
             Assert.Equal(pcm,wave[44..]);
             Assert.DoesNotContain("Text 20",System.Text.Encoding.UTF8.GetString(File.ReadAllBytes(Path.Combine(path,ids[20]+".history"))));
-            store.Delete(ids[20]);Assert.Equal(19,store.Load().Count);
+            store.Delete(ids[20]);Assert.Equal(20,store.Load().Count);
             Assert.Throws<ArgumentException>(()=>store.ReadAudio("../elsewhere"));
         }
         finally {if(Directory.Exists(path))Directory.Delete(path,true);}
@@ -75,7 +75,7 @@ public class PersonalSettingsTests
             var doc=new ReviewDocument();doc.SetPrimary("recoverable text");
             var store=new HistoryStore(path);store.Add(doc,new byte[]{0,0});
             File.Delete(Path.Combine(path,doc.Id+".audio"));
-            Assert.Empty(store.Load());Assert.Single(store.Errors);
+            Assert.Equal("recoverable text",Assert.Single(store.Load()).Document.OutputText);Assert.Empty(store.Errors);
             Assert.True(File.Exists(Path.Combine(path,doc.Id+".history")));
         }
         finally {if(Directory.Exists(path))Directory.Delete(path,true);}

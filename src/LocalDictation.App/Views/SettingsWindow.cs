@@ -77,7 +77,7 @@ public sealed partial class SettingsWindow : Window
         Closing+=(_,_)=>CommitTextEdits();
         Closed+=(_,_)=>{closed=true;controller.Changed-=Refresh;shell.Dispose();poll.Stop();saveDelay.Stop();historyPanel?.Dispose();};
         poll.Tick+=(_,_)=>_ = PollDownload();
-        foreach(var box in new[]{microphone,primary,verifier,language,theme,afterRecording})box.SelectionChanged+=(_,_)=>SelectionChanged(box);
+        foreach(var box in new[]{microphone,primary,verifier,language,theme,afterRecording,historyRetention})box.SelectionChanged+=(_,_)=>SelectionChanged(box);
         foreach(var check in new[]{live,verify,insert,shortcutEnabled})
         {check.Checked+=(_,_)=>SelectionChanged(check);check.Unchecked+=(_,_)=>SelectionChanged(check);}
         foreach(var text in new[]{endpoint})
@@ -161,6 +161,7 @@ public sealed partial class SettingsWindow : Window
         Ui.Label(appearance,"Color theme",theme,"System follows Windows. Light and Dark override it.");
         page.Children.Add(Section(appearance));
         page.Children.Add(Section(ShortcutSection()));
+        page.Children.Add(Section(HistorySection()));
         var service=new StackPanel();service.Children.Add(Ui.Text("Local transcription service",18,true));
         Ui.Label(service,"Local service address",endpoint,"The session service supplies your installed models and transcriptions.");
         service.Children.Add(Ui.Row(Ui.Button("Reconnect",()=>_ = Reconnect()),Ui.Button("Start local API",()=>_ = controller.StartLocalApi())));
@@ -308,7 +309,7 @@ public sealed partial class SettingsWindow : Window
                 language.SelectedItem=controller.Settings.Language;LoadMicrophones();
             }
             UpdateModelChoices(false);
-            UpdateOutputDependencies();UpdateShortcutOptions();
+            UpdateOutputDependencies();UpdateShortcutOptions();RefreshHistoryOptions(initial);
             UpdateSaveStatus();
             var selectedInstalled=SelectedInstalledModel()?.Id;
             var installed=controller.Models.Where(m=>m.Installed).Select(m=>new InstalledModelRow(m)).ToList();
@@ -421,6 +422,7 @@ public sealed partial class SettingsWindow : Window
         value.InsertAtCursor=insert.IsChecked==true;value.EnableShortcut=shortcutEnabled.IsChecked==true;
         value.AfterRecording=(AfterRecordingAction)afterRecording.SelectedIndex;
         value.Theme=theme.SelectedItem as string??"System";
+        value.AudioRetentionDays=historyRetention.SelectedValue is int days?days:controller.Settings.AudioRetentionDays;
         var saved=Persist(value);selectionPending=!saved||selectionError.Length>0;
         UpdateSaveStatus();return saved;
     }

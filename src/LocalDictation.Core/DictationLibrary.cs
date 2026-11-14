@@ -22,13 +22,13 @@ public static class DictationLibrary
             // An acknowledged insertion is never resurrected by an older pending
             // snapshot. Otherwise the pending store owns the current manual edits.
             var document=recording?.Document.InsertedAt!=null&&draft?.InsertedAt==null?recording.Document:draft??recording!.Document;
-            rows.Add(Item(document,recording?.DurationSeconds,draft!=null,unsaved.Contains(id)));
+            rows.Add(Item(document,recording?.DurationSeconds,recording?.HasAudio??false,draft!=null,unsaved.Contains(id)));
         }
         return rows.OrderByDescending(r=>r.Document.Created).ThenBy(r=>r.Id,StringComparer.Ordinal).ToList();
     }
-    static DictationItem Item(ReviewDocument document,double? duration,bool pending,bool unsaved)
+    static DictationItem Item(ReviewDocument document,double? duration,bool hasAudio,bool pending,bool unsaved)
     {
         var preview=document.OutputText.ReplaceLineEndings(" ");
-        return new(document,duration,duration!=null,pending&&document.InsertedAt==null,unsaved,preview[..Math.Min(80,preview.Length)]);
+        return new(document,duration,hasAudio,pending&&document.InsertedAt==null,unsaved,preview[..Math.Min(80,preview.Length)]);
     }
 }

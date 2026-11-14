@@ -78,8 +78,9 @@ candidate listener and shared read-only model files during development.
 - Preserve original model weights and FP16 behavior; no conversion or quantization.
 - Verification is a generic role with a registry-backed model dropdown.
   Large-v3 is the initial selection, not a hardcoded workflow.
-- Keep the latest 20 dictations with their audio in protected local history.
-  Pending Review is separate and is not evicted by the history limit.
+- Keep protected text history until explicit deletion. Audio retention defaults
+  to 7 days and is configurable; expiry removes audio only. Pending Review text
+  remains independent. Do not restore the obsolete count20 transcript eviction.
 - Never submit the text inserted into another app or synthesize a send shortcut.
 - Stop automatic delivery when the owned destination cannot be validated.
 - Codex insertion requires Peter's manual application acceptance test.

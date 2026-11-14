@@ -6,13 +6,14 @@ namespace LocalDictation.Core;
 
 public sealed record HistoryEntry(ReviewDocument Document,double DurationSeconds)
 {
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool HasAudio {get;init;}=true;
     public string Id=>Document.Id;
     public string Label=>$"{Document.Created.LocalDateTime:g} · {DurationSeconds:0}s · {Document.Primary.ReplaceLineEndings(" ")[..Math.Min(80,Document.Primary.ReplaceLineEndings(" ").Length)]}";
 }
 
 public sealed class HistoryStore(string directory)
 {
-    public const int Limit=20;
     public List<string> Errors {get;}=[];
     string PathFor(string id,string suffix)
     {
@@ -27,7 +28,6 @@ public sealed class HistoryStore(string directory)
         finally {CryptographicOperations.ZeroMemory(audio);}
         try {Save(new(document,pcm.Length/32000.0));}
         catch {File.Delete(PathFor(document.Id,".audio"));throw;}
-        foreach(var old in Load().Skip(Limit))Delete(old.Id);
     }
     void Save(HistoryEntry entry)
     {
@@ -52,15 +52,30 @@ public sealed class HistoryStore(string directory)
                 try
                 {
                     var entry=JsonSerializer.Deserialize<HistoryEntry>(plain)??throw new InvalidDataException();
-                    if(entry.Document==null||PathFor(entry.Id,".history")!=path||!File.Exists(PathFor(entry.Id,".audio")))throw new InvalidDataException();
-                    entries.Add(entry);
+                    if(entry.Document==null||PathFor(entry.Id,".history")!=path)throw new InvalidDataException();
+                    entries.Add(entry with{HasAudio=File.Exists(PathFor(entry.Id,".audio"))});
                 }
                 finally {CryptographicOperations.ZeroMemory(plain);}
             }
-            catch(Exception ex) when(ex is System.ComponentModel.Win32Exception or IOException or InvalidDataException or JsonException or ArgumentException)
+            catch(Exception ex) when(ex is System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException or InvalidDataException or JsonException or ArgumentException)
             {Errors.Add(Path.GetFileName(path));}
         }
         return entries.OrderByDescending(e=>e.Document.Created).ToList();
+    }
+    /// <summary>Expire only audio belonging to validated history entries. Text is never evicted.</summary>
+    public IReadOnlyList<string> ApplyAudioRetention(int retentionDays,DateTimeOffset now)
+    {
+        if(retentionDays is <0 or >3650)throw new ArgumentOutOfRangeException(nameof(retentionDays),"Choose 0 (Forever) or 1 to 3650 days.");
+        if(retentionDays==0)return [];
+        var failures=new List<string>();
+        var age=TimeSpan.FromDays(retentionDays);
+        foreach(var entry in Load())
+        {
+            if(!entry.HasAudio||now-entry.Document.Created<age)continue;
+            try{File.Delete(PathFor(entry.Id,".audio"));}
+            catch(Exception ex) when(ex is IOException or UnauthorizedAccessException){failures.Add(entry.Id);}
+        }
+        return failures;
     }
     public byte[] ReadAudio(string id)=>UserProtection.Transform(File.ReadAllBytes(PathFor(id,".audio")),true);
     public void Delete(string id)

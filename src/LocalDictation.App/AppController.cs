@@ -42,6 +42,8 @@ public sealed class AppController : IDisposable
     readonly PendingReviews pending;
     readonly HistoryStore historyStore=new(Path.Combine(AppPaths.Data,"history"));
     public IReadOnlyList<HistoryEntry> History {get;private set;}=[];
+    readonly DispatcherTimer historyRetentionTimer=new(){Interval=TimeSpan.FromHours(1)};
+    public string HistoryRetentionMessage {get;private set;}="";
     readonly DispatcherTimer reconnectTimer=new(){Interval=TimeSpan.FromSeconds(5)};
     bool refreshing;
     ReviewWindow? reviewWindow;
@@ -134,14 +136,14 @@ public sealed class AppController : IDisposable
             return active?.RetrySettings is {} retry?label+" → "+retry.Language.ToUpperInvariant():label;
         }
     }
-    public bool CanChangeInputLanguage=>active is {Closing:false}||BannerReview is {} doc&&History.Any(e=>e.Id==doc.Id);
+    public bool CanChangeInputLanguage=>active is {Closing:false}||BannerReview is {} doc&&History.Any(e=>e.Id==doc.Id&&e.HasAudio);
     LanguageWindow? languageWindow;
     public void ShowInputLanguage(ReviewDocument? document=null)
     {
         if(languageWindow!=null){languageWindow.Activate();return;}
         var run=document==null?active:null;
         var source=document??run?.Review??BannerReview;
-        if(source==null||run==null&&!History.Any(e=>e.Id==source.Id))return;
+        if(source==null||run==null&&!History.Any(e=>e.Id==source.Id&&e.HasAudio))return;
         if(run!=null)run.LanguageSelection=new(TaskCreationOptions.RunContinuationsAsynchronously);
         languageWindow=new LanguageWindow(this,source.PrimaryModel,run?.Recording==true,
             code=>ChangeInputLanguage(code,run,source),source.RequestedLanguage.Length>0?source.RequestedLanguage:Settings.Language,
@@ -244,7 +246,7 @@ public sealed class AppController : IDisposable
         return Models.Where(m=>m.Id!=document.PrimaryModel&&m.Compatible&&ModelEligibility.CanVerify(m,language,primary,Settings.PreferredLanguages)).ToList();
     }
     public bool CanVerifyReview(ReviewDocument document)=>!IsBusy&&!IsApplyingReview&&!ClipboardRecovery.HasPending&&!ClipboardRecovery.HasUnsettledTransaction&&document.Primary.Length>0&&
-        History.Any(e=>e.Id==document.Id)&&VerificationChoices(document).Count>0;
+        History.Any(e=>e.Id==document.Id&&e.HasAudio)&&VerificationChoices(document).Count>0;
     public string? StartSavedVerification(ReviewDocument document,ModelInfo verifier)
     {
         if(!CanVerifyReview(document)||!VerificationChoices(document).Any(m=>m.Id==verifier.Id))return "The recording or second model is no longer available.";
@@ -333,6 +335,7 @@ public sealed class AppController : IDisposable
         Settings.ServerUri();
         ThemeManager.Apply(Settings.Theme);
         History=historyStore.Load();
+        ApplyHistoryRetention(false);
         pending=new PendingReviews(store);
         foreach(var entry in History)canonicalReviews[entry.Id]=entry.Document;
         foreach(var document in pending.Documents.ToArray())
@@ -378,6 +381,8 @@ public sealed class AppController : IDisposable
         timer.Start();
         reconnectTimer.Tick+=async(_,_)=>{if(!IsBusy&&!Connected)await RefreshConnection();};
         reconnectTimer.Start();
+        historyRetentionTimer.Tick+=(_,_)=>ApplyHistoryRetention();
+        historyRetentionTimer.Start();
         resumeTimer.Tick+=async(_,_)=>
         {
             DrainConfirmedPastes();
@@ -827,10 +832,26 @@ public sealed class AppController : IDisposable
             if(settings.VerifyAfterRecording&&!Models.Any(m=>m.Id==settings.VerificationModel&&m.Id!=model.Id&&ModelEligibility.CanVerify(m,settings.Language,model,settings.PreferredLanguages)))
                 throw new ArgumentException("Choose a verification model supporting every preferred Auto language supported by Dictation.");
         }
+        var retentionChanged=Settings.AudioRetentionDays!=settings.AudioRetentionDays;
         settings.Save();
         Settings=settings;
         ThemeManager.Apply(settings.Theme);
         RecheckShortcut();
+        if(retentionChanged)ApplyHistoryRetention();
+    }
+
+    void ApplyHistoryRetention(bool notify=true)
+    {
+        if(disposed||exiting||IsBusy||IsApplyingReview)return;
+        try
+        {
+            var failures=historyStore.ApplyAudioRetention(Settings.AudioRetentionDays,DateTimeOffset.UtcNow);
+            History=historyStore.Load();
+            HistoryRetentionMessage=failures.Count==0?"":$"{failures.Count} recording(s) could not be removed. Cleanup will retry; transcripts are preserved.";
+        }
+        catch(Exception error) when(error is IOException or UnauthorizedAccessException or ArgumentException)
+        {HistoryRetentionMessage="Recordings could not be cleaned up. Check the retention setting and storage access; text is preserved.";}
+        if(notify)Changed?.Invoke();
     }
 
     public bool ResetDeliveryCompatibility()
@@ -1456,6 +1477,6 @@ public sealed class AppController : IDisposable
     public void Dispose()
     {
         disposed=true;ClipboardRecovery.Changed-=ClipboardRecoveryChanged;
-        timer.Stop();reconnectTimer.Stop();resumeTimer.Stop();input.Dispose();tray.Visible=false;tray.Dispose();active?.Cancel.Cancel();automation.Dispose();
+        timer.Stop();reconnectTimer.Stop();historyRetentionTimer.Stop();resumeTimer.Stop();input.Dispose();tray.Visible=false;tray.Dispose();active?.Cancel.Cancel();automation.Dispose();
     }
 }

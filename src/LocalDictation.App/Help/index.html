@@ -336,8 +336,8 @@
           <li>The small <strong>×</strong> beside each row deletes that dictation after confirmation. The prompt identifies its date and time and starts with Cancel selected. Select Delete to confirm. Confirming removes its recording, transcript and saved Review choices. <strong>More actions (⋯) → Delete…</strong> uses the same confirmation for the selected item.</li>
         </ul>
         <div class="callout">
-          <strong>History keeps the latest 20 dictations with audio.</strong>
-          <p>The next saved recording removes the oldest recording from this list. Text marked Needs review is retained independently and may remain as a Text only item. A recording with captured audio can be retained even when no words were recognized; use Change language… to try that audio again.</p>
+          <strong>Recordings are kept for 7 days by default; transcripts stay until you delete them.</strong>
+          <p>Change this in <strong>Settings → History → Keep recordings for</strong>, or search settings for retention. Choose 1 day, 7 days, 30 days, 90 days, 1 year or Forever. Cleanup removes expired audio and keeps its transcript as a Text only item. Shortening the period can remove older recordings immediately. Cleanup runs while the app is open or next time you open it; busy dictation waits. A longer period cannot restore audio already removed. A recording with captured audio can be retained even when no words were recognized; use Change language… to try that audio again.</p>
         </div>
         <h3>Insert a saved pending result</h3>
         <ol>
@@ -380,6 +380,8 @@
               overlap other applications' shortcuts, especially in Hold mode; a
               combination with a dedicated key reduces that overlap. Changes made
               during a held recording apply after its release or cancellation.</p>          </dd>
+          <dt>History</dt>
+          <dd><strong>Keep recordings for</strong> controls audio lifetime, with a 7-day default. Transcripts stay until explicit deletion. Expired audio cannot be played, exported or transcribed again. Choose Forever to retain recordings until deletion.</dd>
           <dt>Saving</dt>
           <dd>Valid model, microphone, language, appearance, and toggle changes save automatically. Text settings save after a short pause or focus change. Invalid text shows an error and leaves the previous valid configuration active. During a session, changes apply to the next recording.</dd>
           <dt>Help</dt>
@@ -470,7 +472,7 @@
         </details>
         <details>
           <summary>A recording is missing from History or will not play</summary>
-          <p>History contains the latest 20 retained recordings, including recordings where no words were recognized. Earlier items may have been removed by the limit or explicitly deleted. Check your playback device if a saved item will not play. A pending Review can outlive its history audio; it is not an unlimited recording archive. If audio saving fails, the transcript remains as a Text only item in History.</p>
+          <p>History keeps transcripts until you delete them. Recordings expire after the period chosen in Settings → History, including recordings where no words were recognized. A missing recording is shown as Text only; earlier versions could also remove items under the old count limit. Check your playback device if a saved item will not play. A pending Review can outlive its history audio; it is not an unlimited recording archive. If audio saving fails, the transcript remains as a Text only item in History.</p>
         </details>
       </section>
 

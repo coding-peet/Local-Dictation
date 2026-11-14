@@ -108,7 +108,7 @@ editor. Nothing is submitted.
 | Canonical source | C:\Git\Local-Dictation\repo |
 | Working branch in this folder | feature/native-windows; ordinary branches, no new worktrees |
 | Installed app folder | C:\Git\Local-Dictation\app |
-| Settings, Pending Review, latest 20 transcripts and audio | C:\AI\LocalDictation\data |
+| Settings, Pending Review, transcripts and retained audio | C:\AI\LocalDictation\data |
 | Operational logs and diagnostics | C:\AI\LocalDictation\logs and diagnostics |
 | Candidate environment and compiler output | C:\AI\build\Local-Dictation |
 | Candidate registry/imported model data | C:\AI\LocalDictation\server-data and models |
@@ -183,3 +183,13 @@ docs/development/               Setup, recovery, validation and limitations
 docs/superpowers/               Decision history, designs and implementation plans
 docs/prototypes/                Design references and synthetic native previews
 ~~~
+
+## Recording retention
+
+Open Settings / History / Keep recordings for. The default is 7 days. Transcripts,
+edits and saved Review choices remain until you delete the dictation. Only expired
+recordings are removed automatically; those items become Text only. Forever keeps
+recordings until deletion. A longer period cannot recover audio already removed.
+
+The previous count20 eviction is replaced by this audio-only lifetime policy.
+See docs/PRODUCT_REQUIREMENTS.md for the current behavior and native-test limits.

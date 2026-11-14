@@ -62,7 +62,7 @@ public sealed class CompactReviewWindow : Window
         else if(choosingModel)status.Text="Choose a model and confirm Transcribe. Your current text is kept.";
         else
         status.Text=controller.IsApplyingReview?"Inserting…":controller.BannerInsertionError is {Length:>0} failure?failure:
-            document==null?"Your pending text is kept in History.":document.InsertedAt!=null?"Previously inserted. Its original recording can still be compared with another model.":"Select a destination cursor, then click Insert. Closing keeps your text and choices.";
+            document==null?"Your pending text is kept in History.":document.InsertedAt!=null?"Previously inserted. Your text and saved Review choices are preserved.":"Select a destination cursor, then click Insert. Closing keeps your text and choices.";
         status.SetResourceReference(TextBlock.ForegroundProperty,controller.BannerInsertionError.Length>0?"Warning":"Muted");
         if(IsVisible&&(document==null||!openedInserted&&document.InsertedAt!=null)&&!controller.IsApplyingReview)Close();
     }

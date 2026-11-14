@@ -131,6 +131,7 @@ public sealed class Settings
     [System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<ShortcutMode>))]
     public ShortcutMode ShortcutMode {get;set;}=ShortcutMode.Toggle;
     public string Theme {get;set;}="System";
+    public int AudioRetentionDays {get;set;}=7;
 
     public Uri ServerUri()
     {
@@ -151,6 +152,7 @@ public sealed class Settings
         ServerUri();
         if(!Enum.IsDefined(AfterRecording))throw new ArgumentException("Choose Insert directly or Preview first.");
         if(!Enum.IsDefined(ShortcutMode))throw new ArgumentException("Choose Toggle or Hold to record.");
+        if(AudioRetentionDays is <0 or >3650)throw new ArgumentException("Choose 0 (Forever) or 1 to 3650 days for recordings.");
         ShortcutSpec.Parse(Shortcut);
         LanguagePolicy.ValidatePreferences(PreferredLanguages);
         if(Theme is not ("System" or "Light" or "Dark"))throw new ArgumentException("Choose System, Light, or Dark.");
