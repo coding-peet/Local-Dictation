@@ -33,6 +33,9 @@ History row previews use the full row width. A 24-DIP delete action overlays
 the bottom-right corner only on row hover or keyboard focus. Keep More → Delete
 available as the ordinary full-size alternative. Keep the glyph opaque and
 its circular Surface/Ink backplate 25% transparent, with a subtle outline.
+Direct hover, keyboard focus and press make that circle fully opaque. Keep
+its Surface fill stable rather than letting the toolkit replace it with
+transparent ink during hover.
 Put Filters in its own rounded SurfaceContainer card below search/import,
 with a visible gap. The search/import row stays outside that card.
 

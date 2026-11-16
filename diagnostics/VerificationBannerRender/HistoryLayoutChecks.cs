@@ -119,6 +119,13 @@ public static class HistoryLayoutChecks
         var deleteBounds=cross.TransformToAncestor(list).TransformBounds(new Rect(cross.RenderSize));
         Require(deleteBounds.Left>=0&&deleteBounds.Right<=list.ActualWidth+.1,$"History delete overlay is clipped outside the visible list width: button={deleteBounds}, list={list.ActualWidth}, row={row.ActualWidth}, viewport={Find<ScrollViewer>(list).First().ViewportWidth}, extent={Find<ScrollViewer>(list).First().ExtentWidth}.");
         Save(panel,760,560,Path.Combine(output,"history-layout-hover-"+theme+".png"));
+        cross.SetValue(hoverKey,true);panel.UpdateLayout();
+        Save(panel,760,560,Path.Combine(output,"history-layout-delete-hover-"+theme+".png"));
+        void RequireOpaquePlate(string state)=>Require(plate.Opacity==1&&plate.Background is SolidColorBrush fill&&fill.Opacity==1&&fill.Color.A==255&&fill.Color==((SolidColorBrush)Application.Current.FindResource("Surface")).Color,$"Delete {state} lost its opaque Surface circle: opacity={plate.Opacity}, background={plate.Background}.");
+        RequireOpaquePlate("direct hover");cross.SetValue(hoverKey,false);panel.UpdateLayout();
+        Require(plate.Opacity==.75,"Leaving the delete button does not restore the quieter row-hover circle.");
+        var pressedKey=(DependencyPropertyKey)typeof(ButtonBase).GetField("IsPressedPropertyKey",BindingFlags.Static|BindingFlags.NonPublic|BindingFlags.Public)!.GetValue(null)!;
+        cross.SetValue(pressedKey,true);panel.UpdateLayout();RequireOpaquePlate("pressed");cross.SetValue(pressedKey,false);
         row.SetValue(hoverKey,false);
         panel.SetActive(false);Require(!playback.HasAudio&&playback.State==HistoryPlaybackState.Empty,"Leaving resized History retained its recording.");
         panel.Dispose();panel.SetActive(true);Require(!playback.HasAudio,"Disposed resized History reloaded audio.");

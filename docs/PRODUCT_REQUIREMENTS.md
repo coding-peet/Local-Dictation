@@ -632,7 +632,9 @@ superpowers/specs/2026-11-14-history-import-and-personal-tools-design.md.
 - Use the full list-row width for the transcript preview. A 24 × 24 DIP delete
   action overlays the bottom-right corner only while the row is hovered or has
   keyboard focus. Give its circular background 25% transparency while keeping
-  the glyph opaque. Hide its pointer target when idle; retain confirmation and
+  the glyph opaque. On direct button hover, keyboard focus or press, make the
+  circle fully opaque; toolkit state layers must not make its fill transparent.
+  Hide its pointer target when idle; retain confirmation and
   More → Delete for an alternative full-size action.
 - Put History filters in their own rounded block below the search/import row,
   separated by a visible gap and matching Settings category cards. Search and

@@ -154,11 +154,18 @@ public sealed partial class HistoryPanel : UserControl,IDisposable
             deleteStyle.Triggers.Add(new DataTrigger{Binding=new Binding(state){RelativeSource=new(RelativeSourceMode.FindAncestor,typeof(ListBoxItem),1)},Value=true,Setters={new Setter(OpacityProperty,1d),new Setter(IsHitTestVisibleProperty,true)}});
         delete.SetValue(StyleProperty,deleteStyle);delete.SetValue(ToolTipProperty,"Delete dictation…");
         delete.SetBinding(AutomationProperties.NameProperty,new Binding("Document.Created"){StringFormat="Delete dictation from {0:g}"});
+        var plateStyle=new Style(typeof(Border));plateStyle.Setters.Add(new Setter(OpacityProperty,.75));
+        foreach(var state in new[]{nameof(Button.IsMouseOver),nameof(Button.IsKeyboardFocused),nameof(Button.IsPressed)})
+            plateStyle.Triggers.Add(new DataTrigger{Binding=new Binding(state){RelativeSource=new(RelativeSourceMode.FindAncestor,typeof(Button),1)},Value=true,Setters={new Setter(OpacityProperty,1d)}});
         delete.AddHandler(LoadedEvent,new RoutedEventHandler((sender,_)=>
         {
             if(sender is not Button button)return;
             if(VisualTreeHelper.GetChildrenCount(button)>0&&VisualTreeHelper.GetChild(button,0) is Panel target)target.Background=Brushes.Transparent;
-            if(button.Template?.FindName("border",button) is Border body){body.Opacity=.75;Ui.BindCapsule(body);}
+            if(button.Template?.FindName("border",button) is Border body)
+            {
+                // The toolkit hover trigger otherwise replaces Surface with 16%-opaque ink.
+                body.SetResourceReference(Border.BackgroundProperty,"Surface");body.Style=plateStyle;Ui.BindCapsule(body);
+            }
         }));
         delete.AddHandler(Button.ClickEvent,new RoutedEventHandler((sender,args)=>{args.Handled=true;if(sender is FrameworkElement{DataContext:DictationItem entry})Delete(entry);}));
         var glyph=new FrameworkElementFactory(typeof(PackIcon));glyph.SetValue(PackIcon.KindProperty,PackIconKind.Close);glyph.SetValue(WidthProperty,12d);glyph.SetValue(HeightProperty,12d);delete.AppendChild(glyph);row.AppendChild(delete);
