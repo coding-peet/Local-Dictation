@@ -72,10 +72,10 @@ static class SettingsHelpChecks
         Require(info.Focusable&&info.IsTabStop,"Settings info is missing keyboard access.");
         Require(AutomationProperties.GetName(info)=="About "+label&&AutomationProperties.GetHelpText(info)==hint,"Settings info lost its accessible name or full help text.");
         Require(info.ToolTip!=null,"Settings info lost hover help.");
-        Layout(info,48);
-        Require(info.ActualWidth>=48&&info.ActualHeight>=48,"Settings info lost its desktop interaction target.");
+        Layout(info,32);
+        Require(Math.Abs(info.ActualWidth-32)<.1&&Math.Abs(info.ActualHeight-32)<.1,"Settings info is not a compact 32-DIP desktop action.");
         var glyph=Find<PackIcon>(info).Single();
-        Require(glyph.ActualWidth<=20&&glyph.ActualHeight<=20,"Settings info glyph is no longer visually compact.");
+        Require(glyph.ActualWidth<=14&&glyph.ActualHeight<=14,"Settings info glyph is no longer visually compact.");
         var popover=(FrameworkElement)content!.Invoke(null,[info])!;
         Layout(popover,360);
         Require(Find<TextBlock>(popover).Any(t=>t.Text==label)&&Find<TextBlock>(popover).Any(t=>t.Text==hint),"Settings popover omits the setting or explanation.");

@@ -109,8 +109,17 @@ public static class HistoryLayoutChecks
         Save(panel,448,420,Path.Combine(output,"history-layout-stacked-"+theme+".png"));
         Layout(panel,760);Bounds();Require(splitter.Visibility==Visibility.Visible&&Math.Abs(body.ColumnDefinitions[0].ActualWidth-preferred)<1,"Returning from stacked History reset the user's column width.");
         var row=(ListBoxItem)list.ItemContainerGenerator.ContainerFromItem(list.SelectedItem);var cross=Find<Button>(row).Single(b=>AutomationProperties.GetName(b).StartsWith("Delete dictation"));
-        Require(cross.ActualWidth>=48&&cross.ActualHeight>=48,"History resizing shrank a row's delete target.");
+        Require(cross.ActualWidth==24&&cross.ActualHeight==24,"History resizing changed the compact delete overlay.");
         Save(panel,760,560,Path.Combine(output,"history-layout-restored-"+theme+".png"));
+        var hoverKey=(DependencyPropertyKey)typeof(UIElement).GetField("IsMouseOverPropertyKey",BindingFlags.Static|BindingFlags.NonPublic)!.GetValue(null)!;
+        SettingsHelpChecks.SettleForRender(panel);row.SetValue(hoverKey,true);panel.UpdateLayout();
+        Require(cross.Opacity==1,"The hover delete action did not become visible for rendering.");
+        var plate=Find<Border>(cross).Single(element=>element.Name=="border");
+        Require(plate.Opacity==.75&&cross.Content is FrameworkElement glyph&&glyph.Opacity==1,"Delete must have a 25%-transparent circle and an opaque glyph.");
+        var deleteBounds=cross.TransformToAncestor(list).TransformBounds(new Rect(cross.RenderSize));
+        Require(deleteBounds.Left>=0&&deleteBounds.Right<=list.ActualWidth+.1,$"History delete overlay is clipped outside the visible list width: button={deleteBounds}, list={list.ActualWidth}, row={row.ActualWidth}, viewport={Find<ScrollViewer>(list).First().ViewportWidth}, extent={Find<ScrollViewer>(list).First().ExtentWidth}.");
+        Save(panel,760,560,Path.Combine(output,"history-layout-hover-"+theme+".png"));
+        row.SetValue(hoverKey,false);
         panel.SetActive(false);Require(!playback.HasAudio&&playback.State==HistoryPlaybackState.Empty,"Leaving resized History retained its recording.");
         panel.Dispose();panel.SetActive(true);Require(!playback.HasAudio,"Disposed resized History reloaded audio.");
         checks.Add("History delete modal suppresses shortcuts, refuses busy operations and restores capture after dialog failure "+theme);

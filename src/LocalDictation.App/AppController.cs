@@ -866,6 +866,7 @@ public sealed partial class AppController : IDisposable
             ConnectionMessage="Could not save the delivery preference. Your previous choices were kept.";
             Changed?.Invoke();return false;
         }
+        ConnectionMessage="Remembered applications cleared. Outlook still inserts after Finish.";
         Changed?.Invoke();return true;
     }
 

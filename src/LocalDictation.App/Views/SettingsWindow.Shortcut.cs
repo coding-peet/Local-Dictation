@@ -20,13 +20,13 @@ public sealed partial class SettingsWindow
 
     FrameworkElement ShortcutSection()
     {
-        var panel=new StackPanel();var heading=new DockPanel{MinHeight=48};
-        var enableLabel=Ui.Text("Enable",18,true);enableLabel.Margin=new(0);enableLabel.VerticalAlignment=VerticalAlignment.Center;
+        var panel=new StackPanel();var heading=new Grid{MinHeight=48};
+        heading.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});heading.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
+        var enableLabel=Ui.Text("Enable",18,true);enableLabel.Margin=new(0,0,12,0);enableLabel.VerticalAlignment=VerticalAlignment.Center;
         var enabled=Ui.Row(enableLabel,shortcutEnabled);enabled.VerticalAlignment=VerticalAlignment.Center;
-        DockPanel.SetDock(enabled,Dock.Right);heading.Children.Add(enabled);
+        Grid.SetColumn(enabled,1);heading.Children.Add(enabled);
         var about=SettingsHelp.Create("Keyboard shortcut","Press to start/stop toggles recording. Hold to record starts when the full shortcut is down and finishes when a key is released. Modifier-only shortcuts can also overlap other app shortcuts. Wait for dictation to finish before changing its shortcut.");
-        DockPanel.SetDock(about,Dock.Right);heading.Children.Add(about);
-        var title=Ui.Text("Keyboard shortcut",18,true);title.Margin=new(0);title.VerticalAlignment=VerticalAlignment.Center;heading.Children.Add(title);panel.Children.Add(heading);
+        var title=Ui.Text("Keyboard shortcut",18,true);title.Margin=new(0);title.VerticalAlignment=VerticalAlignment.Center;heading.Children.Add(title);panel.Children.Add(Ui.SettingRow(heading,about));
         AutomationProperties.SetName(shortcutEnabled,"Enable recording shortcut");
         shortcutPress.SetResourceReference(Control.ForegroundProperty,"Ink");shortcutHold.SetResourceReference(Control.ForegroundProperty,"Ink");
         var modes=new WrapPanel();modes.Children.Add(shortcutPress);modes.Children.Add(shortcutHold);panel.Children.Add(modes);

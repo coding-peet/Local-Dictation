@@ -29,13 +29,27 @@ content space and the latter makes the action unavailable on other pages.
 Keep Open Review/Copy next to the selected transcript. Put occasional export,
 language change and deletion under More. Confirm destructive deletion with an
 explicit action and safe Cancel; opening a dialog must not start dictation.
+History row previews use the full row width. A 24-DIP delete action overlays
+the bottom-right corner only on row hover or keyboard focus. Keep More → Delete
+available as the ordinary full-size alternative. Keep the glyph opaque and
+its circular Surface/Ink backplate 25% transparent, with a subtle outline.
+Put Filters in its own rounded SurfaceContainer card below search/import,
+with a visible gap. The search/import row stays outside that card.
 
 ## Status and help
 
-Put ordinary recording/connection state in a compact bottom status bar.
+Put ordinary recording/connection state and routine action confirmations in a
+compact bottom status bar. Clearing remembered apps uses normal status text.
 Routine saving belongs there only on relevant settings pages. Preserve saving
 failures on all pages; let long messages wrap. Important global warnings remain
 prominent above content, rather than being hidden in a transient notification.
+
+Reserve one fixed rightmost column for information icons on Dictation and
+Settings. Put switches and every other setting control before it, including
+rows with no icon. Keep the same column position across cards and the
+verification section; no setting content extends beyond it. Use a compact
+40-DIP column with 32-DIP help actions and 14-DIP gray icons. Keep help
+quieter than ordinary text, with visible keyboard focus.
 
 Keep explanations next to their setting in the existing information helper,
 available on hover, click, keyboard and accessibility. Help stays at the bottom
@@ -48,7 +62,8 @@ a size cursor, a hover cue and keyboard focus feedback. Keep keyboard resizing
 and the list/detail minimum widths. Narrow windows stack the panes without
 losing the preferred wide-layout width.
 
-Retain 48-DIP action targets, visible focus, semantic selection foregrounds,
+Retain 48-DIP primary action targets (compact help and row-delete exceptions
+are specified above), visible focus, semantic selection foregrounds,
 theme-aware resources and readable text wrapping. Avoid permanent decorative
 lines where cursor/hover/focus affordances provide enough guidance.
 

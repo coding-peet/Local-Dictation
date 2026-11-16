@@ -34,8 +34,15 @@ public static class HistorySearchChecks
         var list=Get<ListBox>(panel,"items");var search=Get<TextBox>(panel,"historySearch");var transcript=Get<TextBox>(panel,"transcript");
         Require((list.SelectedItem as DictationItem)?.Id==first.Id,"Initial History selection missing.");
         var filters=Get<Expander>(panel,"historyFilters");
-        Require(ReferenceEquals(filters.Parent,search.Parent),"History filters still consume a separate idle toolbar row.");
+        Require(!ReferenceEquals(filters.Parent,search.Parent),"History filters still share the search/import row.");
         Require(filters.Foreground is SolidColorBrush brush&&brush.Color==((SolidColorBrush)panel.FindResource("Ink")).Color,"Filters header does not follow readable theme foreground.");
+        Border? filterCard=null;
+        for(DependencyObject? ancestor=filters.Parent;ancestor!=null;ancestor=LogicalTreeHelper.GetParent(ancestor))
+            if(ancestor is Border card&&System.Windows.Automation.AutomationProperties.GetName(card)=="History filters block"){filterCard=card;break;}
+        Require(filterCard!=null&&filterCard.Background is SolidColorBrush surface&&surface.Color==((SolidColorBrush)panel.FindResource("SurfaceContainer")).Color,"History filters are not grouped in an independent settings-style block.");
+        Require(!search.IsDescendantOf(filterCard!),"Search is still inside the filters block.");
+        foreach(var field in new[]{"needsReview","textOnly","inserted"})
+            Require(Get<CheckBox>(panel,field).Foreground is SolidColorBrush checkInk&&checkInk.Color==((SolidColorBrush)panel.FindResource("Ink")).Color,"Filter labels are unreadable in the active theme.");
         search.Text="HIDDEN NAPATIE";Require(list.Items.Count==1&&transcript.Text==first.Primary,"Search misses full text or strips stored accents.");
         search.Text="no match";Require(list.Items.Count==0&&list.SelectedItem==null&&transcript.Text.Contains("No dictations match"),"No-match search retains a hidden selected transcript.");
         var player=Get<HistoryAudioPlayerControl>(panel,"playback");Require(player.Visibility==Visibility.Collapsed,"Filtered-out recording keeps the player visible.");
@@ -47,8 +54,11 @@ public static class HistorySearchChecks
         Get<DatePicker>(panel,"fromDate").SelectedDate=Get<DatePicker>(panel,"toDate").SelectedDate=null;
         foreach(var width in new[]{432,640,1040})
         {
-            Layout(panel,width);var inputBounds=search.TransformToAncestor(panel).TransformBounds(new Rect(search.RenderSize));var filterBounds=filters.TransformToAncestor(panel).TransformBounds(new Rect(filters.RenderSize));Require(inputBounds.Right<=filterBounds.Left+.1,"Narrow History search overlaps its Filters target.");var image=new RenderTargetBitmap(width,820,96,96,PixelFormats.Pbgra32);image.Render(panel);var png=new PngBitmapEncoder();png.Frames.Add(BitmapFrame.Create(image));using var file=File.Create(Path.Combine(output,$"history-search-{theme}-{width}.png"));png.Save(file);
+            Layout(panel,width);var inputBounds=search.TransformToAncestor(panel).TransformBounds(new Rect(search.RenderSize));var filterBounds=filterCard!.TransformToAncestor(panel).TransformBounds(new Rect(filterCard.RenderSize));Require(inputBounds.Bottom<=filterBounds.Top-11.9,"The filters block is not separated below search/import by its own gap.");var image=new RenderTargetBitmap(width,820,96,96,PixelFormats.Pbgra32);image.Render(panel);var png=new PngBitmapEncoder();png.Frames.Add(BitmapFrame.Create(image));using var file=File.Create(Path.Combine(output,$"history-search-{theme}-{width}.png"));png.Save(file);
         }
+        filters.IsExpanded=true;Layout(panel,640);
+        var expandedImage=new RenderTargetBitmap(640,820,96,96,PixelFormats.Pbgra32);expandedImage.Render(panel);var expandedPng=new PngBitmapEncoder();expandedPng.Frames.Add(BitmapFrame.Create(expandedImage));using(var expandedFile=File.Create(Path.Combine(output,$"history-filters-expanded-{theme}.png")))expandedPng.Save(expandedFile);
+        filters.IsExpanded=false;
         Set(controller,"<PrivateNextRecording>k__BackingField",true);
         Require(controller.StartAudioImport(["not-opened.wav"])?.Contains("Private")==true,"An ordinary import can consume private-next.");
         Require(controller.ImportItems.Count==0&&Get<Dictionary<string,ITextDelivery>>(controller,"destinations").Count==0,"Blocked import acquired a destination or queue.");

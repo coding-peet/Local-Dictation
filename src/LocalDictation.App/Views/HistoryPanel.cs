@@ -57,8 +57,12 @@ public sealed partial class HistoryPanel : UserControl,IDisposable
         AutomationProperties.SetName(splitter,"Resize dictations list");AutomationProperties.SetHelpText(splitter,"Drag to resize the list and transcript. Left and Right resize the columns with the keyboard.");
         Grid.SetColumn(splitter,1);body.Children.Add(splitter);
         var listArea=new DockPanel();
+        ScrollViewer.SetHorizontalScrollBarVisibility(items,ScrollBarVisibility.Disabled);
         var itemStyle=new Style(typeof(ListBoxItem),(Style)FindResource(typeof(ListBoxItem)));
-        itemStyle.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty,HorizontalAlignment.Stretch));items.ItemContainerStyle=itemStyle;
+        itemStyle.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty,HorizontalAlignment.Stretch));
+        // Virtualized rows may retain an older, wider arrange slot after resizing.
+        itemStyle.Setters.Add(new Setter(MaxWidthProperty,new Binding(nameof(ActualWidth)){RelativeSource=new(RelativeSourceMode.FindAncestor,typeof(ScrollContentPresenter),1)}));
+        items.ItemContainerStyle=itemStyle;
         items.ItemTemplate=RowTemplate();var list=Ui.Card(items);list.Padding=new(0);list.Margin=new(0);listArea.Children.Add(list);body.Children.Add(listArea);
 
         var right=new Grid();right.RowDefinitions.Add(new(){Height=new(1,GridUnitType.Star)});right.RowDefinitions.Add(new(){Height=GridLength.Auto});
@@ -131,22 +135,34 @@ public sealed partial class HistoryPanel : UserControl,IDisposable
 
     DataTemplate RowTemplate()
     {
-        var template=new DataTemplate(typeof(DictationItem));var row=new FrameworkElementFactory(typeof(StackPanel));
+        var template=new DataTemplate(typeof(DictationItem));var row=new FrameworkElementFactory(typeof(Grid));
+        var text=new FrameworkElementFactory(typeof(StackPanel));row.AppendChild(text);
         var dateRow=new FrameworkElementFactory(typeof(DockPanel));
         var duration=new FrameworkElementFactory(typeof(TextBlock));duration.SetBinding(TextBlock.TextProperty,new Binding(nameof(DictationItem.DurationLabel)));duration.SetValue(DockPanel.DockProperty,Dock.Right);duration.SetValue(MarginProperty,new Thickness(8,0,0,0));duration.SetValue(TextBlock.FontSizeProperty,12d);duration.SetValue(StyleProperty,SelectedTextStyle("Muted"));dateRow.AppendChild(duration);
-        var date=new FrameworkElementFactory(typeof(TextBlock));date.SetBinding(TextBlock.TextProperty,new Binding("Document.Created"){StringFormat="{0:dd MMM · HH:mm}"});date.SetValue(TextBlock.FontSizeProperty,12d);date.SetValue(TextBlock.TextTrimmingProperty,TextTrimming.CharacterEllipsis);date.SetValue(StyleProperty,SelectedTextStyle("Ink"));dateRow.AppendChild(date);row.AppendChild(dateRow);
-        var summary=new FrameworkElementFactory(typeof(DockPanel));
-        var delete=new FrameworkElementFactory(typeof(Button));delete.SetValue(DockPanel.DockProperty,Dock.Right);
-        delete.SetValue(WidthProperty,48d);delete.SetValue(HeightProperty,48d);delete.SetValue(MarginProperty,new Thickness(0));delete.SetValue(VerticalAlignmentProperty,VerticalAlignment.Center);
+        var date=new FrameworkElementFactory(typeof(TextBlock));date.SetBinding(TextBlock.TextProperty,new Binding("Document.Created"){StringFormat="{0:dd MMM · HH:mm}"});date.SetValue(TextBlock.FontSizeProperty,12d);date.SetValue(TextBlock.TextTrimmingProperty,TextTrimming.CharacterEllipsis);date.SetValue(StyleProperty,SelectedTextStyle("Ink"));dateRow.AppendChild(date);text.AppendChild(dateRow);
+        var summary=new FrameworkElementFactory(typeof(StackPanel));
+        var delete=new FrameworkElementFactory(typeof(Button));delete.SetValue(HorizontalAlignmentProperty,HorizontalAlignment.Right);
+        delete.SetValue(WidthProperty,24d);delete.SetValue(HeightProperty,24d);delete.SetValue(MinWidthProperty,24d);delete.SetValue(MinHeightProperty,24d);
+        delete.SetValue(Control.PaddingProperty,new Thickness(0));delete.SetValue(MarginProperty,new Thickness(0));delete.SetValue(VerticalAlignmentProperty,VerticalAlignment.Bottom);
         var deleteStyle=new Style(typeof(Button),(Style)FindResource("Md3IconButton"));
-        deleteStyle.Setters.Add(new Setter(Control.ForegroundProperty,new DynamicResourceExtension("Muted")));
-        deleteStyle.Triggers.Add(new DataTrigger{Binding=new Binding(nameof(ListBoxItem.IsSelected)){RelativeSource=new(RelativeSourceMode.FindAncestor,typeof(ListBoxItem),1)},Value=true,Setters={new Setter(Control.ForegroundProperty,new DynamicResourceExtension("SelectedInk"))}});
+        deleteStyle.Setters.Add(new Setter(Control.ForegroundProperty,new DynamicResourceExtension("Ink")));
+        deleteStyle.Setters.Add(new Setter(Control.BackgroundProperty,new DynamicResourceExtension("Surface")));
+        deleteStyle.Setters.Add(new Setter(Control.BorderBrushProperty,new DynamicResourceExtension("InputBorder")));
+        deleteStyle.Setters.Add(new Setter(Control.BorderThicknessProperty,new Thickness(1)));
+        deleteStyle.Setters.Add(new Setter(OpacityProperty,0d));deleteStyle.Setters.Add(new Setter(IsHitTestVisibleProperty,false));
+        foreach(var state in new[]{nameof(ListBoxItem.IsMouseOver),nameof(ListBoxItem.IsKeyboardFocusWithin)})
+            deleteStyle.Triggers.Add(new DataTrigger{Binding=new Binding(state){RelativeSource=new(RelativeSourceMode.FindAncestor,typeof(ListBoxItem),1)},Value=true,Setters={new Setter(OpacityProperty,1d),new Setter(IsHitTestVisibleProperty,true)}});
         delete.SetValue(StyleProperty,deleteStyle);delete.SetValue(ToolTipProperty,"Delete dictation…");
         delete.SetBinding(AutomationProperties.NameProperty,new Binding("Document.Created"){StringFormat="Delete dictation from {0:g}"});
-        delete.AddHandler(LoadedEvent,new RoutedEventHandler((sender,_)=>{if(sender is Button button&&VisualTreeHelper.GetChildrenCount(button)>0&&VisualTreeHelper.GetChild(button,0) is Panel target)target.Background=Brushes.Transparent;}));
+        delete.AddHandler(LoadedEvent,new RoutedEventHandler((sender,_)=>
+        {
+            if(sender is not Button button)return;
+            if(VisualTreeHelper.GetChildrenCount(button)>0&&VisualTreeHelper.GetChild(button,0) is Panel target)target.Background=Brushes.Transparent;
+            if(button.Template?.FindName("border",button) is Border body){body.Opacity=.75;Ui.BindCapsule(body);}
+        }));
         delete.AddHandler(Button.ClickEvent,new RoutedEventHandler((sender,args)=>{args.Handled=true;if(sender is FrameworkElement{DataContext:DictationItem entry})Delete(entry);}));
-        var glyph=new FrameworkElementFactory(typeof(PackIcon));glyph.SetValue(PackIcon.KindProperty,PackIconKind.Close);glyph.SetValue(WidthProperty,16d);glyph.SetValue(HeightProperty,16d);delete.AppendChild(glyph);summary.AppendChild(delete);
-        var copy=new FrameworkElementFactory(typeof(StackPanel));summary.AppendChild(copy);row.AppendChild(summary);
+        var glyph=new FrameworkElementFactory(typeof(PackIcon));glyph.SetValue(PackIcon.KindProperty,PackIconKind.Close);glyph.SetValue(WidthProperty,12d);glyph.SetValue(HeightProperty,12d);delete.AppendChild(glyph);row.AppendChild(delete);
+        var copy=new FrameworkElementFactory(typeof(StackPanel));summary.AppendChild(copy);text.AppendChild(summary);
         var status=new FrameworkElementFactory(typeof(TextBlock));status.SetBinding(TextBlock.TextProperty,new Binding(nameof(DictationItem.State)));status.SetValue(TextBlock.FontSizeProperty,11d);
         var statusStyle=SelectedTextStyle("Accent");foreach(var quiet in new[]{"Saved","Inserted"})statusStyle.Triggers.Add(new DataTrigger{Binding=new Binding(nameof(DictationItem.State)),Value=quiet,Setters={new Setter(VisibilityProperty,Visibility.Collapsed)}});status.SetValue(StyleProperty,statusStyle);copy.AppendChild(status);
         var preview=new FrameworkElementFactory(typeof(TextBlock));preview.SetBinding(TextBlock.TextProperty,new Binding(nameof(DictationItem.Preview)));preview.SetValue(TextBlock.FontSizeProperty,13d);preview.SetValue(TextBlock.LineHeightProperty,18d);preview.SetValue(TextBlock.TextWrappingProperty,TextWrapping.Wrap);preview.SetValue(TextBlock.TextTrimmingProperty,TextTrimming.CharacterEllipsis);preview.SetValue(MaxHeightProperty,36d);preview.SetValue(MarginProperty,new Thickness(0,4,0,0));preview.SetValue(StyleProperty,SelectedTextStyle("Muted"));copy.AppendChild(preview);

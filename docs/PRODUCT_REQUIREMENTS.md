@@ -65,8 +65,10 @@ punctuation, whitespace, and Unicode must be preserved.
   already identifies the application. Put ordinary recording/connection state in
   a compact bottom status bar, with routine saving feedback on Dictation/Settings.
   Hide routine saving on History/Models/search; keep saving failures visible on
-  every page. Actionable global alerts remain expanded above the content. Let
-  long status/errors wrap without covering content. See docs/UI_DESIGN.md.
+  every page. Routine action confirmations, including clearing remembered apps,
+  use the normal bottom status text. Actionable global alerts remain expanded
+  above the content. Let long status/errors wrap without covering content.
+  See docs/UI_DESIGN.md.
   Avoid duplicate Recording/Text and verification headings and introductory
   paragraphs on the Dictation tab. Put Insert live text at the cursor immediately
   after Live transcription. Separate Verify after recording with spacing/a rule;
@@ -81,6 +83,10 @@ punctuation, whitespace, and Unicode must be preserved.
   Open the matching page, scroll to the setting and focus its control. For a
   hidden or disabled dependent setting, reveal its prerequisite without enabling
   it or changing saved values. Ctrl+F focuses search; Escape clears results.
+- Align information icons in a dedicated rightmost column on Dictation and
+  Settings. Keep all setting controls, including switches and rows without
+  help, before that column. Keep icons small and gray, with a compact
+  40-DIP column and 32-DIP help actions.
 - Put occasional explanations behind a small information icon beside the
   setting. Show the same help on hover and click, support keyboard activation
   and accessible names/help text. Keep actionable errors and saving status visible.
@@ -620,3 +626,14 @@ superpowers/specs/2026-11-14-history-import-and-personal-tools-design.md.
   implementation preserves originals/manual precedence and never recurses.
 - Keep native microphone, playback, Codex/Outlook insertion, automatic incognito
   and acoustic-quality acceptance separate from synthetic/offscreen validation.
+
+## History presentation update (2026-11-15)
+
+- Use the full list-row width for the transcript preview. A 24 × 24 DIP delete
+  action overlays the bottom-right corner only while the row is hovered or has
+  keyboard focus. Give its circular background 25% transparency while keeping
+  the glyph opaque. Hide its pointer target when idle; retain confirmation and
+  More → Delete for an alternative full-size action.
+- Put History filters in their own rounded block below the search/import row,
+  separated by a visible gap and matching Settings category cards. Search and
+  import stay outside this block. Keep collapsed filters compact.

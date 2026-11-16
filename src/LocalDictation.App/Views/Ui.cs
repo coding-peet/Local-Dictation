@@ -81,22 +81,36 @@ static class Ui
         control.SetResourceReference(Control.FocusVisualStyleProperty,"Md3FocusVisual");
         System.Windows.Automation.AutomationProperties.SetName(control,label);return control;
     }
+    sealed class SettingsLayoutRow : Grid { }
+    public static Grid SettingRow(UIElement content,FrameworkElement? help=null)
+    {
+        var row=new SettingsLayoutRow();
+        row.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});
+        // Reserve the same gutter even when a setting needs no explanation.
+        row.ColumnDefinitions.Add(new(){Width=new(40)});
+        row.Children.Add(content);
+        if(help!=null){help.HorizontalAlignment=HorizontalAlignment.Right;Grid.SetColumn(help,1);row.Children.Add(help);}
+        return row;
+    }
+    public static StackPanel SettingsGroup(StackPanel content)
+    {
+        var children=content.Children.Cast<UIElement>().ToArray();content.Children.Clear();
+        foreach(var child in children)content.Children.Add(child is SettingsLayoutRow?child:SettingRow(child));
+        return content;
+    }
+    public static Border SettingsCard(FrameworkElement content)=>Card(content is StackPanel group?SettingsGroup(group):SettingRow(content));
     public static Grid SwitchRow(string label,ToggleButton toggle,string? hint=null)
     {
-        var row=new Grid{Margin=new(0,8,0,8),MinHeight=48};
-        row.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});row.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
-        row.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
+        var content=new Grid();
+        content.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});content.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
         var copy=new StackPanel{VerticalAlignment=VerticalAlignment.Center,Margin=new(0,0,16,0)};
         var title=Text(label);title.Margin=new(0);copy.Children.Add(title);
         copy.Background=Brushes.Transparent;copy.MouseLeftButtonUp+=(_,_)=>{if(toggle.IsEnabled){toggle.IsChecked=toggle.IsChecked!=true;toggle.Focus();}};
-        row.Children.Add(copy);
-        // Help is a sibling of the clickable label so its input cannot toggle the setting.
-        if(!string.IsNullOrWhiteSpace(hint))
-        {
-            var info=SettingsHelp.Create(label,hint);Grid.SetColumn(info,1);row.Children.Add(info);
-            System.Windows.Automation.AutomationProperties.SetHelpText(toggle,hint);
-        }
-        Grid.SetColumn(toggle,2);row.Children.Add(toggle);return row;
+        content.Children.Add(copy);Grid.SetColumn(toggle,1);content.Children.Add(toggle);
+        // Help remains outside the clickable content and always follows the switch.
+        var info=string.IsNullOrWhiteSpace(hint)?null:SettingsHelp.Create(label,hint);
+        if(info!=null)System.Windows.Automation.AutomationProperties.SetHelpText(toggle,hint);
+        var row=SettingRow(content,info);row.Margin=new(0,8,0,8);row.MinHeight=48;return row;
     }
     public static StackPanel Row(params UIElement[] children)
     {var row=new StackPanel{Orientation=Orientation.Horizontal};foreach(var child in children)row.Children.Add(child);return row;}
@@ -117,8 +131,7 @@ static class Ui
         else{var caption=Text(label,12,true);caption.Margin=new(0,8,0,8);parent.Children.Add(caption);}
         if(!string.IsNullOrWhiteSpace(hint))
         {
-            var row=new Grid();row.ColumnDefinitions.Add(new(){Width=new(1,GridUnitType.Star)});row.ColumnDefinitions.Add(new(){Width=GridLength.Auto});
-            row.Children.Add(control);var info=SettingsHelp.Create(label,hint);Grid.SetColumn(info,1);row.Children.Add(info);parent.Children.Add(row);
+            parent.Children.Add(SettingRow(control,SettingsHelp.Create(label,hint)));
         }
         else parent.Children.Add(control);
         System.Windows.Automation.AutomationProperties.SetName(control,label);

@@ -42,7 +42,22 @@ static class HistoryDeleteChecks
                 var button=Find<Button>(row).SingleOrDefault(b=>AutomationProperties.GetName(b).StartsWith("Delete dictation"));
                 Require(button!=null,"History rows are missing their small delete action.");return button!;
             }
-            var cross=DeleteFor(empty.Id);Require(cross.ActualWidth>=48&&cross.ActualHeight>=48,"The row delete action lost its usable interaction target.");
+            var cross=DeleteFor(empty.Id);
+            Require(cross.ActualWidth==24&&cross.ActualHeight==24,"The row delete overlay is not one quarter of the previous 48-DIP target area.");
+            Require(cross.Opacity==0&&!cross.IsHitTestVisible,"Idle History rows still expose an obstructing delete action.");
+            var overlay=cross.Parent as Grid;Require(overlay!=null,"Delete still consumes a separate text column.");
+            var crossBounds=cross.TransformToAncestor(overlay!).TransformBounds(new Rect(cross.RenderSize));
+            Require(Math.Abs(crossBounds.Right-overlay!.ActualWidth)<.1&&Math.Abs(crossBounds.Bottom-overlay.ActualHeight)<.1,"Delete is not anchored to the row's bottom-right corner.");
+            Require(Find<TextBlock>(overlay).Where(t=>t.TextWrapping==TextWrapping.Wrap).All(t=>Math.Abs(t.ActualWidth-overlay.ActualWidth)<.1),"The preview still reserves horizontal space for deletion.");
+            var container=(ListBoxItem)list.ItemContainerGenerator.ContainerFromItem(list.Items.Cast<DictationItem>().Single(i=>i.Id==empty.Id));
+            void State(string name,bool value)
+            {
+                var key=(DependencyPropertyKey)typeof(UIElement).GetField(name+"PropertyKey",BindingFlags.Static|BindingFlags.NonPublic|BindingFlags.Public)!.GetValue(null)!;
+                container.SetValue(key,value);Layout();
+            }
+            State("IsMouseOver",true);Require(cross.Opacity==1&&cross.IsHitTestVisible,"Hover does not reveal usable row deletion.");
+            State("IsMouseOver",false);State("IsKeyboardFocusWithin",true);Require(cross.Opacity==1&&cross.IsHitTestVisible,"Keyboard focus does not reveal row deletion.");
+            State("IsKeyboardFocusWithin",false);Require(cross.Opacity==0&&!cross.IsHitTestVisible,"Delete remains active after hover and keyboard focus leave.");
             var confirm=typeof(HistoryPanel).GetField("confirmDelete",Fields);Require(confirm!=null,"Row and More deletion do not share injectable confirmation.");
             var player=Find<HistoryAudioPlayerControl>(panel).Single();
             var audio=(HistoryAudioPlayback)typeof(HistoryAudioPlayerControl).GetField("playback",Fields)!.GetValue(player)!;

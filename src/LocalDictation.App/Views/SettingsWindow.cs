@@ -50,7 +50,7 @@ public sealed partial class SettingsWindow : Window
     readonly DispatcherTimer saveDelay=new(){Interval=TimeSpan.FromMilliseconds(650)};
     readonly HashSet<TextBox> pendingText=[];
     readonly Dictionary<TextBox,string> textErrors=[];
-    string selectionError="",saveError="",microphoneWarning="",verificationWarning="";
+    string selectionError="",saveError="",microphoneWarning="",verificationWarning="",compatibilityWarning="";
     string? inspection,job,missingMicrophoneId;
     string? downloadEndpoint;
     static readonly Dictionary<string,string> activeDownloads=new(StringComparer.OrdinalIgnoreCase);
@@ -131,13 +131,12 @@ public sealed partial class SettingsWindow : Window
         var modelRow=new Grid();modelRow.ColumnDefinitions.Add(new(){Width=new GridLength(1,GridUnitType.Star)});modelRow.ColumnDefinitions.Add(new(){Width=new GridLength(160)});
         var dictationChoice=new StackPanel{Margin=new(0,0,16,0)};Ui.Label(dictationChoice,"Dictation model",primary);modelRow.Children.Add(dictationChoice);
         var languageChoice=new StackPanel();Ui.Label(languageChoice,"Language",language);Grid.SetColumn(languageChoice,1);modelRow.Children.Add(languageChoice);recording.Children.Add(modelRow);
-        var preferredHeading=new DockPanel{Margin=new(0,4,0,0)};
         var preferredHelp=SettingsHelp.Create("Preferred Auto languages","Choose the languages you use. In Auto, recognition chooses among your preferred languages supported by the active model. Changes apply to the next recording. Live preview may arrive several seconds after speech, depending on the model and hardware; Finish completes the final transcript.");
-        DockPanel.SetDock(preferredHelp,Dock.Right);preferredHeading.Children.Add(preferredHelp);
         var preferredCaption=new WrapPanel{VerticalAlignment=VerticalAlignment.Center};
         var preferredTitle=Ui.Text("Preferred Auto languages",13,true);preferredTitle.FontSize=13;preferredTitle.Margin=new(0);preferredTitle.VerticalAlignment=VerticalAlignment.Center;preferredCaption.Children.Add(preferredTitle);
         var preferredQualifier=Ui.Text("(supported by installed models)",11);preferredQualifier.FontSize=11;preferredQualifier.Margin=new(8,0,0,0);preferredQualifier.VerticalAlignment=VerticalAlignment.Center;preferredQualifier.SetResourceReference(TextBlock.ForegroundProperty,"Muted");preferredCaption.Children.Add(preferredQualifier);
-        preferredHeading.Children.Add(preferredCaption);recording.Children.Add(preferredHeading);recording.Children.Add(preferredLanguages);
+        var preferredHeading=Ui.SettingRow(preferredCaption,preferredHelp);preferredHeading.Margin=new(0,4,0,0);
+        recording.Children.Add(preferredHeading);recording.Children.Add(preferredLanguages);
         System.Windows.Automation.AutomationProperties.SetName(preferredLanguages,"Preferred Auto languages");
         System.Windows.Automation.AutomationProperties.SetHelpText(preferredLanguages,System.Windows.Automation.AutomationProperties.GetHelpText(preferredHelp));
         modelStatus.FontSize=12;modelStatus.Margin=new(0,0,0,10);modelStatus.SetResourceReference(TextBlock.ForegroundProperty,"Muted");recording.Children.Add(modelStatus);
@@ -146,12 +145,13 @@ public sealed partial class SettingsWindow : Window
         liveInsertRow=Ui.SwitchRow("Insert live text at the cursor",insert,"Updates only the original, validated field. Available with Insert directly and Live transcription. Your choice is retained in Preview first.");
         recording.Children.Add(liveInsertRow);
         outputDependency.SetResourceReference(TextBlock.ForegroundProperty,"Muted");recording.Children.Add(outputDependency);
-        page.Children.Add(Ui.Card(recording));
-        page.Children.Add(Ui.Card(PrivacySection()));
-        page.Children.Add(Ui.SwitchRow("Verify after recording",verify,"Compare with a second local model. With Insert directly, matching results insert and differences open Review. With Preview first, both outcomes open Review without inserting."));
+        page.Children.Add(Ui.SettingsCard(recording));
+        page.Children.Add(Ui.SettingsCard(PrivacySection()));
+        var verificationRow=Ui.SwitchRow("Verify after recording",verify,"Compare with a second local model. With Insert directly, matching results insert and differences open Review. With Preview first, both outcomes open Review without inserting.");
+        verificationRow.Margin=new(24,8,24,8);page.Children.Add(verificationRow);
         Ui.Label(verificationDetails,"Verification model",verifier);
         verificationStatus.FontSize=12;verificationStatus.SetResourceReference(TextBlock.ForegroundProperty,"Muted");verificationDetails.Children.Add(verificationStatus);
-        page.Children.Add(verificationDetails);
+        Ui.SettingsGroup(verificationDetails);verificationDetails.Margin=new(24,8,24,0);page.Children.Add(verificationDetails);
         return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,MaxWidth=880,HorizontalAlignment=HorizontalAlignment.Stretch};
     }
 
@@ -173,8 +173,17 @@ public sealed partial class SettingsWindow : Window
         delivery.Children.Add(compatibility);
         resetCompatibility=Ui.Button("Re-enable live insertion for remembered apps",()=>
         {
-            try{var saved=controller.ResetDeliveryCompatibility();Refresh();message.Text=saved?"Remembered applications cleared. Outlook still inserts after Finish.":controller.ConnectionMessage;}
-            catch(Exception ex) when(ex is IOException or UnauthorizedAccessException){message.Text="Could not save compatibility settings. "+ex.Message;}
+            try
+            {
+                var saved=controller.ResetDeliveryCompatibility();Refresh();
+                if(!saved)message.Text=compatibilityWarning=controller.ConnectionMessage;
+                else
+                {
+                    if(message.Text==compatibilityWarning)message.Text="";
+                    compatibilityWarning="";
+                }
+            }
+            catch(Exception ex) when(ex is IOException or UnauthorizedAccessException){message.Text=compatibilityWarning="Could not save compatibility settings. "+ex.Message;}
         });
         resetCompatibility.HorizontalAlignment=HorizontalAlignment.Left;delivery.Children.Add(resetCompatibility);page.Children.Add(Section(delivery));
         return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,MaxWidth=880,HorizontalAlignment=HorizontalAlignment.Stretch};
@@ -245,7 +254,7 @@ public sealed partial class SettingsWindow : Window
     UIElement HistoryPage()=>historyPanel=new HistoryPanel(controller){Margin=new(0,8,8,0)};
 
     static FrameworkElement Section(FrameworkElement content)
-    {return Ui.Card(content);}
+    {return Ui.SettingsCard(content);}
 
     void LoadMicrophones()
     {

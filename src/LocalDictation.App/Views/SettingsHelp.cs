@@ -24,8 +24,10 @@ public static class SettingsHelp
             if(popover!=null&&PresentationSource.FromVisual(popover.PlacementTarget)!=null)
                 popover.IsOpen=!popover.IsOpen;
         });
-        button.Content=new PackIcon{Kind=PackIconKind.InformationOutline,Width=18,Height=18};
-        button.Margin=new(4,0,0,0);
+        button.Content=new PackIcon{Kind=PackIconKind.InformationOutline,Width=14,Height=14};
+        button.Width=button.MinWidth=32;button.Height=button.MinHeight=32;
+        button.Padding=new(4);button.Margin=new(0);
+        button.SetResourceReference(Control.ForegroundProperty,"InputBorder");
         button.VerticalAlignment=VerticalAlignment.Center;
         AutomationProperties.SetHelpText(button,helpText);
         button.ToolTip=new ToolTip{Content=HelpText(helpText),MaxWidth=360};

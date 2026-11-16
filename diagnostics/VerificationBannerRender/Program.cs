@@ -80,6 +80,7 @@ static class Program
             {
             DeleteDialogChecks.Run(output,checks);
             ShellPlacementChecks.Run(output,checks);
+            CompatibilityStatusChecks.Run(output,checks);
             HistoryLayoutChecks.Run(output,checks);
             HistorySearchChecks.Run(output,checks);
             PrivateFlowChecks.Run(output,checks);

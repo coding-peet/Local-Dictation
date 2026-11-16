@@ -52,6 +52,27 @@ static class SettingsContextHelpChecks
                     var image=new RenderTargetBitmap(width,760,96,96,PixelFormats.Pbgra32);image.Render(root);
                     var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(image));using var file=File.Create(Path.Combine(output,$"dictation-help-{theme}-{width}.png"));encoder.Save(file);
                 }
+                var shell=(MainWindowShell)window.Content;
+                foreach(var page in new[]{0,3})foreach(var width in new[]{640,1040})
+                {
+                    shell.Navigation.SelectedIndex=page;
+                    root.Measure(new Size(width,760));root.Arrange(new Rect(0,0,width,760));root.UpdateLayout();SettingsHelpChecks.SettleForRender(root);
+                    Rect Bounds(FrameworkElement element)=>element.TransformToAncestor(root).TransformBounds(new Rect(element.RenderSize));
+                    var icons=Find<Button>(shell.PageHost).Where(button=>AutomationProperties.GetName(button).StartsWith("About ")).ToArray();
+                    Require(icons.Length>=3,"Settings page lost its contextual help controls.");
+                    var helpLeft=icons.Min(icon=>Bounds(icon).Left);
+                    Require(icons.All(icon=>Math.Abs(Bounds(icon).Left-helpLeft)<1),"Settings help icons do not share one rightmost column.");
+                    var fields=page==0?new[]{"microphone","primary","language","afterRecording","preferredLanguages","live","insert","privateNext","verify"}:new[]{"theme","endpoint","shortcutEnabled","shortcutKeys","dictionaryHints","dictionaryCorrections","historyRetention","resetCompatibility"};
+                    foreach(var field in fields)
+                    {
+                        var element=Get<FrameworkElement>(window,field);
+                        if(element.Visibility==Visibility.Collapsed)continue;
+                        Require(Bounds(element).Right<=helpLeft-7.9,"Setting content extends into the help column: "+field);
+                    }
+                    var bitmap=new RenderTargetBitmap(width,760,96,96,PixelFormats.Pbgra32);bitmap.Render(root);
+                    var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(bitmap));using var file=File.Create(Path.Combine(output,$"settings-help-column-{page}-{theme}-{width}.png"));encoder.Save(file);
+                }
+                checks.Add("Aligned rightmost help column and content boundaries on Dictation/Settings, narrow/wide "+theme);
                 Require(new System.Windows.Interop.WindowInteropHelper(window).Handle==0,"Context help checks created a native window.");
                 checks.Add("local Auto/language/latency help, quiet qualifier and Record/Stop copy "+theme);
             }

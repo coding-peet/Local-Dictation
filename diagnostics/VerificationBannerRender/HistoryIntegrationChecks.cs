@@ -65,8 +65,9 @@ static class HistoryIntegrationChecks
             checks.Add("full History keeps wide playback visible "+theme);
             Save(page,760,560,Path.Combine(output,"layout-metrics-"+theme+".png"));
             var searchToolbar=(FrameworkElement)((DockPanel)((ScrollViewer)page.GetType().GetProperty("Content")!.GetValue(page)!).Content).Children[0];
-            Require(searchToolbar.ActualHeight<=64,"History search/import uses more than one compact idle row.");
-            Require(transcript.ActualHeight>=240&&transcript.ActualHeight+searchToolbar.ActualHeight>=300,$"The selected transcript still loses height to page chrome and actions: text={transcript.ActualHeight}, player={player.ActualHeight}, page={page.ActualHeight}.");
+            // Separate filters intentionally add a second row; retain useful text and visible playback.
+            Require(searchToolbar.ActualHeight<=160.1,$"History search and separate filters block exceed their compact idle layout: toolbar={searchToolbar.ActualHeight}, text={transcript.ActualHeight}.");
+            Require(transcript.ActualHeight>=200&&transcript.ActualHeight+searchToolbar.ActualHeight>=300,$"The selected transcript still loses height to page chrome and actions: text={transcript.ActualHeight}, player={player.ActualHeight}, page={page.ActualHeight}.");
             var open=Find<Button>(page).Single(b=>System.Windows.Automation.AutomationProperties.GetName(b)=="Open Review");
             Require(open.TransformToAncestor(page).Transform(new Point()).X>=transcript.TransformToAncestor(page).Transform(new Point()).X-24,"Review actions are still detached from their selected text.");
             Require(Find<Button>(page).Any(b=>System.Windows.Automation.AutomationProperties.GetName(b)=="More actions"),"Secondary dictation actions are not grouped in More.");
@@ -82,7 +83,7 @@ static class HistoryIntegrationChecks
                 var container=(ListBoxItem)list.ItemContainerGenerator.ContainerFromItem(list.SelectedItem);
                 Require(Find<TextBlock>(container).Where(t=>t.Text.Length>0&&t.Visibility==Visibility.Visible).All(t=>t.Foreground is SolidColorBrush brush&&brush.Color==SystemColors.HighlightTextColor),"Selected History text ignores the high-contrast selection foreground: selected="+container.IsSelected+", expected="+SystemColors.HighlightTextColor+", actual="+string.Join(";",Find<TextBlock>(container).Where(t=>t.Text.Length>0&&t.Visibility==Visibility.Visible).Select(t=>t.Text[..Math.Min(10,t.Text.Length)]+"="+t.Foreground)));
                 var delete=Find<Button>(container).Single(b=>System.Windows.Automation.AutomationProperties.GetName(b).StartsWith("Delete dictation"));
-                Require(delete.Foreground is SolidColorBrush deleteBrush&&deleteBrush.Color==SystemColors.HighlightTextColor,"Selected History delete ignores its high-contrast foreground.");
+                Require(delete.Foreground is SolidColorBrush deleteBrush&&deleteBrush.Color==((SolidColorBrush)resources["Ink"]).Color&&delete.Background is SolidColorBrush plateBrush&&plateBrush.Color==((SolidColorBrush)resources["Surface"]).Color,"History delete circle lost its own contrasting Surface/Ink pair.");
                 checks.Add("selected History text and delete retain high contrast "+theme);
             }
             finally{resources["Accent"]=oldAccent;resources["Selected"]=oldSelected;resources["SelectedInk"]=oldInk;list.ItemTemplate=normalTemplate;Layout(page,760,560);}
