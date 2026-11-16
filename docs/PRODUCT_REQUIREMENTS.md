@@ -58,8 +58,11 @@ punctuation, whitespace, and Unicode must be preserved.
 - Start the session API automatically when the application opens, using the
   existing local launcher only if no listener is present. Preserve occupied ports,
   preparing services, the separate port 8123 API, models and user data. Serialize
-  launch requests and allow warm-up without duplicate processes. Show readiness
-  and actionable errors; retain Start local API for retry. Client Exit leaves the
+  launch requests and allow warm-up without duplicate processes. Inspect local
+  TCP listeners without opening probe connections, so a blocked handshake cannot
+  abort startup or imply that an occupied port is free. Failed port enumeration
+  must not launch a server. Show readiness and actionable errors; retain
+  Start local API for retry. Client Exit leaves the
   service running. This does not install a Windows service or a login task.
 - Do not repeat Local Dictation inside the client content; the native title bar
   already identifies the application. Put ordinary recording/connection state in

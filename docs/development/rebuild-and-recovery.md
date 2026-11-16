@@ -124,8 +124,14 @@ Start from the new checkout when its source should own the candidate:
 Invoke-RestMethod http://127.0.0.1:48125/health
 ~~~
 
-Do not start a second listener on an occupied port. Wait for `ready=true`.
-Do not run inference concurrently with the production service on the same GPU.
+Do not start a second listener on an occupied port. The client and launcher
+inspect the OS TCP listener table without opening probe connections. An existing
+listener is preserved even if its backlog or preparation would make a connection
+time out. An enumeration error stops the launch; it is not evidence of a free
+port. Repeated client launch requests retain the two-minute preparation guard.
+
+Wait for `ready=true`. Do not run inference concurrently with the production
+service on the same GPU.
 
 ## 5. Continue with a new agent
 

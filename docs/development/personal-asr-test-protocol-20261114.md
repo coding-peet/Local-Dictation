@@ -4,6 +4,9 @@ Date: 2026-11-14
 
 ## Agreement and present status
 
+Evaluation is deferred at Peter's request on 2026-11-16. The API startup fix
+uses synthetic network fixtures only; it does not resume audio evaluation.
+
 Peter accepted twelve recordings, eight speech cases and four no-speech controls,
 with three recordings withheld from tuning. He then requested existing recordings
 as well: keyboard, blowing into the microphone, children shouting, office and

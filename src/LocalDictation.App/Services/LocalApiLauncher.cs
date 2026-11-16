@@ -1,17 +1,18 @@
 using System.Diagnostics;
-using System.Net.Sockets;
+using System.Net.NetworkInformation;
 using System.Reflection;
 
 namespace LocalDictation.App.Services;
 
 public static class LocalApiLauncher
 {
-    public static async Task<bool> IsListening(Uri endpoint)
+    public static Task<bool> IsListening(Uri endpoint)
     {
-        using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(2));
-        using var client=new TcpClient();
-        try{await client.ConnectAsync(endpoint.Host,endpoint.Port,timeout.Token);return true;}
-        catch(SocketException error) when(error.SocketErrorCode==SocketError.ConnectionRefused){return false;}
+        if(!endpoint.IsAbsoluteUri||!endpoint.IsLoopback||endpoint.Port<1)throw new ArgumentException("Only local service endpoints with a valid port can be inspected.",nameof(endpoint));
+        // A listener can exist even when a TCP handshake times out. Preserve any
+        // binding on this port; enumeration errors must not imply a free port.
+        var listeners=IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners();
+        return Task.FromResult(listeners.Any(listener=>listener.Port==endpoint.Port));
     }
     public static async Task Start(int port)
     {

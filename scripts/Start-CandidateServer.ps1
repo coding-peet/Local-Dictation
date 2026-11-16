@@ -1,5 +1,6 @@
 [CmdletBinding()]
 param(
+    [ValidateRange(1, 65535)]
     [int]$Port = 48125,
     [string]$Environment = 'C:\AI\build\Local-Dictation\server-env',
     [string]$ModelRoot = 'C:\AI\PalaNote-ASR\models',
@@ -11,13 +12,12 @@ if ($Port -eq 8123) { throw 'Port 8123 is reserved for the existing deployed bat
 if (-not (Test-Path -LiteralPath (Join-Path $Environment 'pyvenv.cfg'))) {
     throw 'Run Setup-CandidateServer.ps1 first.'
 }
-$probe = [System.Net.Sockets.TcpClient]::new()
-try {
-    $task = $probe.ConnectAsync('127.0.0.1', $Port)
-    if ($task.Wait(500) -and $probe.Connected) { throw "Port $Port is already in use. No process was changed." }
-} catch [System.AggregateException] {
-    # An unbound loopback port is expected.
-} finally { $probe.Dispose() }
+# A blocked TCP handshake does not mean the port is free. Inspect listeners
+# without opening a connection, and fail closed if enumeration fails.
+$listeners = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners()
+if ($listeners | Where-Object { $_.Port -eq $Port }) {
+    throw "Port $Port is already in use. No process was changed."
+}
 $logDirectory = Join-Path (Split-Path $DataRoot -Parent) 'logs'
 New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
 $env:VIRTUAL_ENV = $Environment
