@@ -84,6 +84,7 @@ static class Program
             CompatibilityStatusChecks.Run(output,checks);
             HistoryLayoutChecks.Run(output,checks);
             HistorySearchChecks.Run(output,checks);
+            HistoryInsertChecks.Run(output,checks);
             HistoryFilterPopoverChecks.Run(output,checks);
             ReviewResizeChecks.Run(output,checks);
             ImportFailureLayoutChecks.Run(output,checks);

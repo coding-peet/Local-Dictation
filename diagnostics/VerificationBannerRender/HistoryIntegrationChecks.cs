@@ -21,6 +21,7 @@ static class HistoryIntegrationChecks
     public static void Run(string theme,string output,List<string> checks)
     {
         var controller=(AppController)RuntimeHelpers.GetUninitializedObject(typeof(AppController));
+        Set(controller,"inserting",new HashSet<string>());
         var directory=Path.Combine(output,"synthetic-history",Guid.NewGuid().ToString("N"));
         var store=new HistoryStore(directory);
         var first=new ReviewDocument{PrimaryModel="example/local-model",Language="en",RequestedLanguage="en"};

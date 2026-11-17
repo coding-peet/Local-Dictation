@@ -80,6 +80,10 @@ public sealed partial class HistoryPanel : UserControl,IDisposable
         openReview=Ui.Button("Open Review",OpenReview,true);copyText=Ui.Button("Copy text",Copy);copyText.SetResourceReference(StyleProperty,"Md3OutlinedButton");
         more=Ui.IconButton(PackIconKind.DotsHorizontal,"More actions",()=>{moreMenu.PlacementTarget=more;moreMenu.IsOpen=true;});more.ContextMenu=moreMenu;
         MenuItem Item(string label,Action action){var entry=new MenuItem{Header=label,MinHeight=48};entry.Click+=(_,_)=>action();moreMenu.Items.Add(entry);return entry;}
+        insertAtCursor=Item("Insert at cursor",InsertAtCursor);
+        insertAtCursor.ToolTip="Insert highlighted text, or the full transcript, into the last external application.";
+        moreMenu.Opened+=(_,_)=>UpdateHistoryInsertAction();
+        moreMenu.Items.Add(new Separator());
         audioActions.Add(Item("Change language…",()=>{if(Selected is {} entry)controller.ShowInputLanguage(entry.Document);}));audioActions.Add(Item("Save audio…",Export));
         moreMenu.Items.Add(new Separator());Item("Delete…",Delete);
         var actions=new WrapPanel{Margin=new(0,4,0,0)};foreach(var button in new[]{openReview,copyText,more}){button.Margin=new(0,0,8,0);actions.Children.Add(button);}
@@ -234,6 +238,7 @@ public sealed partial class HistoryPanel : UserControl,IDisposable
     {
         var selected=Selected;transcript.Text=selected?.Document.OutputText??(totalItems==0?"Record a dictation or import audio to see its transcript here.":shown?.Count==0?"No dictations match. Clear or change the filters.":"Select a dictation to see its transcript.");
         openReview.IsEnabled=copyText.IsEnabled=more.IsEnabled=selected!=null;
+        UpdateHistoryInsertAction();
         count.Text=$"{shown?.Count??0} / {totalItems}";
         title.Text=selected?.Document.Created.LocalDateTime.ToString("g")??(totalItems==0?"No dictations yet":shown?.Count==0?"No matches":"Select a dictation");
         state.Text=selected?.State??"";

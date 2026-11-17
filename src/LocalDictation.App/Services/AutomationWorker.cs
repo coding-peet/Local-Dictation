@@ -9,6 +9,11 @@ public sealed class AutomationWorker : IDisposable
     readonly Thread thread;
     readonly object availabilityGate=new();
     Task? unavailableUntil;
+    /// <summary>Native/provider work that outlived its caller's deadline.</summary>
+    public Task? UnfinishedWork
+    {
+        get{lock(availabilityGate)return unavailableUntil is {IsCompleted:false}?unavailableUntil:null;}
+    }
     public AutomationWorker()
     {
         thread = new Thread(() =>

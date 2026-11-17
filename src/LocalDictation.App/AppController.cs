@@ -65,13 +65,14 @@ public sealed partial class AppController : IDisposable
     public ReviewDocument? BannerReview=>bannerProgress?.Document;
     public bool IsReviewUnsaved(string id)=>pending.UnsavedIds.Contains(id);
     public string? SelectedReviewPieceId=>bannerProgress?.SelectedId;
-    public bool IsApplyingReview=>applyingBannerId!=null||BannerReview is {} doc&&inserting.Contains(doc.Id);
+    public bool IsApplyingReview=>historyInsertionBusy||HistoryInsertionWorkRunning||applyingBannerId!=null||BannerReview is {} doc&&inserting.Contains(doc.Id);
     readonly DispatcherTimer resumeTimer=new(){Interval=TimeSpan.FromMilliseconds(350)};
     readonly SemaphoreSlim deliveryGate=new(1,1);
     bool deliveryBusy;
     readonly AutomationWorker automation=new();
     readonly Func<nint> insertionForegroundWindow=()=>WindowsTextDelivery.ForegroundWindow;
     readonly Func<CancellationToken,ITextDelivery> captureInsertionTarget=token=>WindowsTextDelivery.Capture(token);
+    readonly Func<nint,CancellationToken,ITextDelivery>? captureHistoryInsertionTarget;
     readonly GlobalInput input;
     readonly Forms.NotifyIcon tray;
     readonly DispatcherTimer timer=new() {Interval=TimeSpan.FromMilliseconds(80)};
@@ -347,6 +348,9 @@ public sealed partial class AppController : IDisposable
             else canonicalReviews[document.Id]=document;
         }
         if(store.Errors.Count>0)ConnectionMessage=$"{store.Errors.Count} protected Review item(s) could not be read. Files were preserved.";
+        historyWindowTracker=new LastExternalWindowTracker();
+        historyInsertionDestination=()=>historyWindowTracker.Current;
+        captureHistoryInsertionTarget=(window,token)=>WindowsTextDelivery.CaptureAtWindow(token,window);
         input=new GlobalInput();
         input.UserEdited+=DestinationChanged;
         input.Cancel+=()=>System.Windows.Application.Current.Dispatcher.InvokeAsync(Cancel);
@@ -386,7 +390,7 @@ public sealed partial class AppController : IDisposable
         historyRetentionTimer.Start();
         resumeTimer.Tick+=async(_,_)=>
         {
-            DrainConfirmedPastes();
+            DrainConfirmedPastes();PruneHistoryInsertionAttempt();
             // Restoration must not depend on a responsive UIA provider. These
             // operations have separate reservations and run independently.
             _=RetryClipboardRestorationAsync();
@@ -507,6 +511,7 @@ public sealed partial class AppController : IDisposable
     public void SetRecordingControlWindow(nint window)=>input.NonActivatingWindow=window;
     void DestinationChanged(DestinationInput change)
     {
+        if(!change.FocusOnly)historyInsertionCancellation?.Cancel();
         var run=active;
         foreach(var target in destinations.Values.Distinct())
             if(!change.FocusOnly||!target.OwnsProgrammaticFocus(change.RootWindow))target.Suspend();
@@ -587,7 +592,7 @@ public sealed partial class AppController : IDisposable
         if(document.InsertedAt!=null)return new(true,"This Review was already inserted.");
         if(ClipboardRecovery.HasPending||ClipboardRecovery.HasUnsettledTransaction)return new(false,"Windows is still returning the previous clipboard. Restoration retries automatically; try Insert again shortly.");
         if(!document.CanInsert)return new(false,"Resolve the remaining choices before inserting.");
-        if(exiting||IsBusy||deliveryBusy||inserting.Count>0||!inserting.Add(document.Id))return new(false,"Finish the current operation, then try Insert again.");
+        if(exiting||IsBusy||deliveryBusy||historyInsertionBusy&&!IsHistoryInsertCopy(document.Id)||inserting.Count>0||!inserting.Add(document.Id))return new(false,"Finish the current operation, then try Insert again.");
         ITextDelivery? selected=null;var published=false;
         try
         {
@@ -597,8 +602,21 @@ public sealed partial class AppController : IDisposable
             // A new user-requested Insert is a fresh attempt, even when an older
             // attempt was unconfirmed. No automatic transport replay is enabled.
             var stamp=input.Epoch.Capture((long)insertionForegroundWindow());
-            selected=await automation.Run(captureInsertionTarget);
-            if(!input.Epoch.CanAdopt(stamp,(long)insertionForegroundWindow()))
+            var historyCopy=IsHistoryInsertCopy(document.Id);
+            var historyToken=historyCopy?historyInsertionCancellation?.Token??new CancellationToken(true):CancellationToken.None;
+            var expectedWindow=historyCopy?activeHistoryInsertion?.Destination.Window??0:0;
+            Func<bool>? historyDispatchGuard=historyCopy?()=>!historyToken.IsCancellationRequested&&insertionForegroundWindow()==expectedWindow:null;
+            selected=await automation.Run(token=>
+            {
+                if(!historyCopy)return captureInsertionTarget(token);
+                using var linked=CancellationTokenSource.CreateLinkedTokenSource(token,historyToken);
+                linked.Token.ThrowIfCancellationRequested();
+                if(!historyDispatchGuard!())throw new OperationCanceledException("The History destination changed.",linked.Token);
+                return captureHistoryInsertionTarget?.Invoke(expectedWindow,linked.Token)??captureInsertionTarget(linked.Token);
+            });
+            // History deliberately restores focus. Its command-time cancellation and
+            // native destination guard distinguish human input from queued focus events.
+            if(!HistoryCopyCanDispatch(document)||!IsHistoryInsertCopy(document.Id)&&!input.Epoch.CanAdopt(stamp,(long)insertionForegroundWindow()))
                 return new(false,"The selected cursor changed. Select the destination field and try Insert again.");
             // Exact same-field/whole-text/owned-end proof permits replacement of a
             // live draft. Otherwise this explicit action inserts at the new caret;
@@ -608,7 +626,7 @@ public sealed partial class AppController : IDisposable
             if(document.InsertedAt!=null)return new(true,"The earlier insertion was confirmed. Nothing was inserted again.");
             if(ClipboardRecovery.HasPending||ClipboardRecovery.HasUnsettledTransaction)return new(false,"Windows is still returning the previous clipboard. Restoration retries automatically; try Insert again shortly.");
             destinations[document.Id]=selected;published=true;
-            var result=await AcceptReviewCore(document,false,stamp,true);
+            var result=await AcceptReviewCore(document,false,historyCopy?null:stamp,true,historyDispatchGuard,historyToken);
             if(result.Success&&previous?.InsertedText.Length>0&&!adopted)
                 lastDeliveryMessage=DetailLabel="Inserted at the selected cursor. Earlier live text at another position was left untouched.";
             return result;
@@ -631,14 +649,14 @@ public sealed partial class AppController : IDisposable
 
     Task<ReviewInsertionResult> AcceptReview(ReviewDocument document,bool restoreFocus=true,DestinationStamp? automaticStamp=null)=>
         AcceptReviewCore(document,restoreFocus,automaticStamp,false);
-    async Task<ReviewInsertionResult> AcceptReviewCore(ReviewDocument document,bool restoreFocus,DestinationStamp? automaticStamp,bool reservationHeld)
+    async Task<ReviewInsertionResult> AcceptReviewCore(ReviewDocument document,bool restoreFocus,DestinationStamp? automaticStamp,bool reservationHeld,Func<bool>? explicitDispatchGuard=null,CancellationToken explicitCancellation=default)
     {
         DrainConfirmedPastes();
         document=CanonicalReview(document);
         if(document.InsertedAt!=null)return new(true,"This Review was already inserted.");
         if(ClipboardRecovery.HasPending)return new(false,ClipboardRecovery.Message);
         if(!document.CanInsert)return new(false,"Resolve the remaining choices before inserting.");
-        if(exiting||IsBusy||deliveryBusy||(!reservationHeld&&!inserting.Add(document.Id)))return new(false,"Finish the current operation, then try Accept again.");
+        if(exiting||IsBusy||deliveryBusy||historyInsertionBusy&&!IsHistoryInsertCopy(document.Id)||(!reservationHeld&&!inserting.Add(document.Id)))return new(false,"Finish the current operation, then try Accept again.");
         try
         {
             Changed?.Invoke();
@@ -651,6 +669,12 @@ public sealed partial class AppController : IDisposable
             try{inserted=await automation.Run(token=>
             {
                 if(automaticStamp is {} stamp&&!input.Epoch.CanAdopt(stamp,(long)insertionForegroundWindow()))return false;
+                if(explicitDispatchGuard!=null)
+                {
+                    using var linked=CancellationTokenSource.CreateLinkedTokenSource(token,explicitCancellation);
+                    linked.Token.ThrowIfCancellationRequested();if(!explicitDispatchGuard())return false;
+                    return target.Apply(document.OutputText,linked.Token,restoreFocus?DeliveryIntent.ExplicitFinal:DeliveryIntent.AutomaticFinal);
+                }
                 return target.Apply(document.OutputText,token,restoreFocus?DeliveryIntent.ExplicitFinal:DeliveryIntent.AutomaticFinal);
             },TimeSpan.FromSeconds(5));}
             catch(Exception){inserted=false;}
@@ -665,6 +689,7 @@ public sealed partial class AppController : IDisposable
 
     void RecordSuccessfulInsertion(ReviewDocument document,string deliveryWarning)
     {
+        var historyCopy=IsHistoryInsertCopy(document.Id);
         // Persist the receipt before cleanup. A cleanup failure must never trigger another insertion.
         document.InsertedAt=DateTimeOffset.UtcNow;document.DraftWithdrawn=false;
         lastTranscript=document.OutputText;lastDeliveryMessage=deliveryWarning.Length>0?deliveryWarning:"Finished text was inserted at the original cursor.";
@@ -678,7 +703,7 @@ public sealed partial class AppController : IDisposable
             catch(Exception){ConnectionMessage="Text was inserted. Pending cleanup failed; this Review is marked as already inserted.";}
         }
         placementReview=null;StateLabel="Inserted";DetailLabel=deliveryWarning.Length>0?deliveryWarning:"Reviewed text inserted. Nothing was submitted.";
-        compactReviewWindow?.Close();
+        if(!historyCopy)compactReviewWindow?.Close();
         hideAt=DateTimeOffset.MinValue;Changed?.Invoke();
     }
 
@@ -1319,6 +1344,7 @@ public sealed partial class AppController : IDisposable
     public void SaveReview(ReviewDocument document)
     {
         document=CanonicalReview(document);
+        if(IsHistoryInsertCopy(document.Id))return;
         if(document.IsPrivate){KeepPrivateReview(document);return;}
         if(document.Primary.Length==0&&document.Verification.Length==0&&document.OutputText.Length==0)return;
         if(History.Any(e=>e.Id==document.Id))
@@ -1335,7 +1361,8 @@ public sealed partial class AppController : IDisposable
         // proof already published so History cannot lose an insertion receipt.
         if(destinations.TryGetValue(id,out var existing))existing.Invalidate();
         DrainConfirmedPastes();
-        if(privateReviews?.Remove(id)==true)canonicalReviews.Remove(id);else pending.Dismiss(id);
+        if(historyInsertCopies?.Remove(id)==true)canonicalReviews.Remove(id);
+        else if(privateReviews?.Remove(id)==true)canonicalReviews.Remove(id);else pending.Dismiss(id);
         if(BannerReview?.Id==id)bannerProgress=null;
         if(destinations.Remove(id,out var target))target.Invalidate();
         Changed?.Invoke();
@@ -1488,6 +1515,6 @@ public sealed partial class AppController : IDisposable
     public void Dispose()
     {
         disposed=true;ClipboardRecovery.Changed-=ClipboardRecoveryChanged;
-        timer.Stop();reconnectTimer.Stop();historyRetentionTimer.Stop();resumeTimer.Stop();input.Dispose();tray.Visible=false;tray.Dispose();active?.Cancel.Cancel();automation.Dispose();
+        timer.Stop();reconnectTimer.Stop();historyRetentionTimer.Stop();resumeTimer.Stop();historyWindowTracker?.Dispose();input.Dispose();tray.Visible=false;tray.Dispose();active?.Cancel.Cancel();automation.Dispose();
     }
 }

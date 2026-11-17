@@ -13,7 +13,7 @@ internal enum DeliveryInputMethod { ClipboardPaste,UnicodeKeyboard }
 public sealed record PendingPasteConfirmation(string Text,bool IsFinal);
 
 /// <summary>Owns the original draft range. Focus restoration requires explicit Review acceptance.</summary>
-public sealed class WindowsTextDelivery : ITextDelivery
+public sealed partial class WindowsTextDelivery : ITextDelivery
 {
     readonly nint window;
     readonly TargetGuard guard;
@@ -288,12 +288,25 @@ public sealed class WindowsTextDelivery : ITextDelivery
             ?("",0,info.Pattern,info.Selection):info;
     }
 
-    public static WindowsTextDelivery Capture(CancellationToken token, bool allowOwnProcess = false)
+    public static WindowsTextDelivery Capture(CancellationToken token,bool allowOwnProcess=false)=>CaptureCore(token,allowOwnProcess,null);
+    public static WindowsTextDelivery CaptureAtWindow(CancellationToken token,nint expectedWindow)
     {
+        if(expectedWindow==0)throw new InvalidOperationException("No History destination was selected.");
+        return CaptureCore(token,false,expectedWindow);
+    }
+    static WindowsTextDelivery CaptureCore(CancellationToken token,bool allowOwnProcess,nint? expectedWindow)
+    {
+        void ValidateRequestedTarget()
+        {
+            if(expectedWindow is not {} expected)return;
+            token.ThrowIfCancellationRequested();
+            if(GetForegroundWindow()!=expected)throw new OperationCanceledException("The History destination changed.",token);
+        }
         var diagnostic=CaptureDiagnostic.Begin();
         AutomationElement? element=null;
         try
         {
+            ValidateRequestedTarget();
             diagnostic.Stage(CaptureStage.Foreground);
             var window = GetForegroundWindow();
             diagnostic.Stage(CaptureStage.FocusedElement);
@@ -301,10 +314,16 @@ public sealed class WindowsTextDelivery : ITextDelivery
             diagnostic.Stage(CaptureStage.OwnProcess);
             if (!allowOwnProcess && element.Current.ProcessId == Environment.ProcessId)
                 throw new InvalidOperationException("Choose a destination outside Local Dictation; this recording will open in Review.");
+            if(expectedWindow is {} expected)
+            {
+                ValidateRequestedTarget();
+                if(AutomationWindowScope.Resolve(element,expected,token).Status!=AutomationWindowScope.ScopeStatus.Matched)
+                    throw new InvalidOperationException("The History field does not belong to the selected destination.");
+            }
             diagnostic.Stage(CaptureStage.Integrity);
             if (!TargetPrivileges.CanInsert(Integrity(element.Current.ProcessId), Integrity(Environment.ProcessId)))
                 throw new InvalidOperationException("The destination is elevated. Continue in Review.");
-            var info = Inspect(element,stage=>diagnostic.Stage(stage switch
+            var info = Inspect(element,stage=>{ValidateRequestedTarget();diagnostic.Stage(stage switch
             {
                 "availability"=>CaptureStage.Availability,"text-pattern"=>CaptureStage.TextPattern,
                 "read-only"=>CaptureStage.ReadOnly,"selection-count"=>CaptureStage.SelectionCount,
@@ -312,10 +331,10 @@ public sealed class WindowsTextDelivery : ITextDelivery
                 "caret-prefix"=>CaptureStage.CaretPrefix,"prefix-coherence"=>CaptureStage.PrefixCoherence,
                 "empty-value-check"=>CaptureStage.EmptyValueCheck,"empty-value-confirmed"=>CaptureStage.EmptyValueConfirmed,
                 _=>CaptureStage.Unknown
-            }));
+            });});
             string? emptyProjection=null;
-            if(info.Caret==0&&info.Text.Length>0&&ConfirmedEmptyValue(element,stage=>diagnostic.Stage(
-                stage=="empty-value-confirmed"?CaptureStage.EmptyValueConfirmed:CaptureStage.EmptyValueCheck)))
+            if(info.Caret==0&&info.Text.Length>0&&ConfirmedEmptyValue(element,stage=>{ValidateRequestedTarget();diagnostic.Stage(
+                stage=="empty-value-confirmed"?CaptureStage.EmptyValueConfirmed:CaptureStage.EmptyValueCheck);}))
                 emptyProjection=info.Text;
             diagnostic.Stage(CaptureStage.Cancellation);
             token.ThrowIfCancellationRequested();

@@ -1,7 +1,7 @@
 # Local Dictation product requirements
 
 Status: current input specification, consolidated from Peter's requests on
-10-17 November 2026. Update this document when the user changes a requirement.
+10-18 November 2026. Update this document when the user changes a requirement.
 Older design documents explain decisions; this file defines current behavior.
 
 ## Purpose and scope
@@ -11,6 +11,26 @@ cursor, optional independent verification, and recoverable recordings.
 Application copy and engineering documentation are English. Collaboration with
 Peter is normally Slovak. Slovak dictation, diacritics, English technical terms,
 punctuation, whitespace, and Unicode must be preserved.
+
+## User-first interaction priorities
+
+Example: select or highlight a saved transcript, choose Insert at cursor, and
+receive the requested insertion with confirmed feedback. A separate Review
+window serves an explicit editing/comparison task.
+
+- Design the complete ordinary workflow before choosing components. Preserve the
+  user's content, selected object, destination and current work across focus
+  changes, navigation and recoverable errors.
+- When inputs and authorization are already present, the named command performs
+  its result directly. An extra surface resolves a concrete missing decision,
+  consequential consent or editing task; implementation convenience does not
+  create a user need for another preview or repeated confirmation.
+- Selection prepares context and never sends text or starts an external action.
+  Keep source data unchanged when reusing a copy. Report actual results and
+  actionable recovery inline; never guess another field or claim unconfirmed
+  insertion as successful.
+- Preserve required consent and existing command timing. Simpler UI does not
+  remove destructive-action safeguards or enable unintended real-time behavior.
 
 ## Recording and model selection
 
@@ -423,7 +443,7 @@ punctuation, whitespace, and Unicode must be preserved.
 - History follows the selected second layout: short date/duration rows, status
   when useful and at most two preview lines. The selected transcript receives
   the remaining vertical space. Review/Copy/More sit with the detail; More opens
-  Change language, Save audio and Delete. Playback remains pinned across both
+  Insert at cursor, Change language, Save audio and Delete. Playback remains pinned across both
   History columns. Keep named navigation visible even when detail/list stack.
   All selected row text and delete icons use the semantic selection foreground
   in high contrast. Remove the repeated History heading above the list; show
@@ -761,12 +781,26 @@ clear to the user, preserve original recognition, and keep manual edits dominant
   interceptor is historical evidence, not an approved fix to reapply.
 
 
-## History Insert follow-up (requested 2026-11-17, not implemented)
+## Direct History insertion (clarified after af589a0)
 
-- Add an Insert action to History More actions. The user confirmed that it
-  should use the highlighted text, or the entire selected transcript when there
-  is no highlight. Reuse must also work for already-inserted saved transcripts.
-- The proposed placement window and destination-selection workflow are awaiting
-  approval in superpowers/specs/2026-11-17-history-insert-design.md. Preserve the
-  saved source and its insertion receipt; do not treat publication of this
-  proposal as approval to implement it.
+- History More actions includes Insert at cursor. The user explicitly rejected
+  an intermediate placement window. The action inserts highlighted transcript
+  text, or the whole selected transcript when there is no highlight.
+- Return to the last external application and freshly validate its current
+  editable field/caret before delivery. Observe only native window/process/class
+  metadata in the background. Own windows and taskbar/desktop navigation do not
+  replace the remembered application. Never read field contents while tracking.
+- Snapshot and reserve the command before closing the menu. Subsequent physical
+  input, missing/replaced targets, denied activation or invalid field scope stop
+  insertion and show an inline History result. Keep original Review/recording
+  epoch behavior; History uses its explicit command cancellation and native-window
+  guard so expected restored-focus events do not invalidate it.
+- Reuse an independent memory-only text copy, including from already-inserted
+  History entries. Preserve source text, choices and insertion receipts; do not
+  create a saved History or private-review duplicate.
+- Preserve late receipt carriers and active native work after caller deadlines.
+  Pending acknowledgement blocks replay. Terminal unused attempts expire after
+  two minutes; changing text/target retires only completed terminal attempts.
+  Maintain clipboard restoration, privilege, field-identity and no-submit guards.
+- Validate with synthetic controller/state tests and keep native destination
+  acceptance separate. No voice tests or running API changes are included.
