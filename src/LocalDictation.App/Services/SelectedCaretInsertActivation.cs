@@ -19,9 +19,12 @@ public static class SelectedCaretInsertActivation
 
     sealed class Attachment
     {
+        const int ExtendedStyle=-20;
+        const long NoActivate=0x08000000;
         readonly Window window;
         readonly Button insert;
         HwndSource? source;
+        bool originallyNoActivate;
 
         public Attachment(Window window, Button insert)
         {
@@ -30,10 +33,25 @@ public static class SelectedCaretInsertActivation
             insert.Focusable = false;
             window.SourceInitialized += SourceInitialized;
             window.Closed += Closed;
+            window.Activated += Activated;
+            insert.MouseLeave += LeaveInsert;
+            insert.IsEnabledChanged += AvailabilityChanged;
+            insert.IsVisibleChanged += AvailabilityChanged;
+            insert.IsHitTestVisibleChanged += AvailabilityChanged;
             AttachSource();
         }
 
         void SourceInitialized(object? sender, EventArgs args) => AttachSource();
+        void Activated(object? sender, EventArgs args)
+        {
+            if(source is {} current && WindowsTextDelivery.ForegroundWindow==current.Handle)
+                SetNoActivate(false);
+        }
+        void LeaveInsert(object sender,System.Windows.Input.MouseEventArgs args)=>SetNoActivate(false);
+        void AvailabilityChanged(object sender,DependencyPropertyChangedEventArgs args)
+        {
+            if(!insert.IsEnabled||!insert.IsVisible||!insert.IsHitTestVisible)SetNoActivate(false);
+        }
 
         void AttachSource()
         {
@@ -41,6 +59,7 @@ public static class SelectedCaretInsertActivation
             var handle = new WindowInteropHelper(window).Handle;
             if (handle == 0 || HwndSource.FromHwnd(handle) is not { } current) return;
             source = current;
+            originallyNoActivate=((long)GetWindowLongPtr(handle,ExtendedStyle)&NoActivate)!=0;
             source.AddHook(WindowMessage);
         }
 
@@ -48,38 +67,65 @@ public static class SelectedCaretInsertActivation
         {
             window.SourceInitialized -= SourceInitialized;
             window.Closed -= Closed;
-            if (source is { IsDisposed: false }) source.RemoveHook(WindowMessage);
+            window.Activated -= Activated;
+            insert.MouseLeave -= LeaveInsert;
+            insert.IsEnabledChanged -= AvailabilityChanged;
+            insert.IsVisibleChanged -= AvailabilityChanged;
+            insert.IsHitTestVisibleChanged -= AvailabilityChanged;
+            if (source is { IsDisposed: false })
+            {
+                SetNoActivate(false);
+                source.RemoveHook(WindowMessage);
+            }
             source = null;
         }
 
         nint WindowMessage(nint hwnd, int message, nint wParam, nint lParam, ref bool handled)
         {
-            const int WmMouseActivate = 0x21, WmLeftButtonDown = 0x201, MaNoActivate = 3;
-            if (message != WmMouseActivate || ((lParam.ToInt64() >> 16) & 0xffff) != WmLeftButtonDown)
+            const int WmNcHitTest=0x84,WmMouseActivate=0x21,WmLeftButtonDown=0x201,MaNoActivate=3;
+            if(message==WmNcHitTest)
+            {
+                // Set the native style before Windows starts mouse activation. Returning
+                // MA_NOACTIVATE alone can leave another process with no foreground window.
+                var packed=lParam.ToInt64();
+                SetNoActivate(ShouldPreserve(hwnd,new ScreenPoint{X=(short)(packed&0xffff),Y=(short)((packed>>16)&0xffff)}));
+                return 0; // Keep normal hit-testing and editing behavior outside Insert.
+            }
+            if(message!=WmMouseActivate||((lParam.ToInt64()>>16)&0xffff)!=WmLeftButtonDown)
                 return 0;
-            if (window.IsActive || !insert.IsEnabled || !insert.IsVisible || !insert.IsHitTestVisible)
-                return 0;
-            if (!SelectedCaretActivationPolicy.ShouldPreserveExternalFocus(window.IsActive,
-                    insert.IsEnabled, insert.IsVisible && insert.IsHitTestVisible, PointerHitsInsert()))
-                return 0;
-
-            handled = true;
+            if(!GetCursorPos(out var pointer)||!ShouldPreserve(hwnd,pointer))return 0;
+            SetNoActivate(true);
+            handled=true;
             return MaNoActivate;
         }
 
-        bool PointerHitsInsert()
+        // WPF IsActive can remain true during a non-activating click while another
+        // process owns the foreground. Use the same native fact as cursor capture.
+        bool ShouldPreserve(nint hwnd,ScreenPoint pointer)=>
+            SelectedCaretActivationPolicy.ShouldPreserveExternalFocus(
+                WindowsTextDelivery.ForegroundWindow==hwnd,insert.IsEnabled,
+                insert.IsVisible&&insert.IsHitTestVisible,PointerHitsInsert(pointer));
+
+        void SetNoActivate(bool preserve)
         {
-            if (!GetCursorPos(out var pointer)) return false;
+            if(source is not {IsDisposed:false} current)return;
+            var style=(long)GetWindowLongPtr(current.Handle,ExtendedStyle);
+            var next=preserve||originallyNoActivate?style|NoActivate:style&~NoActivate;
+            if(next!=style)SetWindowLongPtr(current.Handle,ExtendedStyle,(nint)next);
+        }
+
+        bool PointerHitsInsert(ScreenPoint pointer)
+        {
             try
             {
-                // WPF performs the screen-to-layout conversion, including monitor DPI.
-                var point = window.PointFromScreen(new(pointer.X, pointer.Y));
-                var hit = window.InputHitTest(point) as DependencyObject;
-                for (var current = hit; current is not null;
-                     current = current is Visual ? VisualTreeHelper.GetParent(current) : LogicalTreeHelper.GetParent(current))
-                    if (ReferenceEquals(current, insert)) return true;
+                // WPF converts physical screen coordinates, including monitor DPI.
+                var point=window.PointFromScreen(new(pointer.X,pointer.Y));
+                var hit=window.InputHitTest(point) as DependencyObject;
+                for(var current=hit;current is not null;
+                    current=current is Visual?VisualTreeHelper.GetParent(current):LogicalTreeHelper.GetParent(current))
+                    if(ReferenceEquals(current,insert))return true;
             }
-            catch (InvalidOperationException)
+            catch(InvalidOperationException)
             {
                 // A disconnected presentation source retains normal activation.
             }
@@ -93,4 +139,8 @@ public static class SelectedCaretInsertActivation
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     static extern bool GetCursorPos(out ScreenPoint point);
+    [DllImport("user32.dll",EntryPoint="GetWindowLongPtrW")]
+    static extern nint GetWindowLongPtr(nint hwnd,int index);
+    [DllImport("user32.dll",EntryPoint="SetWindowLongPtrW")]
+    static extern nint SetWindowLongPtr(nint hwnd,int index,nint value);
 }

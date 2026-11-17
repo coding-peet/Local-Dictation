@@ -722,3 +722,51 @@ superpowers/specs/2026-11-14-history-import-and-personal-tools-design.md.
   contract tests do not certify current publish completeness or installation.
 - Preserve the existing API processes, private data and startup registration
   during documentation/build work. Voice and native acceptance remain separate.
+
+
+## Compact Review resizing (2026-11-17)
+
+- Increasing the compact Review window height increases the usable transcript
+  viewport, including whole-text editing. Do not cap the primary reader/editor
+  at the former 100/110 DIP limits or cap the Review panel at 480 DIP.
+- Keep main Close/Insert actions reachable. In a small window, scroll secondary
+  wording/editing controls while preserving a usable text area. Keep original
+  transcripts, draft saving, explicit insertion and focus behavior unchanged.
+- Validate with detached WPF layouts and synthetic text; this does not certify
+  native destination insertion or microphone/recognition quality.
+
+## Dictionary usage follow-up (requested 2026-11-17, not implemented)
+
+Peter requested per-rule usage counts for personal exact replacement pairs,
+including preferred name/English spellings, disfluencies and deliberate text or
+punctuation replacement/deletion. A replacement counter should report actual
+rule applications, not claim that a recognition hint caused model output.
+
+Current exact rules reject empty replacements and both activation switches stay
+off pending paired evaluation. Counter persistence, counting unit and private
+session behavior need a concrete design before implementation. Do not introduce
+a blanket thanks/repetition blacklist: genuinely spoken content remains valid
+speech. Any future deletion must be an explicit personal rule with its effect
+clear to the user, preserve original recognition, and keep manual edits dominant.
+
+
+## Review follow-up (2026-11-17)
+
+- Open compact Review slightly larger by default: 620 x 680 DIP. Keep manual
+  resizing and small-window controls working.
+- Explicit Insert must preserve the selected external caret after Review
+  interaction. Apply temporary native no-activation before the Insert mouse
+  activation, and restore normal activation outside the available Insert button. Preserve process-integrity checks, original text, clipboard
+  restoration and no-duplicate delivery guards. A previous rejected gesture
+  interceptor is historical evidence, not an approved fix to reapply.
+
+
+## History Insert follow-up (requested 2026-11-17, not implemented)
+
+- Add an Insert action to History More actions. The user confirmed that it
+  should use the highlighted text, or the entire selected transcript when there
+  is no highlight. Reuse must also work for already-inserted saved transcripts.
+- The proposed placement window and destination-selection workflow are awaiting
+  approval in superpowers/specs/2026-11-17-history-insert-design.md. Preserve the
+  saved source and its insertion receipt; do not treat publication of this
+  proposal as approval to implement it.

@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><UseAppHost>false</UseAppHost><UseWPF>true</UseWPF></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../VerificationBannerRender/VerificationBannerRender.csproj" /></ItemGroup>
+</Project>

@@ -85,8 +85,12 @@ public sealed class CompactReviewPanel : Border
     {
         this.controller=controller;
         Margin=new(0,16,0,0);Padding=new(16);SetResourceReference(CornerRadiusProperty,"ShapeMedium");
-        Background=Surface;MaxHeight=480;Focusable=true;
-        var column=new StackPanel();
+        Background=Surface;Focusable=true;
+        var column=new Grid();
+        column.RowDefinitions.Add(new(){Height=GridLength.Auto});
+        column.RowDefinitions.Add(new(){Height=new(1,GridUnitType.Star)});
+        column.RowDefinitions.Add(new(){Height=GridLength.Auto});
+        var controls=new StackPanel();
         var title=new DockPanel();heading.FontSize=11;heading.FontWeight=FontWeights.SemiBold;heading.Foreground=Muted;
         progress.FontSize=11;progress.Foreground=Muted;progress.HorizontalAlignment=HorizontalAlignment.Right;
         DockPanel.SetDock(progress,Dock.Right);title.Children.Add(progress);title.Children.Add(heading);column.Children.Add(title);
@@ -116,10 +120,10 @@ public sealed class CompactReviewPanel : Border
                 ExitTextEdit();
             }
         };
-        transcriptScroll=new ScrollViewer{Content=transcript,MinHeight=40,MaxHeight=100,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,Margin=new(0,9,0,8)};
+        transcriptScroll=new ScrollViewer{Content=transcript,MinHeight=40,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,Margin=new(0,9,0,8)};
         var textSurface=new Grid();textSurface.Children.Add(transcriptScroll);
         directEditor.AcceptsReturn=false;directEditor.AcceptsTab=false;directEditor.TextWrapping=TextWrapping.Wrap;
-        directEditor.FontSize=16;directEditor.MinHeight=48;directEditor.MaxHeight=110;
+        directEditor.FontSize=16;directEditor.MinHeight=48;
         directEditor.Padding=new(5,4,5,4);directEditor.Margin=new(0,7,0,8);directEditor.VerticalContentAlignment=VerticalAlignment.Top;
         directEditor.VerticalScrollBarVisibility=ScrollBarVisibility.Auto;
         directEditor.Foreground=Ink;directEditor.Background=FieldSurface;directEditor.BorderBrush=FieldBorder;
@@ -140,24 +144,24 @@ public sealed class CompactReviewPanel : Border
             finally{directEditor.EndChange();}
             e.CancelCommand();
         });
-        textSurface.Children.Add(directEditor);column.Children.Add(textSurface);
+        textSurface.Children.Add(directEditor);Grid.SetRow(textSurface,1);column.Children.Add(textSurface);
         useEdited=Ui.Button("Save text",()=>{if(controller.SaveBannerEditedText())ExitTextEdit();},true);
         useEdited.MinHeight=48;useEdited.Padding=new(16,8,16,8);useEdited.Margin=new(0,0,8,8);
         useEdited.SetResourceReference(Control.BackgroundProperty,"Accent");
         useEdited.SetResourceReference(Control.ForegroundProperty,"OnAccent");
         useEdited.BorderThickness=new(0);useEdited.FontSize=12;useEdited.FontWeight=FontWeights.SemiBold;
         exitText=SmallButton("Done editing",ExitTextEdit);
-        directActions.Children.Add(useEdited);directActions.Children.Add(exitText);column.Children.Add(directActions);
+        directActions.Children.Add(useEdited);directActions.Children.Add(exitText);controls.Children.Add(directActions);
 
         first=WordingButton("First wording","primary");second=WordingButton("Second wording","verification");
-        alternatives.Children.Add(first);alternatives.Children.Add(second);column.Children.Add(alternatives);
+        alternatives.Children.Add(first);alternatives.Children.Add(second);controls.Children.Add(alternatives);
 
         custom.AcceptsReturn=false;custom.TextWrapping=TextWrapping.Wrap;custom.MinHeight=38;custom.MaxHeight=65;
         custom.FontSize=14;custom.Foreground=Ink;custom.Background=FieldSurface;custom.BorderBrush=FieldBorder;custom.Padding=new(9,6,9,6);
         System.Windows.Automation.AutomationProperties.SetName(custom,"Edit the selected wording");
         editing.Children.Add(custom);
         saveCustom=SmallButton("Use this wording",SaveCustom);cancelCustom=SmallButton("Cancel",()=>{editingPhrase=false;Refresh();});
-        var editActions=Ui.Row(saveCustom,cancelCustom);editActions.Margin=new(0,5,0,5);editing.Children.Add(editActions);column.Children.Add(editing);
+        var editActions=Ui.Row(saveCustom,cancelCustom);editActions.Margin=new(0,5,0,5);editing.Children.Add(editActions);controls.Children.Add(editing);
         custom.PreviewKeyDown+=(_,e)=>
         {
             if(e.Key==Key.Enter){e.Handled=true;if(!e.IsRepeat)customEnterPending=true;}
@@ -186,18 +190,28 @@ public sealed class CompactReviewPanel : Border
         details.ToolTip="Open the full editor and recording details";
         var actions=new WrapPanel{Margin=new(0,2,0,0)};
         foreach(var button in new[]{editText,edit,keep,destination,details})actions.Children.Add(button);
-        column.Children.Add(actions);
+        controls.Children.Add(actions);
         var secondLabel=Ui.Text("Alternative transcript",12,true);secondLabel.Margin=new(0,0,0,8);
         secondTranscript.SetResourceReference(TextBox.ForegroundProperty,"Ink");secondTranscript.SetResourceReference(TextBox.BackgroundProperty,"Surface");
         secondTranscript.SetResourceReference(TextBox.BorderBrushProperty,"InputBorder");
         secondTranscriptPanel.Children.Add(secondLabel);secondTranscriptPanel.Children.Add(secondTranscript);
         useAlternative=SmallButton("Use this transcript",()=>controller.UseWholeBannerTranscript(ReviewCopySource.Verification));
         secondTranscriptPanel.Children.Add(useAlternative);
-        column.Children.Add(secondTranscriptPanel);
+        controls.Children.Add(secondTranscriptPanel);
         System.Windows.Automation.AutomationProperties.SetName(secondTranscript,"Complete second-model transcript");
         status.FontSize=11.5;status.LineHeight=17;status.Foreground=Muted;status.TextWrapping=TextWrapping.Wrap;status.Margin=new(0,7,0,0);
-        column.Children.Add(status);
-        Child=new ScrollViewer{Content=column,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled};
+        controls.Children.Add(status);
+        var controlsScroll=new ScrollViewer{Content=controls,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled};
+        System.Windows.Automation.AutomationProperties.SetName(controlsScroll,"Review wording and editing actions");
+        Grid.SetRow(controlsScroll,2);column.Children.Add(controlsScroll);
+        column.SizeChanged+=(_,_)=>
+        {
+            // Keep a usable text viewport when alternatives/actions need more
+            // room than a short window provides. Extra height belongs to text.
+            var textReserve=Math.Min(120,Math.Max(64,column.ActualHeight*0.4));
+            controlsScroll.MaxHeight=Math.Max(0,column.ActualHeight-title.ActualHeight-textReserve);
+        };
+        Child=column;
     }
 
     static string Wording(ReviewDocument document,ReviewPiece piece)=>document.Choices.TryGetValue(piece.Id,out var choice)

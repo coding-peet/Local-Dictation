@@ -85,6 +85,7 @@ static class Program
             HistoryLayoutChecks.Run(output,checks);
             HistorySearchChecks.Run(output,checks);
             HistoryFilterPopoverChecks.Run(output,checks);
+            ReviewResizeChecks.Run(output,checks);
             ImportFailureLayoutChecks.Run(output,checks);
             PrivateFlowChecks.Run(output,checks);
             PrivateTranscriptPickerChecks.Run(output,checks);

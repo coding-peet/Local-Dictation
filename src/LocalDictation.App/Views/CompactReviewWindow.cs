@@ -13,31 +13,41 @@ public sealed class CompactReviewWindow : Window
     readonly bool openedInserted;
     readonly Button insert,verify;
     readonly RetranscriptionPicker transcription;
+    readonly ScrollViewer transcriptionScroll;
     readonly TextBlock status=Ui.Text("",12);
     public CompactReviewWindow(AppController controller)
     {
         this.controller=controller;Title="Review · Local Dictation";Topmost=true;
         openedInserted=controller.BannerReview?.InsertedAt!=null;
-        Width=560;MinWidth=400;SizeToContent=SizeToContent.Height;MaxHeight=740;
+        Width=620;MinWidth=400;Height=680;MinHeight=420;
         WindowStartupLocation=WindowStartupLocation.CenterScreen;
-        var root=new StackPanel{Margin=new(24)};
-        root.Children.Add(Ui.Text(controller.BannerReview?.IsPrivate==true?"Private dictation · Memory only":"Review your dictation",24));
-        root.Children.Add(Ui.Text("Choose the wording you want to keep, or edit your text.",14));
-        panel=new CompactReviewPanel(controller);root.Children.Add(panel);
+        var root=new Grid{Margin=new(24)};
+        root.RowDefinitions.Add(new(){Height=GridLength.Auto});
+        root.RowDefinitions.Add(new(){Height=new(1,GridUnitType.Star)});
+        root.RowDefinitions.Add(new(){Height=GridLength.Auto});
+        var header=new StackPanel();
+        header.Children.Add(Ui.Text(controller.BannerReview?.IsPrivate==true?"Private dictation · Memory only":"Review your dictation",24));
+        header.Children.Add(Ui.Text("Choose the wording you want to keep, or edit your text.",14));
+        root.Children.Add(header);
+        panel=new CompactReviewPanel(controller);Grid.SetRow(panel,1);root.Children.Add(panel);
         insert=Ui.Button("Insert",()=>_=controller.ApplyBannerReviewAtSelectedCursor(),true);
         insert.ToolTip="Click the destination cursor, then click Insert. This action keeps that field focused.";
         SelectedCaretInsertActivation.Attach(this,insert);
         transcription=new RetranscriptionPicker(
             ()=>controller.BannerReview is {} document?controller.VerificationChoices(document):[],
             model=>controller.BannerReview is {} document?controller.StartSavedVerification(document,model):"Select a saved dictation first.");
-        root.Children.Add(transcription);
+        transcriptionScroll=new ScrollViewer{Content=transcription,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,Visibility=Visibility.Collapsed};
+        System.Windows.Automation.AutomationProperties.SetName(transcriptionScroll,"Choose another transcription model");
+        Grid.SetRow(transcriptionScroll,1);root.Children.Add(transcriptionScroll);
         verify=Ui.Button("Transcribe again",transcription.Toggle);
         transcription.ReturnFocusTarget=verify;
         var actions=new WrapPanel{HorizontalAlignment=HorizontalAlignment.Right,Margin=new(0,16,0,0)};
         if(controller.BannerReview?.IsPrivate==true)actions.Children.Add(Ui.Button("Discard private text",()=>{if(controller.BannerReview is {} d)controller.RequestDiscardPrivateReview(d.Id);}));
-        actions.Children.Add(Ui.Button("Close",Close));actions.Children.Add(verify);actions.Children.Add(insert);root.Children.Add(actions);
-        status.SetResourceReference(TextBlock.ForegroundProperty,"Muted");status.Margin=new(0,8,0,0);root.Children.Add(status);
-        Content=new ScrollViewer{Content=root,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};
+        actions.Children.Add(Ui.Button("Close",Close));actions.Children.Add(verify);actions.Children.Add(insert);
+        var footer=new StackPanel();footer.Children.Add(actions);Grid.SetRow(footer,2);root.Children.Add(footer);
+        status.SetResourceReference(TextBlock.ForegroundProperty,"Muted");status.Margin=new(0,8,0,0);footer.Children.Add(status);
+        Content=root;
         transcription.Changed+=Refresh;
         controller.Changed+=Refresh;
         Closed+=(_,_)=>controller.Changed-=Refresh;
@@ -54,6 +64,7 @@ public sealed class CompactReviewWindow : Window
     {
         panel.Refresh();var document=controller.BannerReview;
         var choosingModel=transcription.Visibility==Visibility.Visible;
+        transcriptionScroll.Visibility=choosingModel?Visibility.Visible:Visibility.Collapsed;
         panel.Visibility=choosingModel?Visibility.Collapsed:document==null?Visibility.Collapsed:Visibility.Visible;
         verify.IsEnabled=document!=null&&controller.CanVerifyReview(document);
         transcription.Refresh(verify.IsEnabled);
