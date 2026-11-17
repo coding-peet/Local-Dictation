@@ -510,8 +510,8 @@ Preserve the existing TypeWhisper setup and production API on port 8123 until an
 explicit controlled handover. Use the separate candidate API on 48125. Never
 change security controls as an implementation shortcut.
 
-See the latest dated validation record and README for deployed build status and
-remaining manual checks. A process crash between insertion and receipt persistence,
+See the latest dated validation record for deployed build evidence and README for
+current build instructions and remaining manual checks. A process crash between insertion and receipt persistence,
 especially when every write fails, is not claimed to have transactional recovery.
 
 ## Usability audit follow-up (14 November 2026)
@@ -709,3 +709,16 @@ superpowers/specs/2026-11-14-history-import-and-personal-tools-design.md.
 - Explicit Apply/Cancel/Escape can return focus to Filters; outside dismissal
   must not steal the clicked target's focus. Close the popup on History exit,
   window unload and disposal. Popup editing never captures audio or a destination.
+
+## Build and packaging safety (2026-11-17)
+
+- Build.ps1 publishes to BuildRoot\client-candidate by default. Build and
+  deployment are separate; direct publish into the installed app is refused.
+- Keep build/publish output outside the checkout, configured-PC data/backend
+  locations, and running clients' directories. Reject reparse aliases and stop
+  if client identity cannot be checked. Never terminate a client to build.
+- The legacy MSI is an obsolete installation pilot, not current distribution.
+  Its fixed payload lacks Material Design dependencies. Fixture-based MSI
+  contract tests do not certify current publish completeness or installation.
+- Preserve the existing API processes, private data and startup registration
+  during documentation/build work. Voice and native acceptance remain separate.

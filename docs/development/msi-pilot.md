@@ -1,6 +1,27 @@
-# Windows Installer pilot
+# Windows Installer pilot (obsolete)
 
-This is a first-install test of the existing native Windows client.
+## Current status: do not use for the current client
+
+This records the 10 November 2026 installation experiment. It is not a supported
+installer for the current Material Design client and must not be used to install
+or distribute that build.
+
+scripts/build_client_msi.py still copies a fixed legacy payload. It omits the
+Material Design assemblies used by the current app, including
+MaterialDesignThemes.Wpf.dll. A package can therefore build successfully while
+being incomplete. The contract tests use synthetic files for that same legacy
+list; passing them proves neither parity with a real publish nor a working app.
+
+Use the complete folder produced by scripts/Build.ps1 and the controlled
+replacement procedure in [rebuild and recovery](rebuild-and-recovery.md).
+Before reviving MSI distribution, qualify the payload against the real publish,
+then test installation, launch, upgrade, rollback and preservation of external
+data and startup state. Resolve security-policy blocks through the normal
+organization process; do not bypass them.
+
+## Historical scope
+
+This was a first-install test of the then-current native Windows client.
 It tests normal MSI installation separately from Defender's later launch decision.
 It does not change Defender, UAC, certificate trust, API settings, or model files.
 
@@ -24,10 +45,10 @@ Full local evidence is retained in the installer output directory:
 install-request.json, install-result.json and install.log. These files are not
 checked into Git.
 
-## What gets installed
+## Historical package contents
 
 - Local Dictation 0.1.0, Windows x64.
-- Eleven client files in C:\Program Files\Local Dictation.
+- The historical client payload in C:\Program Files\Local Dictation.
 - A common Start menu shortcut.
 - A Windows Apps / installed-programs entry with standard MSI uninstall support.
 
@@ -37,14 +58,14 @@ The local API remains an external service; this package does not install or
 restart it. The global .NET 10 Desktop Runtime is required and was verified
 present on this machine.
 
-## Build without installing
+## Reproduce the legacy packaging experiment without installing
 
 Run from the Local-Dictation repository on Windows with py (Python 3.12 or newer):
 
 ~~~powershell
 py -B -m unittest discover -s tests/deployment -p test_client_msi.py -v
 
-py -B scripts/build_client_msi.py --app-directory 'C:\AI\LocalDictation\app' --output-directory 'C:\AI\build\Local-Dictation\msi-pilot-20261110\installer'
+py -B scripts/build_client_msi.py --app-directory 'C:\path\to\historical-client-publish' --output-directory 'C:\AI\build\Local-Dictation\msi-pilot-20261110\installer'
 ~~~
 
 The output directory must not already exist. The builder copies only the explicit
@@ -60,7 +81,7 @@ installer\
     package-info.json
     app\
         LocalDictation.exe
-        ...ten other required client files
+        ...other files from the fixed legacy allowlist
 ~~~
 
 The MSI alone is not a self-contained distribution.
@@ -92,7 +113,7 @@ An admin approval authorizes installation, not a change to company security poli
 ## Verify separately
 
 1. Check the installer exit/result and log.
-2. Confirm all eleven files, the common shortcut and product registration.
+2. Confirm the historical package manifest's files, the common shortcut and product registration.
 3. Launch the client as Peter with --no-hotkey, while TypeWhisper remains usable.
 4. Verify an actual responsive native window. A registered MSI alone is not proof
    that Defender permits execution or that dictation works.

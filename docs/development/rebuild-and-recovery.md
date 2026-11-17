@@ -75,10 +75,31 @@ Release output into the separate app folder. It can use already cached packages;
 otherwise configured package feeds must be reachable. It does not start the
 client/API, capture audio, or replace the existing installed application.
 
+Without -AppDirectory, output is client-candidate beneath the selected BuildRoot
+(default C:\AI\build\Local-Dictation\client-candidate). Build is not deployment.
+Both build and publish output must be separate from the installed app, checkout,
+configured-PC data/backend locations, and running client directories. Junction
+and symbolic-link aliases are rejected. Client paths are checked before tests
+and again before publish; an inspection failure stops the build. Do not launch
+a client from the output while building. The script never terminates a process.
+
+Build.ps1 runs Core tests and publish only. It does not run backend, detached WPF
+or deployment tests. Build-script and historical MSI contract tests run separately:
+
+~~~powershell
+py -B -m unittest discover -s tests/deployment -p 'test_*.py' -v
+~~~
+
+These use temporary fixtures and never install/launch the client or contact APIs.
+The [MSI pilot](msi-pilot.md) is obsolete for the current Material Design client;
+its contract tests are not current-installer acceptance. Use the complete publish
+folder for controlled client deployment until packaging is qualified again.
+
 Keep every published file together. `LocalDictation.exe` requires its adjacent
 assemblies/runtime configuration and the .NET 10 Windows Desktop runtime.
 `Help.html` is included. No prebuilt executable or installer is required as input.
 
+The client can start a missing session API using the existing candidate environment.
 The development Start local service action resolves the checkout that built
 that EXE. Rebuilding from the new checkout records the new location; it does not
 depend on a linked worktree called native-windows. If that source is later removed,
@@ -153,13 +174,16 @@ here; keep agent workflow/safety constraints in AGENTS.md.
 2. Keep automated policy/controller results distinct from microphone and native
    destination acceptance. Diagnostic instructions are in `diagnostics/*/README.md`.
 3. Finish active dictation and exit the installed client normally so it can save.
-4. Replace the app folder files, preserving external settings/history/models.
-5. Launch normally for shortcut testing. Use F1 in Settings to verify Help.
+4. Verify the client process ended, back up its complete payload, then replace
+   the app folder files. Preserve external settings/history/models and API processes.
+5. Launch normally for shortcut testing. Use Help or F1 in the main window to
+   verify the offline guide.
 
 Outlook and Codex-field insertion are Peter's manual acceptance tests. The
 delivery incident update passed all 15 controlled native delivery checks;
 passing synthetic fields is not a substitute for a particular application's
-acceptance. See delivery-incident-validation-20261111.md for the current evidence.
+acceptance. See native-acceptance-20261113.md for the prepared-Review Outlook
+check and its limits.
 
 When testing a failed native destination, optionally launch the client with
 LOCAL_DICTATION_DELIVERY_DIAGNOSTICS=1 in its process environment. This enables

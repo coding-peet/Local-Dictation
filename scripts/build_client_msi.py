@@ -1,4 +1,7 @@
-"""Build a Windows Installer pilot from an existing flat client publish.
+"""OBSOLETE MSI PILOT: not compatible with the current Material Design client.
+
+The fixed legacy payload omits current dependencies. Do not install/distribute
+its output for current builds. See docs/development/msi-pilot.md.
 
 Uses Windows Installer and CopyFileW only. No installation, client execution,
 security-policy changes, certificate changes, data migration, or downloads.

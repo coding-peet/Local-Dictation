@@ -3,49 +3,54 @@
 Windows dictation with local Whisper transcription, optional verification,
 compact phrase Review, and protected transcript/audio history.
 
-The client uses C# / WPF. The separate Python API uses original Transformers
-Whisper models in FP16. The published EXE and its adjacent files are generated
-from this repository; model weights and personal data are stored separately.
-
-## Latest installed build: 13 November 2026
-
-Version `0.1.0-layout.20261113.1` is installed and running in
-C:\Git\Local-Dictation\app, with session API 48125 ready.
-
-The selected second History design keeps a compact header and named side menu.
-Short list previews leave more room for the selected transcript. Open Review,
-Copy text and More actions belong to the detail; playback spans both columns.
-Change language, Save audio and Delete are in More. The menu keeps its labels
-at narrow widths, where the History list stacks above the transcript.
-
-Models retains separate Installed models and Add model cards. Test and Remove
-use the installed table selection. Removal is limited to app-owned managed
-files; shared TypeWhisper originals are retained. Unfinished Review text appears
-in History with status, including text-only recovery beyond the audio limit.
-The compact player retains its fixed-scale RMS waveform.
-
-Layout validation: 443 Core tests and 78 windowless UI/controller checks passed.
-All 17 installed files and backups were hash-verified. Current settings stayed
-byte-identical after launch, and the startup version was confirmed. Both API
-listener states were preserved; no API restart or model operation was needed.
-The earlier usability update passed 175 backend tests; this layout update does
-not change backend or transcription behavior.
-
-No desktop control, microphone capture or playback was used for this update.
-Native insertion and actual device playback remain manual acceptance checks.
-See [named-menu layout validation](docs/development/named-menu-layout-20261113.md)
-and [earlier usability validation](docs/development/usability-20261113.md).
+The client uses C# / WPF and Material Design controls. The separate Python API
+uses original Transformers Whisper models in FP16. Published client files are
+generated from this repository; model weights and personal data stay outside Git.
 
 ## Start here
 
-- [Current product requirements](docs/PRODUCT_REQUIREMENTS.md): user input and
-  current expected behavior.
-- [Agent instructions](AGENTS.md): what a new agent must read and preserve.
+- [Product requirements](docs/PRODUCT_REQUIREMENTS.md): current expected behavior.
+- [Offline user Help](src/LocalDictation.App/Help/index.html): published as
+  Help.html; open it with Help or F1 in the app's main window.
 - [Fresh checkout, build, and recovery](docs/development/rebuild-and-recovery.md):
-  rebuild without the original worktree or old chat.
-- [Offline user Help](src/LocalDictation.App/Help/index.html): also published as
-  Help.html and opened by F1 in Settings.
+  prerequisites, service setup and safe client replacement.
+- [Agent instructions](AGENTS.md): development constraints and verification.
 - [Workspace and data locations](docs/development/workspace-layout.md).
+
+## Current workflows
+
+The main sections are General, Models, Dictation and History. A normal manual
+launch opens Dictation. Record/Stop and Help remain available across sections.
+
+- **General:** opt-in Start with Windows, appearance, global shortcut, recording
+  retention, and Advanced local-service controls. Start with Windows registers
+  the current user's client and opens it in the tray after sign-in.
+- **Models:** manage installed and available models. Choose the active dictation
+  and verification model roles in Dictation.
+- **Dictation:** choose microphone, language, After recording, live transcription
+  and verification. Advanced contains the personal dictionary and application
+  compatibility controls. Dictionary recognition hints and corrections remain
+  disabled pending runtime qualification and paired quality evaluation.
+- **History:** search saved text, reopen Review, copy text, and manage retained
+  audio. Filters opens a floating draft panel beside search. Apply commits the
+  conditions; Cancel, Escape or outside click discards the draft. Only active
+  filters occupy a chip row; Clear filters preserves the search text.
+
+Choose **Insert directly** to return completed text to a validated original
+field when the workflow permits it. **Preview first** waits for explicit Insert.
+Verification can require wording choices; further transcripts also require
+explicit Insert. Unsupported or changed destinations stop automatic delivery.
+Nothing submits a message or sends the inserted text.
+
+**History -> Import audio** processes files serially without microphone capture
+or automatic insertion. Per-file errors explain what to correct; earlier
+successful imports and any recoverable partial text remain available. Supported
+formats depend on the capabilities of the already running session API.
+
+**Private for next microphone recording** keeps its transcript in memory rather
+than saved History or pending storage. A selector lets you choose among pending
+private transcripts and explicitly open Review. Exit warns before discarding
+private work. Imports do not consume the one-shot private choice.
 
 ## Build the Windows client
 
@@ -53,143 +58,136 @@ Prerequisites: Windows x64, a .NET 10 SDK, and access to the NuGet packages.
 Running the resulting app requires the .NET 10 Windows Desktop runtime.
 Python, a GPU, and model weights are not required to compile the client.
 
-Work directly in `C:\Git\Local-Dictation\repo`, using ordinary branches in
-that folder. Do not create additional worktrees. From the checkout root:
+Work in C:\Git\Local-Dictation\repo with ordinary branches. Do not create
+additional worktrees. From the checkout root:
 
 ~~~powershell
-.\scripts\Build.ps1 -AppDirectory 'C:\Git\Local-Dictation\candidate'
+.\scripts\Build.ps1
 ~~~
 
-This runs Core tests and publishes Release output. The default SDK is
-`C:\AI\tools\dotnet-10.0.403\dotnet.exe`; use `-DotnetPath` for another installed
-.NET 10 SDK. Override `-BuildRoot` for a separate validation output directory.
-The default app output, without `-AppDirectory`, is
-`C:\Git\Local-Dictation\app`.
+This restores packages as needed, runs Core tests, and publishes Release output
+into C:\AI\build\Local-Dictation\client-candidate. It does not launch the client,
+start/restart an API, capture audio, change startup registration, or deploy files.
 
-Keep the entire published folder together, including DLLs, runtime configuration
-and Help.html. This is a framework-dependent application, not a single-file
-self-contained EXE or installer. Build does not launch or update a running app.
-Publish to a candidate folder before replacing an installed client.
+To use another installed SDK or separate build/output folders:
+
+~~~powershell
+.\scripts\Build.ps1 `
+    -DotnetPath C:\AI\tools\dotnet-10.0.403\dotnet.exe `
+    -BuildRoot C:\AI\build\Local-Dictation-restore `
+    -AppDirectory C:\Git\Local-Dictation\candidate-restore
+~~~
+
+The default AppDirectory is always client-candidate beneath the selected
+BuildRoot. Build refuses output overlapping the installed app, source checkout,
+configured-PC data/backend locations, or a running client's directory. It also
+rejects junction/symbolic-link output paths. If client identity cannot be checked,
+it stops without publishing. No process is terminated. These checks are a guard,
+not a lock: do not launch a client from the output folder during a build.
+
+Keep the complete published folder together, including Material Design DLLs,
+runtime configuration and Help.html. This is a framework-dependent application,
+not a single-file self-contained EXE or a supported MSI distribution.
+
+Deployment is separate: finish active work, exit the installed client normally
+through tray -> Exit, verify it has ended, back up the installed payload, and
+replace it from the candidate. Preserve external settings, History, models and
+API processes. See the recovery guide for details.
 
 ## Run on the configured development PC
 
-1. Start the session API from the checkout that owns its source.
+Launch the published client normally:
 
 ~~~powershell
-.\scripts\Start-CandidateServer.ps1
-Invoke-RestMethod http://127.0.0.1:48125/health
+& 'C:\AI\build\Local-Dictation\client-candidate\LocalDictation.exe'
 ~~~
 
-Wait for `ready=true`. The script uses the existing candidate Python environment
-and original model files. It does not restart the separate production API on
-8123. See the recovery guide if dependencies have not been prepared.
+Do not run a candidate alongside the installed client. The client preserves an
+existing session API listener. If no listener is present, its local-service
+startup uses the configured checkout and existing candidate Python environment;
+see the recovery guide to prepare missing dependencies or start it manually.
+Building the client does not prepare that environment or download models.
 
-2. Launch the published client normally for shortcut testing.
+Select microphone, model and language in Dictation. Configure the shortcut in
+General. The default is Ctrl+Shift; quit TypeWhisper before using that same
+shortcut here. Start from the desired editable destination field. Preview first
+provides an explicit review step before insertion.
+
+`--no-hotkey` is available for an isolated UI check; it does not guarantee that
+service initialization is disabled. `--startup` is the tray-only Windows startup
+mode. F1 in the main window opens the offline Help.
+
+## Validation and remaining acceptance
+
+The [17 November filter validation](docs/development/history-filter-popover-20261117.md)
+records 640 Core tests, 216 detached WPF checks and 185 synthetic backend tests.
+These are dated results for that candidate, not a statement about the version
+currently installed or which source a running API has loaded.
+
+Build.ps1 runs Core tests and publish. It does not run the detached WPF,
+backend or deployment test suites. The build-script and historical MSI contract
+checks can be run without launching a client, installing an MSI or contacting APIs:
 
 ~~~powershell
-& 'C:\Git\Local-Dictation\candidate\LocalDictation.exe'
+py -B -m unittest discover -s tests/deployment -p 'test_*.py' -v
 ~~~
 
-`--no-hotkey` is available for an isolated UI check. Configure the microphone,
-models, language and shortcut in Settings. F1 opens Help. The default shortcut
-is Ctrl+Shift; quit TypeWhisper before using the same shortcut here.
+Backend tests use the existing candidate environment and synthetic inputs:
 
-3. Start with the shortcut from an editable destination field. Live insertion
-can be enabled or disabled independently of live transcription. After normal
-completion, the final text returns to the original valid field. Verification
-differences stay in the compact banner: choose the wording for each underlined
-phrase, and the last choice inserts the result. Details opens the optional full
-editor. Nothing is submitted.
+~~~powershell
+$env:VIRTUAL_ENV = 'C:\AI\build\Local-Dictation\server-env'
+py -B -m unittest discover -s server -p 'test_*.py' -v
+~~~
+
+Automated and detached checks do not prove microphone quality, physical latency,
+playback, real popup focus/calendar interaction, Windows sign-in startup, or
+insertion into a particular application. Keep those acceptance checks separate.
+The older [Outlook check](docs/development/native-acceptance-20261113.md) verified
+insertion of prepared Review text, not automatic Finish from a new recording.
+Acoustic evaluation and dictionary activation remain deferred.
+
+The [Windows Installer pilot](docs/development/msi-pilot.md) is obsolete for the
+current client. Its fixed payload omits Material Design dependencies. Do not use
+its MSI to install or distribute this build; passing its fixture-based contract
+tests does not prove current payload completeness or successful installation.
 
 ## Data and deployment boundaries
 
 | Purpose | Location on this PC |
 | --- | --- |
 | Canonical source | C:\Git\Local-Dictation\repo |
-| Working branch in this folder | feature/native-windows; ordinary branches, no new worktrees |
-| Installed app folder | C:\Git\Local-Dictation\app |
-| Settings, Pending Review, transcripts and retained audio | C:\AI\LocalDictation\data |
+| Implementation branch before integration | feature/native-windows |
+| Installed app | C:\Git\Local-Dictation\app |
+| Settings, pending Review, transcripts and retained audio | C:\AI\LocalDictation\data |
 | Operational logs and diagnostics | C:\AI\LocalDictation\logs and diagnostics |
-| Candidate environment and compiler output | C:\AI\build\Local-Dictation |
-| Candidate registry/imported model data | C:\AI\LocalDictation\server-data and models |
-| Existing production backend and original models | C:\AI\PalaNote-ASR |
+| Build output and candidate environment | C:\AI\build\Local-Dictation |
+| Candidate registry/imported models | C:\AI\LocalDictation\server-data and models |
+| Existing production backend/original models | C:\AI\PalaNote-ASR |
 
-History and Pending Review use current-user Windows DPAPI. Deleting source is
-not a data backup or migration. A fresh Git checkout restores source, not model
-weights, environments, recordings, or keys needed by another Windows account.
+History, retained audio and pending Review use current-user Windows DPAPI.
+A Git checkout restores source, not private data, environments, models or keys
+needed by another Windows account. General settings and explicit exports are
+ordinary files. Private transcripts remain in memory only.
 
-## Earlier validation milestones
-
-These dated milestones describe earlier candidates. The installed-build summary,
-current product requirements and pre-commit verification above define the latest
-state and its remaining acceptance limits.
-
-The [earlier live cursor repair](docs/development/live-cursor-value-range-20261112.md)
-addresses empty-field projection and owned-range lookup failures. That snapshot passed
-281 Core tests and Release builds. Current native GREEN is blocked by the
-company ASR rule on the new diagnostic EXE; real application acceptance is pending.
-The first candidate failed Peter's test and its earlier counts are superseded.
-
-The live-quality and cursor-acknowledgement update is installed under
-C:\Git\Local-Dictation\app, with candidate session API 48125. It passed
-116 backend tests, 84 Core tests, 31 benchmark/report tests, 18 controlled native
-WPF delivery checks, and all nine actual production-path model/recording replays.
-Ten alternative policies produced 90 measured outputs plus nine baseline controls;
-the selected policy preserves original audio and refines the complete recording.
-See [live-quality validation](docs/development/live-quality-validation-20261111.md)
-for anonymous metrics, exact evidence boundaries and deployment verification.
-
-A follow-up added three dedicated paired-schedule agents and 27 measured outputs,
-for 126 total. All outputs were rescored with three supplied/corrected wording
-references (257 normalized words). The adaptive whole-final KInIT combination
-remains the recommendation for this small workload; longer context does not
-improve every profile. See [paired-schedule validation](docs/development/dual-lane-validation-20261112.md)
-for the ranking, pre-final comparison, latency and reference-provenance limits.
-Agreement with model controls is consistency, not independent accuracy. Replay
-timing is not physical microphone latency. Positive Chrome insertion and visible F1 Help
-inspection remain unvalidated after the application-control turn stopped.
-Outlook and Codex insertion still require Peter's application acceptance.
-Static offline Help checks passed. Historical checks are recorded in
-[delivery incident validation](docs/development/delivery-incident-validation-20261111.md)
-and [UI update validation](docs/development/ui-usability-validation-20261111.md).
-
-The [Outlook investigation](docs/development/outlook-delivery-investigation-20261112.md)
-records the physical Notepad acceptance and the remaining Outlook confirmation
-mismatch. Avoiding redundant caret selection passes 19 native regression cases;
-focused-provider/text-shape diagnostics pass nine pure checks and the windowless
-MTA worker passes six. An earlier Outlook candidate received the first partial, then a
-one-character projected-document difference blocked complete dictation.
-That historical first-paste difference remains distinct from the later owned-range
-correction failure.
-
-The current [Outlook delivery update](docs/development/owned-range-repair-20261112.md)
-keeps desktop Outlook's live wording in the banner and returns the completed text
-once after Finish and any required choices. Other apps retain the saved live
-insertion preference. Exact owned-range construction passes 23/23 native fixture
-checks, Core passes 125/125, and controller/Review checks pass 35/35. Actual Outlook
-acceptance remains separate from those controlled fields and synthetic checks.
+Open **General -> History -> Keep recordings for** to change audio retention.
+The default is 7 days. Expiry removes audio only; transcripts, edits and saved
+Review choices remain until explicit deletion. Forever keeps recordings until
+deletion. A longer retention period cannot restore audio already removed.
 
 ## Repository layout
 
 ~~~text
-src/LocalDictation.App/          WPF client, icon, offline Help, Windows services
-src/LocalDictation.Core/         Protocol, Review, settings, history and ownership
-tests/                          Core and packaging tests
+src/LocalDictation.App/          WPF client, Windows services, icon and offline Help
+src/LocalDictation.Core/         Protocol, Review, settings, History and ownership
+tests/                          Core, build and packaging tests
 server/                         Batch engine, session API, model registry/tests
 scripts/                        Build and candidate API lifecycle
-diagnostics/                    Controlled diagnostic source and probe instructions
-docs/PRODUCT_REQUIREMENTS.md     Current user input specification
-docs/development/               Setup, recovery, validation and limitations
-docs/superpowers/               Decision history, designs and implementation plans
-docs/prototypes/                Design references and synthetic native previews
+diagnostics/                    Controlled probes and their acceptance limits
+docs/PRODUCT_REQUIREMENTS.md     Current user requirements
+docs/development/               Setup, recovery and dated validation records
+docs/superpowers/               Designs and implementation plans
+docs/prototypes/                Design references and synthetic previews
 ~~~
 
-## Recording retention
-
-Open Settings / History / Keep recordings for. The default is 7 days. Transcripts,
-edits and saved Review choices remain until you delete the dictation. Only expired
-recordings are removed automatically; those items become Text only. Forever keeps
-recordings until deletion. A longer period cannot recover audio already removed.
-
-The previous count20 eviction is replaced by this audio-only lifetime policy.
-See docs/PRODUCT_REQUIREMENTS.md for the current behavior and native-test limits.
+Older reports under docs/development describe the candidate/date named in each
+report. They do not supersede current requirements or certify a later deployment.
