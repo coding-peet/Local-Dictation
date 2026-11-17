@@ -102,11 +102,11 @@ static class HistoryIntegrationChecks
             TextBlock Text(string label)=>(TextBlock)ui.GetMethod("Text",BindingFlags.Static|BindingFlags.Public)!.Invoke(null,[label,12d,false])!;
             var nav=new ListBox();var record=Button("Record",true);var help=Button("Help");
             var connection=Text("Ready · Local transcription");var saved=Text("Saved automatically");var alert=Text("");
-            using(var shell=new MainWindowShell(nav,[new Border(),new Border(),page,new Border()],record,help,connection,saved,alert))
+            using(var shell=new MainWindowShell(nav,[new Border(),new Border(),new Border(),page],record,help,connection,saved,alert))
             {
                 try
                 {
-                    nav.SelectedIndex=2;Layout(shell,1040,760);
+                    nav.SelectedIndex=(int)MainSection.History;Layout(shell,1040,760);
                     Require(shell.StatusBar.ActualHeight<=72&&shell.StatusArea.Visibility==Visibility.Collapsed,"Normal status bar did not stay compact.");
                     Require(transcript.ActualHeight>=300&&transcript.ActualHeight+searchToolbar.ActualHeight>=380,$"History content height regressed: transcript={transcript.ActualHeight}, page={page.ActualHeight}.");
                     Require(nav.Items.OfType<ListBoxItem>().Select(i=>(TextBlock)i.Content).All(t=>t.Visibility==Visibility.Visible)&&nav.ActualWidth>=144,"Named navigation was hidden or collapsed.");

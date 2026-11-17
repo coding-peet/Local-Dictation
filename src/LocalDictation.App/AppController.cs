@@ -357,7 +357,7 @@ public sealed partial class AppController : IDisposable
         banner=new BannerWindow(this);
         var menu=new Forms.ContextMenuStrip();
         menu.Items.Add("Start / stop dictation",null,(_,_)=>Toggle());
-        menu.Items.Add("Settings",null,(_,_)=>ShowSettings());
+        menu.Items.Add("Open Local Dictation",null,(_,_)=>ShowSettings());
         menu.Items.Add("History",null,(_,_)=>ShowHistory());
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Exit",null,(_,_)=>Exit());

@@ -45,7 +45,7 @@ public static class HistoryRetentionChecks
             var entry=Get<ListBox>(shell.Search,"results").Items.Cast<SettingsSearchEntry>().SingleOrDefault(e=>e.Id=="history-retention");
             Require(entry!=null,"Retention cannot be found through settings search.");
             typeof(SettingsWindow).GetMethod("OpenSearchSetting",Fields)!.Invoke(window,[entry]);
-            Require(shell.Navigation.SelectedIndex==3&&!shell.Search.IsQueryActive&&JsonSerializer.Serialize(owner.Settings)==before,"Retention search changed the policy or missed Settings.");
+            Require(shell.Navigation.SelectedIndex==(int)MainSection.General&&!shell.Search.IsQueryActive&&JsonSerializer.Serialize(owner.Settings)==before,"Retention search changed the policy or missed General.");
             foreach(var width in new[]{640,1040})
             {
                 Layout(frame,width);

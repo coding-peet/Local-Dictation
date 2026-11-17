@@ -80,7 +80,7 @@ static class ModelsUsabilityChecks
         Layout(page,760,720);Save(page,760,720,Path.Combine(output,"models-simple-"+theme+".png"));checks.Add("plain installed/add model blocks "+theme);
         Layout(page,448,640);Verify("Live model status fits without compact horizontal overflow",()=>VerifyLiveStatus(grid));
         Save(page,448,640,Path.Combine(output,"models-simple-compact-"+theme+".png"));checks.Add("selected model management and compact layout "+theme);
-        var nav=new ListBox();foreach(var label in new[]{"Dictation","Models","History","Settings"})nav.Items.Add(label);Set(window,"navigation",nav);window.SelectHistory();
+        var nav=new ListBox();foreach(var label in new[]{"General","Models","Dictation","History"})nav.Items.Add(label);Set(window,"navigation",nav);window.SelectHistory();
         Require(nav.SelectedItem?.ToString()=="History"&&typeof(SettingsWindow).GetMethod("ReviewPage",Fields)==null,"History navigation still depends on the removed Pending Review page.");checks.Add("single History destination "+theme);
         Require(failures.Count==0,string.Join(Environment.NewLine,failures));
     }

@@ -80,10 +80,14 @@ static class Program
             {
             DeleteDialogChecks.Run(output,checks);
             ShellPlacementChecks.Run(output,checks);
+            GeneralStartupChecks.Run(output,checks);
             CompatibilityStatusChecks.Run(output,checks);
             HistoryLayoutChecks.Run(output,checks);
             HistorySearchChecks.Run(output,checks);
+            HistoryFilterPopoverChecks.Run(output,checks);
+            ImportFailureLayoutChecks.Run(output,checks);
             PrivateFlowChecks.Run(output,checks);
+            PrivateTranscriptPickerChecks.Run(output,checks);
             DictionaryDraftChecks.Run(output,checks);
             SettingsContextHelpChecks.Run(output,checks);
             PickerKeyboardChecks.Run(output,checks);

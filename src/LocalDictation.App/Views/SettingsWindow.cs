@@ -18,7 +18,7 @@ public sealed partial class SettingsWindow : Window
     readonly MainWindowShell shell;
     readonly ListBox navigation=new(){VerticalAlignment=VerticalAlignment.Stretch};
     HistoryPanel? historyPanel;
-    public void SelectHistory()=>navigation.SelectedIndex=2;
+    public void SelectHistory()=>navigation.SelectedIndex=(int)MainSection.History;
     readonly TextBlock connection=Ui.Text(""), shortcut=Ui.Text(""), message=Ui.Text(""), importStatus=Ui.Text(""), modelStatus=Ui.Text(""), verificationStatus=Ui.Text(""), saveStatus=Ui.Text("");
     readonly TextBox endpoint=new(), repository=new();
     readonly Button shortcutValue;
@@ -67,9 +67,9 @@ public sealed partial class SettingsWindow : Window
         Title="Local Dictation";Width=1040;Height=820;MinWidth=640;MinHeight=620;
         WindowStartupLocation=WindowStartupLocation.CenterScreen;
         record=Ui.Button("Record",RecordInBanner,true);
-        var pages=new[]{DictationPage(),ModelsPage(),HistoryPage(),PreferencesPage()};
+        var pages=new[]{GeneralPage(),ModelsPage(),DictationPage(),HistoryPage()};
         shell=new MainWindowShell(navigation,pages,record,Ui.Button("Help",OpenHelp),
-            connection,saveStatus,message,index=>historyPanel?.SetActive(index==2));
+            connection,saveStatus,message,MainSectionSelected);
         Content=shell;
         ConfigureSettingsSearch();
         ConfigureShortcutCapture();
@@ -87,7 +87,8 @@ public sealed partial class SettingsWindow : Window
         }
         saveDelay.Tick+=(_,_)=>CommitTextEdits();
         repository.TextChanged+=(_,_)=>{inspection=null;download.IsEnabled=false;};
-        Refresh(true);UpdateSaveStatus();
+        Refresh(true);RefreshStartup();UpdateSaveStatus();
+        Activated+=(_,_)=>RefreshStartup();
         ResumeDownload();
     }
 
@@ -152,40 +153,7 @@ public sealed partial class SettingsWindow : Window
         Ui.Label(verificationDetails,"Verification model",verifier);
         verificationStatus.FontSize=12;verificationStatus.SetResourceReference(TextBlock.ForegroundProperty,"Muted");verificationDetails.Children.Add(verificationStatus);
         Ui.SettingsGroup(verificationDetails);verificationDetails.Margin=new(24,8,24,0);page.Children.Add(verificationDetails);
-        return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,MaxWidth=880,HorizontalAlignment=HorizontalAlignment.Stretch};
-    }
-
-    UIElement PreferencesPage()
-    {
-        var page=new StackPanel{Margin=new(0,8,8,0)};
-        var appearance=new StackPanel();appearance.Children.Add(Ui.Text("Appearance",18,true));
-        Ui.Label(appearance,"Color theme",theme,"System follows Windows. Light and Dark override it.");
-        page.Children.Add(Section(appearance));
-        page.Children.Add(Section(ShortcutSection()));
-        page.Children.Add(Section(HistorySection()));
-        page.Children.Add(Section(DictionarySection()));
-        var service=new StackPanel();service.Children.Add(Ui.Text("Local transcription service",18,true));
-        Ui.Label(service,"Local service address",endpoint,"The session service supplies your installed models and transcriptions.");
-        service.Children.Add(Ui.Row(Ui.Button("Reconnect",()=>_ = Reconnect()),Ui.Button("Start local API",()=>_ = controller.StartLocalApi())));
-        page.Children.Add(Section(service));
-        var delivery=new StackPanel();delivery.Children.Add(Ui.Text("Application compatibility",20));
-        delivery.Children.Add(Ui.Text("Outlook inserts after Finish. Apps with a failed live insertion use final-only delivery on the next recording.",14));
-        delivery.Children.Add(compatibility);
-        resetCompatibility=Ui.Button("Re-enable live insertion for remembered apps",()=>
-        {
-            try
-            {
-                var saved=controller.ResetDeliveryCompatibility();Refresh();
-                if(!saved)message.Text=compatibilityWarning=controller.ConnectionMessage;
-                else
-                {
-                    if(message.Text==compatibilityWarning)message.Text="";
-                    compatibilityWarning="";
-                }
-            }
-            catch(Exception ex) when(ex is IOException or UnauthorizedAccessException){message.Text=compatibilityWarning="Could not save compatibility settings. "+ex.Message;}
-        });
-        resetCompatibility.HorizontalAlignment=HorizontalAlignment.Left;delivery.Children.Add(resetCompatibility);page.Children.Add(Section(delivery));
+        page.Children.Add(DictationAdvancedSection());
         return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,MaxWidth=880,HorizontalAlignment=HorizontalAlignment.Stretch};
     }
 
@@ -320,7 +288,7 @@ public sealed partial class SettingsWindow : Window
                 language.SelectedItem=controller.Settings.Language;LoadMicrophones();
             }
             UpdateModelChoices(false);
-            UpdateOutputDependencies();UpdateShortcutOptions();RefreshHistoryOptions(initial);RefreshPrivate();
+            UpdateOutputDependencies();UpdateShortcutOptions();RefreshHistoryOptions(initial);RefreshPrivate();RefreshAdvancedStatus();
             UpdateSaveStatus();
             var selectedInstalled=SelectedInstalledModel()?.Id;
             var installed=controller.Models.Where(m=>m.Installed).Select(m=>new InstalledModelRow(m)).ToList();

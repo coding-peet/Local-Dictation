@@ -23,7 +23,7 @@ public static class DictionaryDraftChecks
         var store=new PersonalDictionaryStore(testRoot);
         var owner=ReviewWorkflowChecks.Controller(output,new ReviewDocument());Set(owner,"noHotkey",true);Set(owner,"dictionaryStore",store);
         var window=Window(owner);
-        var navigation=Get<ListBox>(window,"navigation");navigation.SelectedIndex=3;
+        var navigation=Get<ListBox>(window,"navigation");navigation.SelectedIndex=(int)MainSection.Dictation;Get<Expander>(window,"dictationAdvanced").IsExpanded=true;
         var shell=(MainWindowShell)window.Content;shell.Measure(new(1040,820));shell.Arrange(new Rect(0,0,1040,820));shell.UpdateLayout();SettingsHelpChecks.SettleForRender(shell);
         var page=(ScrollViewer)shell.PageHost.Content;var hints=Get<TextBox>(window,"dictionaryHints");
         page.ScrollToVerticalOffset(Math.Max(0,hints.TranslatePoint(new Point(),(UIElement)page.Content).Y-120));shell.UpdateLayout();SettingsHelpChecks.SettleForRender(shell);

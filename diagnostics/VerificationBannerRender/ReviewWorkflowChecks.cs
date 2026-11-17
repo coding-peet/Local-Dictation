@@ -49,6 +49,8 @@ static class ReviewWorkflowChecks
         if(worker!=null)Property(controller,"History",new List<HistoryEntry>());
         var input=(GlobalInput)RuntimeHelpers.GetUninitializedObject(typeof(GlobalInput));Property(input,"Epoch",new DestinationEpoch());Set(input,"commands",new InputCommands());Set(controller,"input",input);
         Set(controller,"insertionForegroundWindow",(Func<nint>)(()=>42));if(worker!=null)Set(controller,"automation",worker);
+        Property(controller,"PersonalDictionaryStatus","Recognition hints and exact corrections are off until paired evaluation is complete.");
+        GeneralStartupChecks.Inject(controller);
         return controller;
     }
     public static void Insertion(string output,List<string> checks)

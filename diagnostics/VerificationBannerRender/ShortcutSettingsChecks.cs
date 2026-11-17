@@ -47,7 +47,7 @@ static class ShortcutSettingsChecks
         var window=(SettingsWindow)ctor.Invoke([owner,false]);
         try
         {
-            Get<ListBox>(window,"navigation").SelectedIndex=3;
+            Get<ListBox>(window,"navigation").SelectedIndex=(int)MainSection.General;
             Require(Get<ComboBox>(window,"primary").Items.Cast<ModelInfo>().All(m=>m.Installed),"Dictation offers uninstalled models that cannot be saved.");
             var field=Get<System.Windows.FrameworkElement>(window,"shortcutValue");
             Require(field is Button,"The shortcut setting is still presented as a text field instead of an explicit keycap recorder.");
@@ -110,7 +110,7 @@ static class ShortcutSettingsChecks
             finally{listener.Stop();}
             Require(new WindowInteropHelper(window).Handle==0,"Shortcut settings checks created a native window.");
             checks.Add("routed shortcut persistence, command isolation, invalid/Escape/Tab/focus-loss handling and existing-listener probe without native input");
-            Get<ListBox>(window,"navigation").SelectedIndex=3;
+            Get<ListBox>(window,"navigation").SelectedIndex=(int)MainSection.General;
             var root=(System.Windows.FrameworkElement)window.Content;
             void SaveState(string theme,string state)
             {

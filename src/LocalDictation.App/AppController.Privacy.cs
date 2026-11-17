@@ -1,13 +1,38 @@
+using System.Globalization;
+using System.Text;
 using System.Windows;
 using LocalDictation.Core;
 namespace LocalDictation.App;
+
+public sealed record PrivateTranscriptChoice(string Id,DateTimeOffset Created,string Preview)
+{
+    public string Label=>$"{Created.LocalDateTime:g} · {Preview}";
+}
 
 public sealed partial class AppController
 {
     Dictionary<string,ReviewDocument>? privateReviews;
     public bool PrivateNextRecording {get;private set;}
     public bool IsPrivateSession=>active?.Review.IsPrivate==true||BannerReview?.IsPrivate==true;
-    public int PrivateReviewCount=>privateReviews?.Values.Count(d=>d.InsertedAt==null&&d.OutputText.Length>0)??0;
+    static bool IsPendingPrivateReview(ReviewDocument document)=>document.IsPrivate&&document.InsertedAt==null&&document.OutputText.Length>0;
+    IEnumerable<ReviewDocument> PendingPrivateReviews=>privateReviews?.Values.Where(IsPendingPrivateReview)??[];
+    public int PrivateReviewCount=>PendingPrivateReviews.Count();
+    public bool CanOpenPrivateReviews=>!IsBusy&&!IsApplyingReview&&!exiting&&reviewWindow?.IsApplying!=true;
+    public IReadOnlyList<PrivateTranscriptChoice> PrivateReviewChoices=>Array.AsReadOnly(PendingPrivateReviews
+        .OrderByDescending(d=>d.Created).ThenBy(d=>d.Id,StringComparer.Ordinal)
+        .Select(d=>new PrivateTranscriptChoice(d.Id,d.Created,PrivatePreview(d.OutputText))).ToArray());
+    static string PrivatePreview(string text)
+    {
+        var line=new StringBuilder();var separator=false;
+        foreach(var rune in text.EnumerateRunes())
+        {
+            if(Rune.IsWhiteSpace(rune)||Rune.IsControl(rune)){separator=line.Length>0;continue;}
+            if(separator){line.Append(' ');separator=false;}
+            line.Append(rune.ToString());
+        }
+        var preview=line.ToString();var elements=StringInfo.ParseCombiningCharacters(preview);
+        return elements.Length>72?preview[..elements[72]]+"…":preview;
+    }
     public bool SetPrivateNextRecording(bool enabled)
     {
         if(IsBusy||IsApplyingReview||exiting)return false;
@@ -23,11 +48,15 @@ public sealed partial class AppController
     {
         privateReviews??=[];privateReviews[document.Id]=document;
     }
+    public void OpenPrivateReview(string id)
+    {
+        if(!CanOpenPrivateReviews||string.IsNullOrEmpty(id))return;
+        if(privateReviews?.TryGetValue(id,out var document)==true&&IsPendingPrivateReview(document))OpenReview(document);
+    }
     public void OpenLatestPrivateReview()
     {
-        if(IsBusy)return;
-        var document=privateReviews?.Values.Where(d=>d.InsertedAt==null&&d.OutputText.Length>0).OrderByDescending(d=>d.Created).FirstOrDefault();
-        if(document!=null)OpenReview(document);
+        var choice=PrivateReviewChoices.FirstOrDefault();
+        if(choice!=null)OpenPrivateReview(choice.Id);
     }
     public void RequestDiscardPrivateReview(string id)
     {

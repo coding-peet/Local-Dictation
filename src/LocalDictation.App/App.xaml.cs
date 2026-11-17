@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Media;
+using LocalDictation.Core;
 
 namespace LocalDictation.App;
 
@@ -10,12 +11,14 @@ public partial class App : System.Windows.Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        var launch = WindowsStartupLaunchPolicy.FromArguments(e.Args);
         EventManager.RegisterClassHandler(typeof(Window),FrameworkElement.LoadedEvent,
             new RoutedEventHandler((sender,_)=>{if(sender is Window window)Services.ThemeManager.TitleBar(window);}));
         mutex = new Mutex(true, @"Local\LocalDictation.NativeClient", out var created);
         if (!created)
         {
-            MessageBox.Show("Local Dictation is already running. Open it from the system tray.","Local Dictation");
+            if (launch.ShowAlreadyRunningMessage)
+                MessageBox.Show("Local Dictation is already running. Open it from the system tray.","Local Dictation");
             Shutdown(); return;
         }
         Services.DeliveryDiagnostic.WriteSessionIfEnabled();
@@ -30,13 +33,13 @@ public partial class App : System.Windows.Application
         {
             args.Handled=true;
             controller?.EmergencyReview();
-            MessageBox.Show("An operation failed. Check History and Settings. If protected saving failed, copy the text before closing.",
+            MessageBox.Show("An operation failed. Check History and General. If protected saving failed, copy the text before closing.",
                             "Local Dictation",MessageBoxButton.OK,MessageBoxImage.Warning);
         };
         try
         {
             controller=new AppController(e.Args.Contains("--no-hotkey"));
-            controller.ShowSettings();
+            if (launch.ShowSettings) controller.ShowSettings();
             _=controller.InitializeConnection();
         }
         catch(Exception)

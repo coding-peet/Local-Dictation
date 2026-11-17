@@ -38,7 +38,7 @@ public sealed partial class AppController
     public void CancelAudioImport(){importCancel?.Cancel();Changed?.Invoke();}
     async Task RunAudioImport(string[] paths,Settings settings,CancellationTokenSource cancel)
     {
-        var queue=audioImportQueue!;var snapshots=new Dictionary<string,AudioImportSource>();var invalid=new HashSet<string>();
+        var queue=audioImportQueue!;var snapshots=new Dictionary<string,AudioImportSource>();var failures=new Dictionary<string,AudioImportException>();
         try
         {
             // Freeze every source identity before the first transcription. Only
@@ -48,11 +48,12 @@ public sealed partial class AppController
                 if(cancel.IsCancellationRequested)break;
                 try{snapshots[path]=await AudioImportSource.CaptureAsync(path,cancel.Token);}
                 catch(OperationCanceledException) when(cancel.IsCancellationRequested){break;}
-                catch(Exception){invalid.Add(path);}
+                catch(Exception error){failures[path]=new(AudioImportErrors.Message(error,AudioImportPhase.Preparation));}
             }
             await queue.RunAsync(async (path,token)=>
             {
-                if(invalid.Contains(path)||!snapshots.TryGetValue(path,out var source))throw new IOException("The selected file is unavailable or exceeds the import limit.");
+                if(failures.TryGetValue(path,out var failure))throw failure;
+                if(!snapshots.TryGetValue(path,out var source))throw new AudioImportException(AudioImportErrors.MissingFile);
                 var encoded=await source.ReadAsync(token);byte[]? normalized=null;
                 try
                 {

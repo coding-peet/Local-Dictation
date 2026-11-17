@@ -31,17 +31,18 @@ public sealed class AudioImportQueue(IEnumerable<string> paths,Func<ReviewDocume
         for(var i=0;i<paths.Length;i++)
         {
             if(token.IsCancellationRequested){Update(i,"Cancelled");continue;}
-            PreparedAudioImport? audio=null;ReviewDocument? document=null;var completed=false;var failed=false;string? failureMessage=null;
+            PreparedAudioImport? audio=null;ReviewDocument? document=null;var completed=false;string? failureMessage=null;string? savingFailure=null;var phase=AudioImportPhase.Preparation;
             try
             {
                 Update(i,"Preparing");audio=await prepare(paths[i],token);token.ThrowIfCancellationRequested();
                 document=createDocument?.Invoke()??new();document.RequiresExplicitInsert=true;
                 document.ImportedAudio=new(audio.FileName,audio.Sha256,audio.Pcm.Length/32000.0);
                 document.Reason="Imported audio. Open Review and choose Insert when ready.";documents.Add(document);
-                Update(i,"Transcribing");completed=await transcribe(audio,document,token);
+                phase=AudioImportPhase.Transcription;Update(i,"Transcribing");completed=await transcribe(audio,document,token);
+                if(!completed&&!token.IsCancellationRequested)failureMessage=AudioImportErrors.TranscriptionFailed;
             }
             catch(OperationCanceledException) when(token.IsCancellationRequested){}
-            catch(Exception error){failed=true;failureMessage=(error as AudioImportException)?.Message;}
+            catch(Exception error){failureMessage=AudioImportErrors.Message(error,phase);}
             finally
             {
                 try
@@ -50,13 +51,13 @@ public sealed class AudioImportQueue(IEnumerable<string> paths,Func<ReviewDocume
                     {
                         if(!completed)document.Reason="Audio import did not finish. Received text is preserved; review before inserting.";
                         Update(i,"Saving");
-                        try{await save(audio,document);}catch(Exception error){failed=true;failureMessage=(error as AudioImportException)?.Message;}
+                        try{await save(audio,document);}catch(Exception error){savingFailure=AudioImportErrors.Message(error,AudioImportPhase.Saving);}
                     }
                 }
                 finally{audio?.Dispose();}
             }
-            Update(i,failed?"Failed":token.IsCancellationRequested?"Cancelled":completed?"Completed":"Failed",
-                failed?failureMessage??"This file could not finish. Earlier results and original files are preserved.":!completed&&!token.IsCancellationRequested?"Transcription did not finish; check History for received text.":"");
+            var message=string.Join(" ",new[]{failureMessage,savingFailure}.Where(m=>m!=null));
+            Update(i,message.Length>0?"Failed":token.IsCancellationRequested?"Cancelled":completed?"Completed":"Failed",message);
         }
     }
 }

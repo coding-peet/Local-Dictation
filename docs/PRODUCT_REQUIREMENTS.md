@@ -1,7 +1,7 @@
 # Local Dictation product requirements
 
 Status: current input specification, consolidated from Peter's requests on
-10â€“14 November 2026. Update this document when the user changes a requirement.
+10-17 November 2026. Update this document when the user changes a requirement.
 Older design documents explain decisions; this file defines current behavior.
 
 ## Purpose and scope
@@ -26,7 +26,7 @@ punctuation, whitespace, and Unicode must be preserved.
   and links; preserve registry/files on persistence failure and report incomplete
   cleanup. Do not perform any real removal during automated tests or rollout.
 
-- Select the microphone, language, and installed Dictation model in Settings.
+- Select the microphone, language, and installed Dictation model in Dictation.
 - Keep live transcription and insertion of live text as independent options.
   After-recording transcription remains available when live mode is unavailable.
 - Models use original Transformers weights in FP16, without conversion or
@@ -40,7 +40,7 @@ punctuation, whitespace, and Unicode must be preserved.
   the effective language.
 - Distinguish installed, runtime-tested, quality-checked, and live-ready states.
   A successful download or test does not prove quality or live suitability.
-- The default shortcut is Ctrl+Shift. Make it configurable in Settings, with
+- The default shortcut is Ctrl+Shift. Make it configurable in General, with
   repeat suppression and a clear disabled/collision state.
   Keep Enable in the section heading, followed by one mutually exclusive choice:
   Press to start/stop (default), or Hold to record. Hold starts on the complete
@@ -66,7 +66,7 @@ punctuation, whitespace, and Unicode must be preserved.
   service running. This does not install a Windows service or a login task.
 - Do not repeat Local Dictation inside the client content; the native title bar
   already identifies the application. Put ordinary recording/connection state in
-  a compact bottom status bar, with routine saving feedback on Dictation/Settings.
+  a compact bottom status bar, with routine saving feedback on General/Dictation.
   Hide routine saving on History/Models/search; keep saving failures visible on
   every page. Routine action confirmations, including clearing remembered apps,
   use the normal bottom status text. Actionable global alerts remain expanded
@@ -172,12 +172,12 @@ punctuation, whitespace, and Unicode must be preserved.
 ## Banner and live cursor delivery
 
 - Use the named-menu desktop layout with a roughly 160-DIP navigation column
-  and visible Dictation/Models/History/Settings labels. Search is at the upper
+  and visible General/Models/Dictation/History labels. Search is at the upper
   left, level with the workspace; do not reserve a duplicate title/header row.
   Place Record above Help in the navigation footer, keeping both available on
   every page; Help is also available with F1. Use Record/Stop labels and explain
   Review recording from the app versus cursor delivery by shortcut. Let native
-  title-bar Close close Settings. Preserve autosave, recording and key behavior.
+  title-bar Close close the main window. Preserve autosave, recording and key behavior.
   Empty alerts take no space; actionable errors can wrap and expand.
 
 - Use Material Design 3 throughout the WPF application through the compatible
@@ -239,7 +239,7 @@ punctuation, whitespace, and Unicode must be preserved.
 - Remember terminal live transport/ack/range failures by executable name for later
   sessions. Use final-only delivery there while keeping live recognition enabled.
   Focus pauses, cancellation and user edits must not blacklist an application.
-  Offer Reset remembered apps in Settings; Outlook remains final-only after reset.
+  Offer Reset remembered apps in Dictation / Advanced; Outlook remains final-only after reset.
 - Prove that a captured UI Automation field belongs to the captured native window:
   use its nearest native host and require the same root window. Recheck that
   association before activation and insertion. A matching PID or text in another
@@ -438,7 +438,7 @@ punctuation, whitespace, and Unicode must be preserved.
   Load its protected audio only while History is selected; leaving the section
   stops/clears playback. Closing the main window disposes its player/subscriptions.
 
-- Keep transcripts until explicit deletion. In Settings / History, expose Keep
+- Keep transcripts until explicit deletion. In General / History, expose Keep
   recordings for with a 7-day default, 1/7/30/90-day and 1-year choices, and Forever.
   Persist AudioRetentionDays (0 Forever; valid 0..3650), preserving custom values.
   Missing settings migrate to 7 days. Replace the old 20-item eviction policy;
@@ -482,7 +482,7 @@ punctuation, whitespace, and Unicode must be preserved.
 
 ## Help, build, and agent continuity
 
-- Provide self-contained offline HTML Help. F1 in Settings and Help (F1) open
+- Provide self-contained offline HTML Help. F1 in the main window and Help (F1) open
   the published Help.html in the default HTML viewer. Keep it current with UI.
 - Git must contain all required source, icon assets, Help, scripts, tests,
   specifications, and agent instructions needed to rebuild from a fresh checkout.
@@ -613,6 +613,11 @@ superpowers/specs/2026-11-14-history-import-and-personal-tools-design.md.
   insert automatically, open completion Review popups or start audio devices.
   Check both advertised/session duration limits and receipt coverage; refuse
   over-limit files without truncation. Cancel awaits worker admission release.
+  Preserve a per-source capture failure and show a safe, actionable reason for
+  empty/oversize/changed/missing/unreadable files, decode/format failures, API
+  availability/timeouts and result-saving failures. Keep raw exception paths,
+  response bodies and transcript content out of error text. Retain partial text,
+  earlier completed items, source bytes and serial cancellation semantics.
 - New API normalization supports tested WAV/MP3/FLAC/M4A/OGG/Opus. Older API
   processes lack this endpoint: only standard 16 kHz mono PCM16 WAV can bypass it.
   Updating a client does not hot-load server source into an existing process.
@@ -621,8 +626,14 @@ superpowers/specs/2026-11-14-history-import-and-personal-tools-design.md.
   Review and pending stores refuse private documents; in-memory JSON clones retain
   the private marker. Private Review stays in memory with explicit discard/Exit
   warnings. Imports do not consume this choice and are blocked while it is armed.
+  Offer selection among pending private transcripts (private, nonempty and not
+  already inserted) by immutable ID, date/time and a short single-line preview.
+  Selection alone does not open Review, insert text or persist settings. Keep
+  the selected ID across refresh, fall back after removal, collapse an empty
+  picker and disable opening during recording/application operations. The
+  selector and its list stay in memory only.
 - Personal dictionary entries autosave separately with current-user protection.
-  Unsaved editor drafts survive Settings close/reopen in memory, including invalid,
+  Unsaved editor drafts survive main-window close/reopen in memory, including invalid,
   busy and storage-error cases; Exit asks before discarding an unsaved draft.
   Recognition hint and exact-correction activation remain off pending real runtime
   qualification and paired labelled evaluation. The deterministic correction
@@ -639,6 +650,62 @@ superpowers/specs/2026-11-14-history-import-and-personal-tools-design.md.
   circle fully opaque; toolkit state layers must not make its fill transparent.
   Hide its pointer target when idle; retain confirmation and
   More → Delete for an alternative full-size action.
-- Put History filters in their own rounded block below the search/import row,
-  separated by a visible gap and matching Settings category cards. Search and
-  import stay outside this block. Keep collapsed filters compact.
+- The original separate History filter card is superseded by the compact
+  popover behavior below. Keep search, Filters and import in one toolbar row.
+
+
+## General and Windows startup (2026-11-17)
+
+- Use exactly four main sections in Peter's selected order: General, Models,
+  Dictation, History. General replaces the former Settings destination.
+  Fresh manual launch opens Dictation. Record/Stop and Help remain available
+  across all sections; History commands open the same persistent History panel.
+- General contains Startup, Appearance, Keyboard shortcut, History audio
+  retention, and collapsed Advanced local-service controls. Retention remains
+  in General as named in the explicit approval; preserve all existing warnings.
+- Models manages installed/downloadable resources; active dictation and
+  verification model roles remain beside the recording choices in Dictation.
+- Dictation retains microphone, language, output, live, private and verification
+  choices. Move personal dictionary and application compatibility into its
+  collapsed Advanced area. Keep unsaved dictionary/error summaries visible
+  when collapsed; preserve the dictionary activation gate and draft lifetime.
+- Search uses the new categories and expands Advanced before revealing a
+  selected target. Navigation, search and refresh never apply settings.
+- Start with Windows is opt-in and current-user only. Display real registration
+  state; only an explicit switch action changes the app's owned startup value.
+  Do not mirror a JSON boolean, modify other startup entries or override Windows
+  Startup apps controls. Preserve conflicting values and report read/write or
+  readback failure without claiming success or leaking raw diagnostic details.
+- Automatic --startup invocation opens only the tray client, never the main
+  window or microphone capture. A duplicate startup invocation exits quietly.
+  Manual startup retains the normal window and duplicate-instance notice.
+  Connection initialization retains existing local API startup/readiness rules;
+  enabling/disabling the switch does not stop, restart or configure any API.
+- Preserve the current palette, native Material controls and compact rightmost
+  help column. Verify through fake stores, synthetic documents and detached
+  rendering. Real Windows logon, audio and native insertion acceptance remain
+  separate from these automated checks.
+
+
+## Compact History filters (2026-11-17)
+
+- Replace the permanent Filters card with a small Filters button alongside
+  Search dictations and Import audio. With no applied restrictions, neither a
+  filter card nor an empty summary row consumes vertical transcript space.
+- Open a distinct floating form for From, To, Model, Needs review, Text only and
+  Inserted. Draft changes affect results only through Apply. Cancel, Escape,
+  outside click, navigation and disposal discard the draft. Validation failures
+  keep the applied query intact and show an inline explanation.
+- Search text remains immediate and independent of invalid/unapplied filter
+  drafts. Date boundaries remain inclusive local dates; model/status conditions
+  retain their existing combinations and selected-identity restoration.
+- Show the number of applied restrictions on Filters. Show removable chips only
+  for applied conditions; From/To together form one range chip. Chip removal
+  clears only its own condition. Clear filters preserves the current search text.
+- Keep active chips in one horizontally scrollable row with Clear filters
+  available beside them. The floating form never resizes the underlying History
+  content. Preserve Material templates, readable theme surfaces, accessible
+  action names and comfortable control targets.
+- Explicit Apply/Cancel/Escape can return focus to Filters; outside dismissal
+  must not steal the clicked target's focus. Close the popup on History exit,
+  window unload and disposal. Popup editing never captures audio or a destination.

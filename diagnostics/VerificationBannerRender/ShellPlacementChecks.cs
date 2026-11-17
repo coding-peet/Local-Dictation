@@ -40,7 +40,7 @@ public static class ShellPlacementChecks
         var help=Button("Help",()=>helpCalls++);var helpName=AutomationProperties.GetName(help);
         var connection=new TextBlock{Text="Ready · Local transcription"};var saved=new TextBlock{Text="Saved automatically"};var alert=new TextBlock();
         saved.SetResourceReference(TextBlock.ForegroundProperty,"Muted");
-        var labels=new[]{"Dictation","Models","History","Settings"};
+        var labels=new[]{"General","Models","Dictation","History"};
         var pages=labels.Select(label=>{var caption=new TextBlock{Text=label+" workspace",FontSize=20};caption.SetResourceReference(TextBlock.ForegroundProperty,"Ink");return (UIElement)new Border{Padding=new(16),Child=caption};}).ToArray();
         using var shell=new MainWindowShell(new ListBox(),pages,record,help,connection,saved,alert,selected.Add);
         shell.Search.SetEntries([new("model","Dictation","Dictation model","Choose the model used for speech recognition.")]);
@@ -61,11 +61,11 @@ public static class ShellPlacementChecks
         record.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));help.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
         Require(recordCalls==1&&helpCalls==1&&record.Content?.ToString()=="Record"&&record.ToolTip?.ToString()=="Start a recording using the selected settings."&&AutomationProperties.GetName(help)==helpName&&help.ToolTip?.ToString()=="Help (F1)","Moving primary and Help actions replaced their injected content, metadata or callbacks.");
         record.Content="Stop";Layout(shell,640,600);Require(record.Content?.ToString()=="Stop","Shell overwrites the controller's dynamic Record/Stop label.");
-        Require(selected.SequenceEqual(new[]{0})&&ReferenceEquals(shell.PageHost.Content,pages[0]),"Relocated actions navigate away from the selected page.");
+        Require(selected.SequenceEqual(new[]{(int)MainSection.Dictation})&&ReferenceEquals(shell.PageHost.Content,pages[(int)MainSection.Dictation]),"Relocated actions navigate away from the selected page.");
         for(var index=0;index<4;index++)
         {
             shell.Navigation.SelectedIndex=index;Layout(shell,640,600);
-            Require(ReferenceEquals(shell.PageHost.Content,pages[index])&&saved.Visibility==(index is 0 or 3?Visibility.Visible:Visibility.Collapsed),"Saving success is shown on an unrelated page or hidden from a settings page.");
+            Require(ReferenceEquals(shell.PageHost.Content,pages[index])&&saved.Visibility==(index is (int)MainSection.General or (int)MainSection.Dictation?Visibility.Visible:Visibility.Collapsed),"Saving success is shown on an unrelated page or hidden from a settings page.");
         }
         shell.Search.Query="model";Layout(shell,640,600);
         Require(shell.PageHost.Visibility==Visibility.Hidden&&shell.Search.ResultsView.Visibility==Visibility.Visible&&saved.Visibility==Visibility.Collapsed,"Search does not overlay the selected page without routine saving chrome.");
@@ -82,11 +82,11 @@ public static class ShellPlacementChecks
                 Require(saved.Visibility==Visibility.Visible&&saved.ActualHeight>0&&Bounds(shell.StatusBar,shell).Top>=Bounds(shell.PageHost,shell).Bottom,"A page hides actionable saving errors or moves them back into the header.");
             }
         }
-        shell.Navigation.SelectedIndex=2;saved.SetResourceReference(TextBlock.ForegroundProperty,"Muted");saved.Text="Saved automatically · Changes apply to the next recording.";Layout(shell,640,600);
+        shell.Navigation.SelectedIndex=(int)MainSection.History;saved.SetResourceReference(TextBlock.ForegroundProperty,"Muted");saved.Text="Saved automatically · Changes apply to the next recording.";Layout(shell,640,600);
         Require(saved.Visibility==Visibility.Collapsed,"Routine busy-state saving status leaks into History.");
         saved.Text="All changes saved";Require(saved.Visibility==Visibility.Collapsed,"Routine alternate saving status leaks into History.");
         saved.Text="Saving…";Require(saved.Visibility==Visibility.Collapsed,"Routine saving progress leaks into History.");
-        shell.Navigation.SelectedIndex=3;Require(saved.Visibility==Visibility.Visible,"Settings hides its own saving progress.");
+        shell.Navigation.SelectedIndex=(int)MainSection.General;Require(saved.Visibility==Visibility.Visible,"General hides its own saving progress.");
         saved.Text="";Require(saved.Visibility==Visibility.Collapsed,"An empty saving footer wastes page height.");
         alert.Text="The clipboard backup is kept while Windows retries restoration.";Layout(shell,640,600);
         Require(shell.StatusArea.Visibility==Visibility.Visible&&alert.ActualHeight>0,"Action placement hid the global actionable alert.");

@@ -122,22 +122,75 @@ public sealed class ApiClient : IDisposable
     }
     public async Task<byte[]> NormalizeRecording(byte[] encoded,CancellationToken token)
     {
-        if(encoded.Length==0||encoded.Length>AudioImportSource.MaxEncodedBytes)throw new InvalidDataException("Choose a nonempty audio file below 26 MiB.");
-        using var content=new MultipartFormDataContent();content.Add(new ByteArrayContent(encoded),"file","recording.audio");
-        using var request=new HttpRequestMessage(HttpMethod.Post,"/v1/audio/normalizations"){Content=content};
-        using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,token);
-        if(response.StatusCode==System.Net.HttpStatusCode.NotFound)throw new AudioImportException("This local API needs the audio-import update. Standard 16 kHz mono PCM16 WAV files can still be imported.");
-        if(!response.IsSuccessStatusCode){await Read(response,token);throw new InvalidDataException("Audio preparation failed.");}
-        const int limit=600*32000+44;
-        if(response.Content.Headers.ContentType?.MediaType!="audio/wav"||response.Content.Headers.ContentLength>limit)throw new InvalidDataException("Invalid normalized audio response.");
-        await using var input=await response.Content.ReadAsStreamAsync(token);using var output=new MemoryStream();var buffer=new byte[65536];
+        AudioImportErrors.CheckEncodedLength(encoded.Length);
+        var callerToken=token;
+        using var deadline=CancellationTokenSource.CreateLinkedTokenSource(callerToken);
+        // ResponseHeadersRead ends HttpClient's timeout at the headers. Keep the
+        // configured deadline active while reading audio or the bounded error body.
+        if(http.Timeout!=Timeout.InfiniteTimeSpan)deadline.CancelAfter(http.Timeout);
+        token=deadline.Token;
         try
         {
-            int read;while((read=await input.ReadAsync(buffer,token))>0)
-            {if(output.Length+read>limit)throw new InvalidDataException("Normalized audio exceeds ten minutes.");output.Write(buffer,0,read);}
-            return output.ToArray();
+            using var content=new MultipartFormDataContent();content.Add(new ByteArrayContent(encoded),"file","recording.audio");
+            using var request=new HttpRequestMessage(HttpMethod.Post,"/v1/audio/normalizations"){Content=content};
+            using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,token);
+            if(response.StatusCode==System.Net.HttpStatusCode.NotFound)throw new AudioImportException("This local API needs the audio-import update. Standard 16 kHz mono PCM16 WAV files can still be imported.");
+            if(!response.IsSuccessStatusCode)
+            {
+                var message=(int)response.StatusCode switch
+                {
+                    400 or 415 or 422=>await KnownNormalizationFailure(response,token)??AudioImportErrors.UnsupportedAudio,
+                    413=>AudioImportErrors.OversizeFile,
+                    409 or 429=>AudioImportErrors.ApiBusy,
+                    408 or 504=>AudioImportErrors.ApiTimeout,
+                    401 or 403=>AudioImportErrors.ApiRejected,
+                    502 or 503=>AudioImportErrors.ApiUnavailable,
+                    _=>AudioImportErrors.ApiProcessingFailed
+                };
+                throw new AudioImportException(message);
+            }
+            const int limit=600*32000+44;
+            if(response.Content.Headers.ContentType?.MediaType!="audio/wav")throw new AudioImportException(AudioImportErrors.InvalidResponse);
+            if(response.Content.Headers.ContentLength>limit)throw new AudioImportException(AudioImportErrors.DurationLimit);
+            await using var input=await response.Content.ReadAsStreamAsync(token);using var output=new MemoryStream();var buffer=new byte[65536];
+            try
+            {
+                int read;while((read=await input.ReadAsync(buffer,token))>0)
+                {if(output.Length+read>limit)throw new AudioImportException(AudioImportErrors.DurationLimit);output.Write(buffer,0,read);}
+                return output.ToArray();
+            }
+            finally{System.Security.Cryptography.CryptographicOperations.ZeroMemory(buffer);if(output.TryGetBuffer(out var bytes))System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes.AsSpan());}
         }
-        finally{System.Security.Cryptography.CryptographicOperations.ZeroMemory(buffer);if(output.TryGetBuffer(out var bytes))System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes.AsSpan());}
+        catch(OperationCanceledException) when(!callerToken.IsCancellationRequested){throw new AudioImportException(AudioImportErrors.ApiTimeout);}
+        catch(TimeoutException){throw new AudioImportException(AudioImportErrors.ApiTimeout);}
+        catch(Exception error) when(error is HttpRequestException or IOException){throw new AudioImportException(AudioImportErrors.ApiUnavailable);}
+    }
+    static async Task<string?> KnownNormalizationFailure(HttpResponseMessage response,CancellationToken token)
+    {
+        const int limit=4096;
+        if(response.Content.Headers.ContentLength>limit)return null;
+        var buffer=new byte[limit+1];
+        try
+        {
+            await using var input=await response.Content.ReadAsStreamAsync(token);var count=0;
+            while(count<buffer.Length)
+            {
+                var read=await input.ReadAsync(buffer.AsMemory(count,buffer.Length-count),token);
+                if(read==0)break;count+=read;
+            }
+            if(count>limit)return null;
+            using var json=JsonDocument.Parse(buffer.AsMemory(0,count),new JsonDocumentOptions{MaxDepth=8});
+            if(json.RootElement.ValueKind!=JsonValueKind.Object||!json.RootElement.TryGetProperty("error",out var error)||error.ValueKind!=JsonValueKind.Object||
+                !error.TryGetProperty("message",out var message)||message.ValueKind!=JsonValueKind.String)return null;
+            return message.GetString() switch
+            {
+                "Decoded audio exceeds the ten-minute limit."=>AudioImportErrors.DurationLimit,
+                "The file contains no audio track." or "The file contains no audio samples."=>AudioImportErrors.NoAudio,
+                _=>null
+            };
+        }
+        catch(JsonException){return null;}
+        finally{System.Security.Cryptography.CryptographicOperations.ZeroMemory(buffer);}
     }
     public async Task<SavedVerificationResult> VerifyRecording(byte[] wave,ReviewDocument source,string verifier,string language,
         IReadOnlyList<string> preferred,CancellationToken token)

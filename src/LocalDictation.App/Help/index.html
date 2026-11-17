@@ -156,12 +156,12 @@
             <li><a href="#import-audio">Import audio files</a></li>
             <li><a href="#private-recording">Private recording</a></li>
             <li><a href="#personal-dictionary">Personal dictionary</a></li>
-            <li><a href="#settings">Settings and shortcuts</a></li>
+            <li><a href="#settings">General and shortcuts</a></li>
             <li><a href="#troubleshooting">Troubleshooting</a></li>
             <li><a href="#privacy">Local files and privacy</a></li>
           </ul>
         </nav>
-        <p class="sidebar-note">Press <kbd>F1</kbd> in the app's Settings window to open this guide.<br><br>Use <kbd>Ctrl</kbd> + <kbd>F</kbd> to find a word on this page.</p>
+        <p class="sidebar-note">Press <kbd>F1</kbd> in the app's main window to open this guide.<br><br>Use <kbd>Ctrl</kbd> + <kbd>F</kbd> to find a word on this page.</p>
       </div>
     </aside>
 
@@ -170,7 +170,7 @@
         <p class="eyebrow">Help · works offline</p>
         <h1>Speak. Check. Keep writing.</h1>
         <p class="lead">Record speech locally, choose when to review it, and place the finished text at your cursor.</p>
-        <p class="help-keys"><kbd>F1</kbd> opens Help from Settings. <kbd>Ctrl</kbd> + <kbd>F</kbd> searches this guide in your browser.</p>
+        <p class="help-keys"><kbd>F1</kbd> opens Help from the main window. <kbd>Ctrl</kbd> + <kbd>F</kbd> searches this guide in your browser.</p>
       </header>
 
       <section id="quick-start" aria-labelledby="quick-start-title">
@@ -217,7 +217,7 @@
         <h2 id="live-text-title">Live text and the minimal banner</h2>
         <p><strong>Live transcription</strong> recognizes speech while you record. In <strong>Insert directly</strong> with <strong>Insert live text at the cursor</strong> enabled, the app updates its own draft in your original field, including corrections after a pause. The small banner shows the recording state, model, language and elapsed time. Preview first keeps the destination unchanged.</p>
         <p>Press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> again to finish. The selected dictation model completes the original recording. <strong>Insert directly</strong> attempts final insertion after any required verification; confirmed insertion closes the banner. <strong>Preview first</strong> opens Review. Verification and word choices are optional.</p>
-        <p>In desktop <strong>Outlook</strong>, Insert directly inserts the complete result once after recording. If live delivery fails in another app, Local Dictation remembers that app and uses final-only insertion from the next recording. Live recognition remains available. Use <strong>Settings → Application compatibility → Re-enable live insertion for remembered apps</strong> to try live delivery again; Outlook stays final-only. Preview first opens Review in Outlook too.</p>
+        <p>In desktop <strong>Outlook</strong>, Insert directly inserts the complete result once after recording. If live delivery fails in another app, Local Dictation remembers that app and uses final-only insertion from the next recording. Live recognition remains available. Use <strong>Dictation → Advanced → Application compatibility → Re-enable live insertion for remembered apps</strong> to try live delivery again; Outlook stays final-only. Preview first opens Review in Outlook too.</p>
         <h3>Move the banner</h3>
         <p>Drag its waveform or status area. It remains small and does not take keyboard focus. The soft edge fades to a transparent window boundary; text and controls stay sharp. Placement is retained during the current app run.</p>
         <h3>Switching fields or apps</h3>
@@ -285,12 +285,12 @@
           <li>Click the desired editable field and leave an empty cursor at the insertion point.</li>
           <li>Press your configured recording shortcut.</li>
         </ol>
-        <p>The shortcut now inserts Review instead of recording. Opening Settings or returning to Review cancels placement; choose again to rearm. Check for drafts left elsewhere to avoid keeping two copies.</p>
+        <p>The shortcut now inserts Review instead of recording. Opening the main window or returning to Review cancels placement; choose again to rearm. Check for drafts left elsewhere to avoid keeping two copies.</p>
       </section>
 
       <section id="models" aria-labelledby="models-title">
         <h2 id="models-title">Models and languages</h2>
-        <p>Choose <strong>Dictation model</strong> and <strong>Language</strong> on the <strong>Dictation</strong> section; valid choices save automatically. The dropdown also lists catalog entries marked <strong>not installed</strong>; install those before selecting them for recording. Available languages and verification choices depend on the model.</p>
+        <p>Choose <strong>Dictation model</strong> and <strong>Language</strong> on the <strong>Dictation</strong> section; valid choices save automatically. The dropdown lists installed models. Use <strong>Models</strong> to install another model before choosing it for recording. Available languages and verification choices depend on the model.</p>
         <div class="table-scroll" role="region" aria-label="Current model modes" tabindex="0">
           <table>
             <caption>Current local model profiles</caption>
@@ -330,7 +330,9 @@
         <p>Move the pointer into the gap between the recording list and transcript, then drag to resize them. The divider line is hidden until you hover or focus it with the keyboard. With the divider focused, use the arrow keys for small adjustments. Narrow windows stack the panes and hide the divider; widening restores your preferred width. The thin scrollbars keep more space for the content.</p>
         <p>The record count appears in the selected detail header. Empty History explains how to create the first dictation.</p>
         <p>Select <strong>History</strong> in the main window. <strong>History</strong> in the notification-area menu opens this same section. The list includes recordings and text marked Needs review. Text-only items remain available even when their original audio is gone.</p>
-        <p><strong>Search dictations</strong> searches complete original and edited text, including older manual versions, dates and model IDs. Matching ignores case and accents without changing stored text. Filters have their own rounded block below search and import. Open <strong>Filters</strong> for inclusive local From/To dates, either model used in a recording, Needs review, Text only and Inserted. Enabled filters combine. The counter shows matching/total items; Clear filters restores the selected dictation when it is still available. Searching never plays, inserts or deletes text.</p>
+        <p><strong>Search dictations</strong> searches complete original and edited text, including older manual versions, dates and model IDs. Matching ignores case and accents without changing stored text. Searching never plays, inserts or deletes text.</p>
+        <p>Use the small <strong>Filters</strong> button beside search to open a floating panel for inclusive local From/To dates, either model used in a recording, Needs review, Text only and Inserted. Choose <strong>Apply</strong> to use the conditions; Cancel, Escape or clicking outside keeps the applied filters. If a date is rejected, re-enter it or choose a valid date from the calendar; the earlier filters remain applied.</p>
+        <p>Applied filters combine and appear as removable chips. The Filters button shows their count; no empty filter block remains when none are applied. Remove one chip to clear that condition, or use <strong>Clear filters</strong> to clear all conditions while keeping your search text. The counter shows matching/total items; clearing restrictions restores the selected dictation when it matches the search again.</p>
         <ul>
           <li>The <strong>Play</strong>, <strong>Pause</strong> and <strong>Stop</strong> icons control the selected original recording. Pause keeps your position; Stop returns to the beginning. The compact player keeps the buttons, timeline and elapsed/total time on one line. Hover for playback state; playback failures remain visible.</li>
           <li>Drag the round timeline thumb to seek. Elapsed/total time show your position. The faint waveform behind the slider shows RMS energy on a fixed scale; loud isolated peaks do not shrink the rest of the recording. With the slider focused, Left/Right move one second; Page Up/Page Down move five seconds. Selecting a recording does not play it.</li>
@@ -341,7 +343,7 @@
         </ul>
         <div class="callout">
           <strong>Recordings are kept for 7 days by default; transcripts stay until you delete them.</strong>
-          <p>Change this in <strong>Settings → History → Keep recordings for</strong>, or search settings for retention. Choose 1 day, 7 days, 30 days, 90 days, 1 year or Forever. Cleanup removes expired audio and keeps its transcript as a Text only item. Shortening the period can remove older recordings immediately. Cleanup runs while the app is open or next time you open it; busy dictation waits. A longer period cannot restore audio already removed. A recording with captured audio can be retained even when no words were recognized; use Change language… to try that audio again.</p>
+          <p>Change this in <strong>General → History → Keep recordings for</strong>, or search settings for retention. Choose 1 day, 7 days, 30 days, 90 days, 1 year or Forever. Cleanup removes expired audio and keeps its transcript as a Text only item. Shortening the period can remove older recordings immediately. Cleanup runs while the app is open or next time you open it; busy dictation waits. A longer period cannot restore audio already removed. A recording with captured audio can be retained even when no words were recognized; use Change language… to try that audio again.</p>
         </div>
         <h3>Insert a saved pending result</h3>
         <ol>
@@ -368,6 +370,7 @@
         </ol>
         <p>Import leaves original files unchanged and creates protected History copies with the normal recording-retention policy. It never opens the microphone, plays sound, captures an external cursor or inserts automatically. Open a result in Review and choose Insert explicitly.</p>
         <p>Each source must fit below the 26 MiB transport limit, including request overhead, and decode to at most ten minutes. Over-limit audio is refused without truncation. Changed or unreadable files fail individually; other files can continue. If protected saving fails, keep the app open and recover the in-memory text before exiting.</p>
+        <p>A failed row explains the problem for that file: an empty, oversized, changed or unavailable source; unreadable or unsupported audio; an API connection or processing failure; or a saving failure. Correct the reported problem and select only unfinished files to retry. Importing an already completed file again creates another History entry.</p>
         <p>Compressed and nonstandard WAV files require the updated local API with audio normalization. An older API can still accept standard 16 kHz mono PCM16 WAV imports; an incompatible API produces a per-file update message. This is separate from installing the client update. A queue does not resume automatically after the app closes.</p>
       </section>
 
@@ -375,22 +378,28 @@
         <h2 id="private-recording-title">Private microphone recording</h2>
         <p>In Dictation, enable <strong>Private for next microphone recording</strong> before starting. The choice applies to one successfully owned recording and its language retry. A Private indicator appears in the recording banner and Review.</p>
         <p>Private audio and text are not written to History, saved Review or export. Text can remain in memory for editing or insertion. Closing Review retains that memory while the app remains open; use <strong>Open private transcript</strong> in Dictation to return to it. Discarding private text or exiting the app loses it, with explicit confirmation.</p>
+        <p>When several private transcripts are waiting in memory, choose one under <strong>Private transcripts</strong> by its date, time and short preview, then select <strong>Open private transcript</strong>. Changing the selection does not open Review or insert text. The selection stays stable while the list refreshes; if that transcript is discarded, the newest remaining one is selected. The list contains private transcripts still waiting for insertion and is never saved to settings or History.</p>
         <p>Audio imports are saved jobs and cannot start while private-next is armed. An import does not consume this choice. Automatic incognito detection is not available. This mode does not erase Windows paging/crash records, clipboard history or records made by the destination application.</p>
       </section>
 
       <section id="personal-dictionary" aria-labelledby="personal-dictionary-title">
         <h2 id="personal-dictionary-title">Personal dictionary preparation</h2>
-        <p>Settings contains separate <strong>Recognition hints</strong> and <strong>Exact corrections</strong>. Enter one hint per line, or one correction as <code>heard text =&gt; replacement</code>. Valid edits save automatically in a separate file protected for your Windows account.</p>
+        <p><strong>Dictation → Advanced → Personal dictionary</strong> contains separate <strong>Recognition hints</strong> and <strong>Exact corrections</strong>. Enter one hint per line, or one correction as <code>heard text =&gt; replacement</code>. Valid edits save automatically in a separate file protected for your Windows account.</p>
         <p>Hints and corrections remain <strong>off pending paired evaluation</strong>. Saving entries does not enable recognition changes. The evaluation must compare the same labelled recordings before/after the change, including noise, missing dictionary terms and genuinely spoken repeated words. Existing model output is not independent reference text.</p>
         <p>Prepared exact corrections match complete Unicode words/phrases with case sensitivity, prefer the longest source, and run once without recursive replacements. Original model transcripts stay separate and manual edits take precedence. Voice-formatting commands and additional silence/noise protection are also pending evaluation; no phrase blacklist or duplicate formatting layer is enabled.</p>
       </section>
 
       <section id="settings" aria-labelledby="settings-title">
-        <h2 id="settings-title">Settings and shortcuts</h2>
+        <h2 id="settings-title">General and shortcuts</h2>
+        <p>The main sections are <strong>General → Models → Dictation → History</strong>. General controls the app, Models manages installed resources, Dictation prepares your next recording, and History works with saved or imported results. Manual launch opens Dictation; Record/Stop and Help remain available from every section.</p>
+        <h3>Start with Windows</h3>
+        <p>In <strong>General → Startup</strong>, enable <strong>Start with Windows</strong> to open Local Dictation in the system tray when you sign in. It is off until you choose it. Automatic startup does not open the main window or start a recording. Double-click the tray icon or choose <strong>Open Local Dictation</strong> to open the window.</p>
+        <p>This choice applies to your Windows account. Turning it off does not close the app or stop local APIs. Windows Startup apps settings or organization restrictions can override automatic startup. If the change cannot be confirmed, the app shows an inline explanation and retains the verified state.</p>
         <p>The <strong>Dictation</strong> section groups the microphone, model, language, <strong>After recording</strong> and both live options. <strong>Insert live text at the cursor</strong> sits directly below <strong>Live transcription</strong>. Enable <strong>Verify after recording</strong> to show its additional settings. Verification works with either output choice; it takes extra time and does not guarantee correctness.</p>
         <p><strong>Search settings</strong> at the upper left, above the named menu, finds settings by name, category, description or keyword. Press <kbd>Ctrl</kbd> + <kbd>F</kbd> to focus it, then select a result or press Enter. The app opens and scrolls to that setting. Hidden dependent options lead to their prerequisite without changing it. Search also finds recording shortcut behavior with terms such as hold, press or toggle. Press <kbd>Esc</kbd> to clear search. Small information icons beside settings explain them on hover, click or keyboard activation; the same text is available to screen readers.</p>
         <p><strong>Record</strong> above Help in the navigation footer starts a dictation for Review; while recording it becomes <strong>Stop</strong>. For automatic delivery to an external cursor, start with your recording shortcut in that field. <strong>Help</strong> stays at the bottom of the navigation panel and is also available with <kbd>F1</kbd>.</p>
-        <p>Open the <strong>Settings</strong> section for appearance, shortcut, and local service preferences. Recording and connection state appear in the bottom status bar. Routine confirmations, such as clearing remembered applications, also appear there in the normal status color. Automatic saving feedback shares that area on Dictation and Settings; saving failures remain visible on every section. Small gray information icons share a compact rightmost column; setting controls and switches sit before them. Important global warnings expand above the content. The native title bar identifies the app, leaving more room for your text.</p>
+        <p>Open <strong>General</strong> for startup, appearance, shortcut and audio-retention preferences. Its <strong>Advanced</strong> area contains the local service address and connection actions. Recording and connection state appear in the bottom status bar. Routine confirmations, such as clearing remembered applications, also appear there in the normal status color. Automatic saving feedback shares that area on General and Dictation; saving failures remain visible on every section. Small gray information icons share a compact rightmost column; setting controls and switches sit before them. Important global warnings expand above the content. The native title bar identifies the app, leaving more room for your text.</p>
+        <p>Less frequently used controls stay under <strong>Advanced</strong>: local service controls in General, and personal dictionary plus application compatibility in Dictation. Search opens the correct section and expands Advanced when needed. Unsaved dictionary changes and related warnings remain visible when Advanced is collapsed.</p>
         <dl>
           <dt>Appearance</dt>
           <dd><strong>System</strong> follows Windows at app startup. <strong>Light</strong> / <strong>Dark</strong> override it. Preview is immediate and saves automatically. Windows high contrast takes priority.</dd>
@@ -418,7 +427,7 @@
           <dt>Help</dt>
           <dd><kbd>F1</kbd> or <strong>Help</strong> at the bottom of the navigation panel opens this local guide in your default browser. <kbd>Ctrl</kbd> + <kbd>F</kbd> searches; the browser's Print command makes a paper/PDF copy.</dd>
         </dl>
-        <h3>Close Settings or exit the app</h3>
+        <h3>Close the main window or exit the app</h3>
         <p>The title-bar <strong>×</strong> closes the main window; the app stays available in the Windows notification area. Choose <strong>Exit</strong> from its notification-area menu to quit.</p>
         <p>If a session is active, Exit asks to stop it, then waits while it saves the received text and original recording before closing. Stopping this way keeps the text for Review and does not complete automatic insertion. Captured audio can appear in History even if recognition returned no text. If protected Review saving fails, the app stays open so you can copy or explicitly dismiss the unsaved text.</p>
         <h3>Local transcription service</h3>
@@ -431,7 +440,7 @@
         <details open>
           <summary>No models appear, or the service is offline</summary>
           <ol>
-            <li>The app starts its service automatically. If it remains offline, open <strong>Settings → Local transcription service</strong> and select <strong>Start local API</strong> to retry.</li>
+            <li>The app starts its service automatically. If it remains offline, open <strong>General → Advanced → Local transcription service</strong> and select <strong>Start local API</strong> to retry.</li>
             <li>Wait for preparation, then select <strong>Reconnect</strong>. Confirm the address points to the session service.</li>
             <li>Check that the required model is installed on the <strong>Models</strong> section.</li>
           </ol>
@@ -439,7 +448,7 @@
         <details>
           <summary>The shortcut does nothing</summary>
           <ol>
-            <li>Check the connection status first. If the local transcription service is offline, open <strong>Settings → Local transcription service</strong> and select <strong>Start local API</strong>. Wait for the service to prepare and reconnect. Starting dictation while offline opens Settings without a recording banner.</li>
+            <li>Check the connection status first. If the local transcription service is offline, open <strong>General → Advanced → Local transcription service</strong> and select <strong>Start local API</strong>. Wait for the service to prepare and reconnect. Starting dictation while offline opens the main window without a recording banner.</li>
             <li>Check <strong>Enable keyboard shortcut</strong> and read the saving and shortcut status.</li>
             <li>If TypeWhisper is running, the shared default <kbd>Ctrl</kbd> + <kbd>Shift</kbd> is disabled here. Quit TypeWhisper and use <strong>Recheck shortcut</strong>, or choose a different shortcut.</li>
             <li>A test launch with <code>--no-hotkey</code> disables shortcuts. Relaunch normally. Also check whether another app uses the same key combination.</li>
@@ -484,7 +493,7 @@
           <p>If Insert cannot validate the destination, Review shows the failure while keeping your edited text. A Windows access-check failure includes its numeric error code. Select the destination field and try Insert again; keep the code if the problem repeats.</p>
           <p>The transcript stays in the banner with <strong>Insert</strong>. Your clipboard returns after every attempt; it does not wait for the destination to confirm. Check whether text already arrived before retrying so that you do not insert it twice. Insert uses your newly selected external cursor and a fresh clipboard backup.</p>
           <p>The app briefly checks an unchanged original field without sending text again. If it can confirm the existing insertion, the banner closes. Otherwise it stays until you retry successfully or use <strong>X</strong>. X hides the banner and keeps your protected text in History.</p>
-          <p>If another application locks the clipboard, Local Dictation retains the complete backup and retries restoration automatically. A newer copy takes priority. Settings shows the temporary error without opening another window. A genuine restoration failure can briefly prevent another insertion or normal Exit; an unconfirmed insertion alone does not.</p>
+          <p>If another application locks the clipboard, Local Dictation retains the complete backup and retries restoration automatically. A newer copy takes priority. The main window shows the temporary error without opening another window. A genuine restoration failure can briefly prevent another insertion or normal Exit; an unconfirmed insertion alone does not.</p>
           <p>A very slow destination can process its queued paste after the clipboard has returned and read the restored contents. Automatic return cannot completely prevent that case. The temporary dictation payload has a one-second deadline even if the destination's accessibility check stalls.</p>
         </details>
         <details>
@@ -499,11 +508,11 @@
         </details>
         <details>
           <summary>Local Dictation is already running</summary>
-          <p>Open the existing app from its Windows notification-area icon instead of launching another copy. The notification-area menu also offers Settings, History, and Exit.</p>
+          <p>Open the existing app from its Windows notification-area icon instead of launching another copy. The notification-area menu also offers Open Local Dictation, History, and Exit.</p>
         </details>
         <details>
           <summary>A recording is missing from History or will not play</summary>
-          <p>History keeps transcripts until you delete them. Recordings expire after the period chosen in Settings → History, including recordings where no words were recognized. A missing recording is shown as Text only; earlier versions could also remove items under the old count limit. Check your playback device if a saved item will not play. A pending Review can outlive its history audio; it is not an unlimited recording archive. If audio saving fails, the transcript remains as a Text only item in History.</p>
+          <p>History keeps transcripts until you delete them. Recordings expire after the period chosen in General → History, including recordings where no words were recognized. A missing recording is shown as Text only; earlier versions could also remove items under the old count limit. Check your playback device if a saved item will not play. A pending Review can outlive its history audio; it is not an unlimited recording archive. If audio saving fails, the transcript remains as a Text only item in History.</p>
         </details>
       </section>
 

@@ -21,7 +21,7 @@ public sealed partial class SettingsWindow
         dictionaryStatus.Text=retained==null?controller.PersonalDictionaryStatus:"Unsaved dictionary draft kept in memory. "+(retained.Error??"Edit or retry saving before exiting.");dictionaryStatus.SetResourceReference(TextBlock.ForegroundProperty,"Muted");panel.Children.Add(dictionaryStatus);
         dictionarySaveDelay.Tick+=(_,_)=>SaveDictionaryEditor();
         foreach(var text in new[]{dictionaryHints,dictionaryCorrections})
-        {text.TextChanged+=(_,_)=>{if(loading||updating)return;dictionaryDirty=true;controller.RetainDictionaryDraft(dictionaryHints.Text,dictionaryCorrections.Text);dictionarySaveDelay.Stop();dictionarySaveDelay.Start();};text.LostKeyboardFocus+=(_,_)=>SaveDictionaryEditor();}
+        {text.TextChanged+=(_,_)=>{if(loading||updating)return;dictionaryDirty=true;controller.RetainDictionaryDraft(dictionaryHints.Text,dictionaryCorrections.Text);RefreshAdvancedStatus();dictionarySaveDelay.Stop();dictionarySaveDelay.Start();};text.LostKeyboardFocus+=(_,_)=>SaveDictionaryEditor();}
         Closing+=(_,_)=>SaveDictionaryEditor();Closed+=(_,_)=>dictionarySaveDelay.Stop();return panel;
     }
     void SaveDictionaryEditor()
@@ -40,5 +40,6 @@ public sealed partial class SettingsWindow
             if(error==null){dictionaryDirty=false;controller.ClearDictionaryDraft();}else controller.RetainDictionaryDraft(dictionaryHints.Text,dictionaryCorrections.Text,error);dictionaryStatus.Text=error??controller.PersonalDictionaryStatus;dictionaryStatus.SetResourceReference(TextBlock.ForegroundProperty,error==null?"Muted":"Warning");
         }
         catch(ArgumentException error){controller.RetainDictionaryDraft(dictionaryHints.Text,dictionaryCorrections.Text,error.Message);dictionaryStatus.Text=error.Message;dictionaryStatus.SetResourceReference(TextBlock.ForegroundProperty,"Warning");}
+        RefreshAdvancedStatus();
     }
 }

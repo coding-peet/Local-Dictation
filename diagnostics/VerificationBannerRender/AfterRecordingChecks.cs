@@ -77,7 +77,7 @@ static class AfterRecordingChecks
             var before=JsonSerializer.Serialize(owner.Settings);
             Call(window,"OpenSearchSetting",new SettingsSearchEntry("live-insertion","Dictation","Insert live text at the cursor",""));
             Call(window,"OpenSearchSetting",new SettingsSearchEntry("verification-model","Dictation","Verification model",""));
-            Require(JsonSerializer.Serialize(owner.Settings)==before&&Get<ListBox>(window,"navigation").SelectedIndex==0,
+            Require(JsonSerializer.Serialize(owner.Settings)==before&&Get<ListBox>(window,"navigation").SelectedIndex==(int)MainSection.Dictation,
                 "Search changed a setting while navigating to a hidden dependency.");
             outputMode.SelectedIndex=0;Call(window,"UpdateOutputDependencies");
             Require(row.IsEnabled&&liveInsert.IsChecked==true,"Returning to direct output lost the live insertion preference.");
@@ -110,11 +110,11 @@ static class AfterRecordingChecks
                 var mode=matches.SingleOrDefault(entry=>entry.Id=="shortcut-mode");
                 Require(mode!=null,"Recording shortcut behavior is missing from search for "+keyword+".");
                 Call(window,"OpenSearchSetting",mode!);
-                Require(Get<ListBox>(window,"navigation").SelectedIndex==3&&!shell.Search.IsQueryActive&&hold.IsChecked==holdBefore&&press.IsChecked==pressBefore&&JsonSerializer.Serialize(owner.Settings)==before,
+                Require(Get<ListBox>(window,"navigation").SelectedIndex==(int)MainSection.General&&!shell.Search.IsQueryActive&&hold.IsChecked==holdBefore&&press.IsChecked==pressBefore&&JsonSerializer.Serialize(owner.Settings)==before,
                     "Mode search changed a setting or did not reveal its page.");
                 Require(ReferenceEquals(Call(window,"SearchTarget","shortcut-mode",hold),hold),"Mode search does not target its actual control.");
             }
-            Get<ListBox>(window,"navigation").SelectedIndex=0;
+            Get<ListBox>(window,"navigation").SelectedIndex=(int)MainSection.Dictation;
             checks.Add($"{theme}: Hold/Press/release/toggle search reveals recording behavior without changing it");
             outputMode.SelectedIndex=-1;
             Require(!(bool)Call(window,"SaveSelections",false)!&&JsonSerializer.Serialize(owner.Settings)==before,

@@ -26,7 +26,7 @@ static class SettingsSearchChecks
     public static void Run(string theme, string output, List<string> checks)
     {
         var draft = new TextBox { Text = "An unsaved page value." };
-        var pages = new UIElement[] { new Border { Child = draft }, new Border(), new Border(), new Border() };
+        var pages = new UIElement[] { new Border(), new Border(), new Border { Child = draft }, new Border() };
         var pageChanges = 0;
         var ui = typeof(MainWindowShell).Assembly.GetType("LocalDictation.App.Views.Ui")!;
         var buttonFactory = ui.GetMethod("Button", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)!;
@@ -64,7 +64,7 @@ static class SettingsSearchChecks
         Layout(shell, 640, 720);
         Require(shell.Search.Query == "MODEL" && shell.Search.IsQueryActive && shell.Search.ResultsView.Visibility == Visibility.Visible,
             "Typing does not reveal same-window search results.");
-        Require(shell.PageHost.Visibility != Visibility.Visible && ReferenceEquals(shell.PageHost.Content, pages[0]) && draft.Text == "An unsaved page value.",
+        Require(shell.PageHost.Visibility != Visibility.Visible && ReferenceEquals(shell.PageHost.Content, pages[(int)MainSection.Dictation]) && draft.Text == "An unsaved page value.",
             "Search discards the selected page or its unsaved controls.");
         var results = Find<ListBox>(shell.Search.ResultsView).Single();
         Require(results.Items.Count == 2 && ((SettingsSearchEntry)results.Items[0]).Id == "catalog",

@@ -47,6 +47,21 @@ static class SettingsHelpChecks
         TransitionAssist.SetDisableTransitions(root,true);
         using var source=new OffscreenSource(root);
         root.UpdateLayout();
+        // Material's Expander has its own scale/opacity transitions and does
+        // not consume TransitionAssist.DisableTransitions. Render its actual
+        // final visual state without sleeping or opening a native window.
+        foreach(var expander in Find<Expander>(root))
+        {
+            expander.ApplyTemplate();
+            // A same-state request leaves an in-flight transition running.
+            VisualStateManager.GoToState(expander,expander.IsExpanded?"Collapsed":"Expanded",false);
+            VisualStateManager.GoToState(expander,expander.IsExpanded?"Expanded":"Collapsed",false);
+        }
+        foreach(var item in Find<ListBoxItem>(root))
+        {
+            VisualStateManager.GoToState(item,item.IsSelected?"Unselected":"Selected",false);
+            VisualStateManager.GoToState(item,item.IsSelected?"Selected":"Unselected",false);
+        }
         root.Dispatcher.Invoke(()=>{},DispatcherPriority.ApplicationIdle);
         root.UpdateLayout();
     }

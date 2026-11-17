@@ -193,19 +193,19 @@ public sealed partial class HistoryPanel : UserControl,IDisposable
     {
         if(disposed||active==value)return;active=value;
         if(active){shown=null;Refresh();}
-        else{moreMenu.IsOpen=false;playback.Clear();loadedAudioId=null;}
+        else{CloseFilters(false);moreMenu.IsOpen=false;playback.Clear();loadedAudioId=null;}
     }
     public void Dispose()
     {
         if(disposed)return;disposed=true;active=false;controller.Changed-=Refresh;
-        moreMenu.IsOpen=false;playback.Dispose();loadedAudioId=null;
+        CloseFilters(false);moreMenu.IsOpen=false;playback.Dispose();loadedAudioId=null;
     }
     DictationItem? Selected=>items.SelectedItem as DictationItem;
     void Refresh()
     {
         if(disposed||!active)return;
         RefreshImport();
-        var all=controller.Dictations;totalItems=all.Count;RefreshSearchModels(all);
+        var all=controller.Dictations;totalItems=all.Count;RefreshSearchModels(all);RefreshAppliedFilters();
         var next=DictationSearch.Find(all,query);
         if(shown!=null&&shown.SequenceEqual(next)){UpdateText();return;}
         shown=next;var id=preferredSelectionId??Selected?.Id;refreshing=true;
