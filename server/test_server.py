@@ -3,7 +3,8 @@ import http.client
 import json
 import threading
 import unittest
-from server import LocalServer, MODEL_ID
+from server import LocalServer, MODEL_ID, Handler
+from unittest.mock import patch
 
 
 class Engine:
@@ -63,6 +64,16 @@ class ProtocolTests(unittest.TestCase):
     def post(self, body=None, headers=None):
         return self.request('POST','/v1/audio/transcriptions',multipart() if body is None else body,
             {'Content-Type':'multipart/form-data; boundary=asr-test',**(headers or {})})
+    def test_gate_is_released_before_response_is_written(self):
+        states=[]
+        reply=Handler.reply
+        def observed(handler,*args,**kwargs):
+            states.append(handler.server.gate.locked())
+            return reply(handler,*args,**kwargs)
+        with patch.object(Handler,'reply',observed):
+            status,_,_=self.post()
+        self.assertEqual(status,200)
+        self.assertEqual(states,[False])
     def test_model_discovery(self):
         status,body,_=self.request()
         self.assertEqual(status,200)
@@ -108,11 +119,11 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(result[0][0],200)
 
 
-    def test_both_profile_models_are_discoverable(self):
+    def test_all_profile_models_are_discoverable(self):
         status,body,_=self.request()
         self.assertEqual(status,200)
         self.assertEqual({m['id'] for m in json.loads(body)['data']},
-            {'kinit/whisper-large-v3-turbo-sk','openai/whisper-large-v3'})
+            {'kinit/whisper-large-v3-turbo-sk','openai/whisper-large-v3','openai/whisper-large-v3-turbo'})
 
     def test_precise_auto_language_is_not_forced_to_slovak(self):
         status,body,_=self.post(multipart(model='openai/whisper-large-v3',language='auto'))

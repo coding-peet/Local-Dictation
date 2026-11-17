@@ -1,4 +1,4 @@
-"""Offline CUDA engines for the two selected batch transcription profiles."""
+"""Original-FP16 CUDA profiles for local Whisper transcription."""
 from copy import deepcopy
 import gc
 from io import BytesIO
@@ -7,39 +7,60 @@ import os
 import time
 
 from asr import model_path, read_audio
+from language_policy import normalize_language, preferred_for_model
 
 FAST_MODEL_ID = "kinit/whisper-large-v3-turbo-sk"
 PRECISE_MODEL_ID = "openai/whisper-large-v3"
+TURBO_MODEL_ID = "openai/whisper-large-v3-turbo"
 MODELS = {
     FAST_MODEL_ID: "kinit-turbo",
     PRECISE_MODEL_ID: "whisper-large",
+    TURBO_MODEL_ID: "whisper-large-turbo",
 }
+MODEL_LANGUAGES = {}
 LOG = logging.getLogger("local-asr")
 
 
 def resolve_request(model_id, language):
-    aliases = {"kinit-turbo": FAST_MODEL_ID, "whisper-large": PRECISE_MODEL_ID}
+    aliases = {"kinit-turbo": FAST_MODEL_ID, "whisper-large": PRECISE_MODEL_ID,
+               "whisper-large-turbo": TURBO_MODEL_ID}
     model_id = aliases.get(model_id, model_id)
     if model_id not in MODELS:
-        raise ValueError("Unknown model; select one of the two models in /v1/models.")
-    language = (language or "").strip().lower()
-    language = {"slovak": "sk", "english": "en", "auto": None, "": None}.get(language, language)
-    if language not in (None, "sk", "en"):
-        raise ValueError("Supported explicit languages are sk and en; omit language for automatic detection.")
+        raise ValueError("Unknown model; select an installed model in /v1/models.")
+    language = normalize_language(language)
+    known_languages = MODEL_LANGUAGES.get(model_id)
+    if language is not None and known_languages and language not in known_languages:
+        raise ValueError("This model does not support the selected language.")
     if model_id == FAST_MODEL_ID:
-        if language == "en":
-            raise ValueError("The fast Slovak profile does not support English; select the precise SK/EN profile.")
+        if language not in (None, "sk"):
+            raise ValueError("The fast Slovak profile supports Slovak only; select a multilingual model.")
         language = "sk"
+    if MODEL_LANGUAGES.get(model_id)==["en"]:
+        if language not in (None,"en"):raise ValueError("This model supports English only.")
+        language="en"
     return model_id, language
 
 
 def generation_options(model_id, language):
     fast = model_id == FAST_MODEL_ID
+    turbo = model_id == TURBO_MODEL_ID
     options = dict(language=language, task="transcribe", do_sample=False,
-                   num_beams=1 if fast else 5, use_cache=True,
+                   num_beams=1 if fast or turbo else 5, use_cache=True,
                    return_timestamps=not fast)
     if not fast:
-        options["condition_on_prev_tokens"] = True
+        options["condition_on_prev_tokens"] = not turbo
+        # Use Whisper's acoustic re-decoding policy when a segment loops.
+        # The Transformers ratio is measured in token
+        # space (1.35), not OpenAI Whisper's text-space ratio (2.4).
+        # This retries recognition; it never removes repeated user words.
+        # Do not request logprob/no-speech thresholds here: Transformers
+        # retains every beam's vocabulary scores and exceeds the 4 GiB
+        # runtime budget. Compression fallback does not require those scores.
+        options.update(temperature=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
+                       compression_ratio_threshold=1.35)
+    if MODEL_LANGUAGES.get(model_id)==["en"]:
+        options.pop("language",None)
+        options.pop("task",None)
     return options
 
 
@@ -77,12 +98,12 @@ class WhisperEngine:
         self.runtime_warmup_seconds = None
         self._discard_fast_cache()
 
-    def prepare_runtime(self):
+    def prepare_runtime(self, cache_fast=True):
         """Prepare CUDA and the fast CPU cache before readiness; no idle GPU weights."""
         if self.runtime_ready:
             return self.runtime_warmup_seconds
         start = time.perf_counter()
-        LOG.info("Preparing transcription libraries, CUDA and fast CPU cache...")
+        LOG.info("Preparing transcription libraries and CUDA; fast_cpu_cache_requested=%s", cache_fast)
         # Resolve lazy model/processor imports now, rather than on first dictation.
         from transformers import (AutoModelForSpeechSeq2Seq, AutoProcessor,
                                   WhisperForConditionalGeneration, WhisperProcessor)
@@ -95,10 +116,11 @@ class WhisperEngine:
         finally:
             # Release unused temporary allocations before reporting readiness.
             self.unload()
-        self._prepare_fast_cpu_cache()
+        if cache_fast:
+            self._prepare_fast_cpu_cache()
         self.runtime_warmup_seconds = round(time.perf_counter() - start, 3)
         self.runtime_ready = True
-        LOG.info("CUDA runtime ready; fast weights cached on CPU, no GPU weights; preparation_seconds=%.3f", self.runtime_warmup_seconds)
+        LOG.info("CUDA runtime ready; fast_cpu_cache=%s, no GPU weights; preparation_seconds=%.3f", cache_fast, self.runtime_warmup_seconds)
         return self.runtime_warmup_seconds
 
     def _prime_cuda(self):
@@ -146,7 +168,7 @@ class WhisperEngine:
             return
         from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
         folder = model_path(MODELS[FAST_MODEL_ID])
-        processor = AutoProcessor.from_pretrained(folder, local_files_only=True)
+        processor = AutoProcessor.from_pretrained(folder, local_files_only=True, trust_remote_code=False)
         model = AutoModelForSpeechSeq2Seq.from_pretrained(
             folder, local_files_only=True, use_safetensors=True, trust_remote_code=False,
             dtype=self.torch.float16, low_cpu_mem_usage=True, attn_implementation="sdpa",
@@ -201,6 +223,14 @@ class WhisperEngine:
         if previous is not None:
             LOG.info("GPU model released: %s", previous)
 
+    def forget_model(self, model_id):
+        """Drop idle cached weights before an explicitly requested installation removal."""
+        if self.loaded_model_id == model_id:
+            self.unload()
+        if model_id == FAST_MODEL_ID:
+            self._discard_fast_cache()
+            gc.collect()
+
     def _load_model(self, model_id):
         if model_id == self.loaded_model_id and self.model is not None:
             return 0.0
@@ -219,9 +249,8 @@ class WhisperEngine:
                 raise RuntimeError("Expected active fast parameters to use CUDA FP16.")
         else:
             from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
-            from accelerate import cpu_offload
             folder = model_path(MODELS[model_id])
-            processor = AutoProcessor.from_pretrained(folder, local_files_only=True)
+            processor = AutoProcessor.from_pretrained(folder, local_files_only=True, trust_remote_code=False)
             model = AutoModelForSpeechSeq2Seq.from_pretrained(
                 folder, local_files_only=True, use_safetensors=True, trust_remote_code=False,
                 dtype=self.torch.float16, low_cpu_mem_usage=True, attn_implementation="sdpa",
@@ -233,8 +262,12 @@ class WhisperEngine:
             # Keep the encoder stem on CUDA so Whisper's logical device stays CUDA.
             # The decoder and its KV cache stay on GPU; encoder layers execute there
             # one at a time with CPU-backed weights.
-            cpu_offload(model.model.encoder.layers, execution_device=self.torch.device("cuda:0"),
-                        offload_buffers=True, preload_module_classes=["WhisperEncoderLayer"])
+            # The measured original Turbo fits entirely in this GPU. Offloading
+            # its encoder would unnecessarily inherit the much larger profile's cost.
+            if model_id != TURBO_MODEL_ID:
+                from accelerate import cpu_offload
+                cpu_offload(model.model.encoder.layers, execution_device=self.torch.device("cuda:0"),
+                            offload_buffers=True, preload_module_classes=["WhisperEncoderLayer"])
             if model.device.type != "cuda":
                 raise RuntimeError("The precise model logical device must remain CUDA.")
             self.processor, self.model = processor, model
@@ -244,7 +277,7 @@ class WhisperEngine:
         LOG.info("Model activated: %s; load_seconds=%.3f", model_id, elapsed)
         return elapsed
 
-    def transcribe(self, data, prompt, model_id, language):
+    def transcribe(self, data, prompt, model_id, language, cancel_event=None, preferred_languages=None):
         self._last_request_succeeded = False
         model_id, language = resolve_request(model_id, language)
         try:
@@ -263,6 +296,17 @@ class WhisperEngine:
         # Never inherit a language or forced prefix from another request.
         config.language = None
         config.forced_decoder_ids = None
+        language_mode = "model_fixed" if fast or MODEL_LANGUAGES.get(model_id)==["en"] else "forced" if language is not None else "detected"
+        mapping = getattr(config, "lang_to_id", {})
+        if language is not None and mapping and f"<|{language}|>" not in mapping:
+            raise ValueError("This model does not support the selected language token.")
+        detect_config = config
+        if language is None and preferred_languages is not None:
+            supported = [token[2:-2] for token in mapping]
+            preferred = preferred_for_model(supported, preferred_languages)
+            detect_config = deepcopy(config)
+            detect_config.lang_to_id = {token: token_id for token, token_id in mapping.items()
+                                        if token[2:-2] in preferred}
         prompt_ids = None
         if prompt.strip():
             prompt_ids = self.processor.get_prompt_ids(prompt.strip(), return_tensors="pt")
@@ -275,7 +319,7 @@ class WhisperEngine:
             if language is None:
                 language_id = int(self.model.detect_language(
                     input_features=prepared[0].input_features,
-                    generation_config=config)[0].item())
+                    generation_config=detect_config)[0].item())
                 by_id = {value: token[2:-2] for token, value in config.lang_to_id.items()}
                 language = by_id[language_id]
             options = generation_options(model_id, language)
@@ -284,12 +328,24 @@ class WhisperEngine:
                 if not fast:
                     options["prompt_condition_type"] = "all-segments"
             decoded = []
+            if cancel_event is not None:
+                from transformers import StoppingCriteria, StoppingCriteriaList
+                class Cancellation(StoppingCriteria):
+                    def __call__(self, input_ids, scores, **kwargs):
+                        return cancel_event.is_set()
+                options["stopping_criteria"] = StoppingCriteriaList([Cancellation()])
             for inputs in prepared:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise RuntimeError("Transcription cancelled.")
+                # Match the paired benchmark's reproducible native fallback policy.
+                self.torch.manual_seed(0)
                 tokens = self.model.generate(**inputs, generation_config=config, **options)
                 decoded.append(self.processor.batch_decode(tokens, skip_special_tokens=True)[0].strip())
+        if cancel_event is not None and cancel_event.is_set():
+            raise RuntimeError("Transcription cancelled.")
         self.torch.cuda.synchronize()
         elapsed = time.perf_counter() - start
         self._last_request_succeeded = True
-        return {"text": " ".join(decoded).strip(), "language": language,
+        return {"text": " ".join(decoded).strip(), "language": language, "language_mode": language_mode,
                 "duration": len(audio) / 16000, "model": model_id,
                 "inference_seconds": round(elapsed, 3), "load_seconds": round(load_seconds, 3)}

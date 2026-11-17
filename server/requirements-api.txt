@@ -1,0 +1,5 @@
+# Install into a separate candidate environment with the existing Torch runtime.
+starlette==1.10.0
+uvicorn==0.54.0
+websockets==17.4
+httpx==0.28.1

@@ -33,6 +33,18 @@ class PolicyTests(unittest.TestCase):
         self.assertTrue(opts['use_cache'])
         self.assertFalse(opts['return_timestamps'])
         self.assertNotIn('condition_on_prev_tokens',opts)
+    def test_precise_requests_repetition_fallback_without_retaining_all_beam_scores(self):
+        opts=generation_options(PRECISE,'sk')
+        # Transformers compares a token-space compression ratio, unlike the
+        # text-space ratio in OpenAI Whisper. Use the model's published policy.
+        self.assertEqual(opts.get('compression_ratio_threshold'),1.35)
+        # Both score-based thresholds retain the complete vocabulary scores
+        # for every beam/token, which exhausts the 4 GiB FP16 runtime.
+        self.assertNotIn('logprob_threshold',opts)
+        self.assertNotIn('no_speech_threshold',opts)
+        self.assertEqual(opts.get('temperature'),(0.0,0.2,0.4,0.6,0.8,1.0))
+        self.assertNotIn('no_repeat_ngram_size',opts)
+        self.assertNotIn('repetition_penalty',opts)
     def test_short_audio_remains_intact(self):
         audio=np.arange(16000,dtype=np.float32)
         chunks=split_audio(audio)

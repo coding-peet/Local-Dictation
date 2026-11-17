@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseArtifactsOutput>true</UseArtifactsOutput>
+    <ArtifactsPath Condition="'$(ArtifactsPath)' == ''">C:\AI\build\Local-Dictation\dotnet</ArtifactsPath>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+</Project>

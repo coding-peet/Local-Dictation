@@ -36,3 +36,23 @@ def score(reference,hypothesis):
             'deletions':sum(x['op']=='deletion' for x in edits),
             'insertions':sum(x['op']=='insertion' for x in edits),'edits':edits,
             'terms':{t:normalize(t) in hyp for t in ['BOM index','Nexus','Clockify','ICC1c']}}
+
+
+def score_terms(reference,hypothesis,terms):
+    """Count complete normalized token sequences, including repeated and absent terms."""
+    ref,hyp=normalize(reference).split(),normalize(hypothesis).split()
+    def count(words,phrase):
+        return sum(words[i:i+len(phrase)]==phrase for i in range(len(words)-len(phrase)+1))
+    result={}
+    for term in terms:
+        phrase=normalize(term).split()
+        if not phrase:raise ValueError('A term must contain letters or numbers.')
+        expected,actual=count(ref,phrase),count(hyp,phrase)
+        result[term]={'reference':expected,'hypothesis':actual,'missing':max(0,expected-actual),'extra':max(0,actual-expected)}
+    return result
+
+
+def no_speech_metrics(hypothesis,duration_seconds):
+    if duration_seconds<=0:raise ValueError('Audio duration must be positive.')
+    words=len(normalize(hypothesis).split())
+    return {'nonempty':bool(hypothesis.strip()),'words':words,'words_per_minute':words*60/duration_seconds}
