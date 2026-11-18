@@ -442,8 +442,9 @@ window serves an explicit editing/comparison task.
 
 - History follows the selected second layout: short date/duration rows, status
   when useful and at most two preview lines. The selected transcript receives
-  the remaining vertical space. Review/Copy/More sit with the detail; More opens
-  Insert at cursor, Change language, Save audio and Delete. Playback remains pinned across both
+  the remaining vertical space. Insert at cursor is the visible primary action
+  with Open Review, Copy text and More beside the detail. More contains Change
+  language, Save audio and Delete. Playback remains pinned across both
   History columns. Keep named navigation visible even when detail/list stack.
   All selected row text and delete icons use the semantic selection foreground
   in high contrast. Remove the repeated History heading above the list; show
@@ -783,15 +784,17 @@ clear to the user, preserve original recognition, and keep manual edits dominant
 
 ## Direct History insertion (clarified after af589a0)
 
-- History More actions includes Insert at cursor. The user explicitly rejected
-  an intermediate placement window. The action inserts highlighted transcript
-  text, or the whole selected transcript when there is no highlight.
+- History shows Insert at cursor as the first primary button beneath the
+  transcript, before Open Review, Copy text and More. Do not hide or duplicate
+  it inside More. The user explicitly rejected an intermediate placement window.
+  The action inserts highlighted transcript text, or the whole selected transcript
+  when there is no highlight.
 - Return to the last external application and freshly validate its current
   editable field/caret before delivery. Observe only native window/process/class
   metadata in the background. Own windows and taskbar/desktop navigation do not
   replace the remembered application. Never read field contents while tracking.
-- Snapshot and reserve the command before closing the menu. Subsequent physical
-  input, missing/replaced targets, denied activation or invalid field scope stop
+- Snapshot and reserve the command before destination activation. Subsequent
+  physical input, missing/replaced targets, denied activation or invalid field scope stop
   insertion and show an inline History result. Keep original Review/recording
   epoch behavior; History uses its explicit command cancellation and native-window
   guard so expected restored-focus events do not invalidate it.

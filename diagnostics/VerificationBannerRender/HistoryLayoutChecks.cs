@@ -107,6 +107,12 @@ public static class HistoryLayoutChecks
         bars=Find<ScrollBar>(panel).Where(b=>b.Orientation==Orientation.Vertical&&b.Visibility==Visibility.Visible&&b.ActualHeight>0).ToArray();
         Require(bars.All(b=>Math.Abs(b.ActualWidth-10)<.1),"The compact page's outer scrollbar is wider than its History controls.");
         Save(panel,448,420,Path.Combine(output,"history-layout-stacked-"+theme+".png"));
+        outer.ScrollToEnd();Layout(panel,448,420);SettingsHelpChecks.SettleForRender(panel);
+        var insert=Find<Button>(panel).Single(b=>AutomationProperties.GetName(b)=="Insert at cursor");
+        var insertBounds=insert.TransformToAncestor(panel).TransformBounds(new Rect(insert.RenderSize));
+        Require(insertBounds.Top>=0&&insertBounds.Bottom<=panel.ActualHeight+1,"Stacked History cannot reach its direct Insert button.");
+        Save(panel,448,420,Path.Combine(output,"history-layout-stacked-actions-"+theme+".png"));
+        outer.ScrollToHome();
         Layout(panel,760);Bounds();Require(splitter.Visibility==Visibility.Visible&&Math.Abs(body.ColumnDefinitions[0].ActualWidth-preferred)<1,"Returning from stacked History reset the user's column width.");
         var row=(ListBoxItem)list.ItemContainerGenerator.ContainerFromItem(list.SelectedItem);var cross=Find<Button>(row).Single(b=>AutomationProperties.GetName(b).StartsWith("Delete dictation"));
         Require(cross.ActualWidth==24&&cross.ActualHeight==24,"History resizing changed the compact delete overlay.");

@@ -77,16 +77,15 @@ public sealed partial class HistoryPanel : UserControl,IDisposable
         DockPanel.SetDock(metadata,Dock.Top);selectedText.Children.Add(metadata);selectedText.Children.Add(transcript);
         var card=Ui.Card(selectedText);card.Padding=new(16,12,16,12);card.Margin=new(0);right.Children.Add(card);
 
-        openReview=Ui.Button("Open Review",OpenReview,true);copyText=Ui.Button("Copy text",Copy);copyText.SetResourceReference(StyleProperty,"Md3OutlinedButton");
+        openReview=Ui.Button("Open Review",OpenReview);openReview.SetResourceReference(StyleProperty,"Md3OutlinedButton");copyText=Ui.Button("Copy text",Copy);copyText.SetResourceReference(StyleProperty,"Md3OutlinedButton");
         more=Ui.IconButton(PackIconKind.DotsHorizontal,"More actions",()=>{moreMenu.PlacementTarget=more;moreMenu.IsOpen=true;});more.ContextMenu=moreMenu;
         MenuItem Item(string label,Action action){var entry=new MenuItem{Header=label,MinHeight=48};entry.Click+=(_,_)=>action();moreMenu.Items.Add(entry);return entry;}
-        insertAtCursor=Item("Insert at cursor",InsertAtCursor);
+        insertAtCursor=Ui.Button("Insert at cursor",InsertAtCursor,true);
         insertAtCursor.ToolTip="Insert highlighted text, or the full transcript, into the last external application.";
-        moreMenu.Opened+=(_,_)=>UpdateHistoryInsertAction();
-        moreMenu.Items.Add(new Separator());
+        transcript.SelectionChanged+=(_,_)=>UpdateHistoryInsertAction();
         audioActions.Add(Item("Change language…",()=>{if(Selected is {} entry)controller.ShowInputLanguage(entry.Document);}));audioActions.Add(Item("Save audio…",Export));
         moreMenu.Items.Add(new Separator());Item("Delete…",Delete);
-        var actions=new WrapPanel{Margin=new(0,4,0,0)};foreach(var button in new[]{openReview,copyText,more}){button.Margin=new(0,0,8,0);actions.Children.Add(button);}
+        var actions=new WrapPanel{Margin=new(0,4,0,0)};foreach(var button in new[]{insertAtCursor,openReview,copyText,more}){button.Margin=new(0,0,8,0);actions.Children.Add(button);}
         Grid.SetRow(actions,1);right.Children.Add(actions);Grid.SetColumn(right,2);body.Children.Add(right);
         root.Children.Add(body);
         Content=new ScrollViewer{Content=root,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,VerticalContentAlignment=VerticalAlignment.Stretch,HorizontalContentAlignment=HorizontalAlignment.Stretch};

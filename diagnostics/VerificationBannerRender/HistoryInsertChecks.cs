@@ -53,7 +53,11 @@ public static class HistoryInsertChecks
         using var panel=new HistoryPanel(controller);panel.SetActive(true);
         var transcript=Get<TextBox>(panel,"transcript");var menu=Get<ContextMenu>(panel,"moreMenu");
         var snapshot=typeof(HistoryPanel).GetMethod("SnapshotHistoryInsertionText",Fields);
-        Require(snapshot!=null&&menu.Items.OfType<MenuItem>().Count(i=>(string)i.Header=="Insert at cursor")==1,"History does not expose one direct Insert menu action.");
+        var insert=Get<object>(panel,"insertAtCursor");
+        Require(snapshot!=null&&insert is Button button&&(string)button.Content=="Insert at cursor"&&
+            LogicalTreeHelper.GetParent(button) is WrapPanel row&&ReferenceEquals(row.Children[0],button)&&
+            !menu.Items.OfType<MenuItem>().Any(i=>(string)i.Header=="Insert at cursor"),
+            "History Insert must be the first visible action button, not hidden in More.");
         transcript.Select(6,4);Require((string?)snapshot!.Invoke(panel,null)=="Beta",$"History did not snapshot the highlighted portion: visible={transcript.Text}, selection={transcript.SelectedText}, snapshot={snapshot.Invoke(panel,null)}, entries={Get<ListBox>(panel,"items").Items.Count}.");
         transcript.Select(0,0);Require((string?)snapshot.Invoke(panel,null)=="Alpha Beta Gamma","History did not fall back to the entire displayed transcript.");
         checks.Add("History direct Insert uses highlighted text or full transcript without a placement window");

@@ -2,10 +2,12 @@
 
 ## User decisions
 
-The user rejected the placement window on 2026-11-17. Selecting Insert from
-History More actions must perform insertion directly, with no intermediate
-window. Use highlighted transcript text, or the whole selected transcript when
-there is no highlight. Preserve the saved source and its insertion receipt.
+The user rejected the placement window on 2026-11-17 and requested a directly
+visible button on 2026-11-18. Insert at cursor is the first primary action below
+the History transcript, beside Open Review, Copy text and More, with no duplicate
+in More. It performs insertion directly, with no intermediate window. Use
+highlighted transcript text, or the whole selected transcript when there is no
+highlight. Preserve the saved source and its insertion receipt.
 
 ## Approach
 
@@ -14,7 +16,7 @@ foreground-event observer. Keep only its native window and process identity in
 memory; do not read text or the clipboard while observing application changes.
 Local Dictation windows and taskbar/desktop surfaces do not replace this target.
 
-After closing the History menu, restore that external window once and capture
+After the direct button command, restore that external window once and capture
 its current editable field/caret through the existing guarded delivery path.
 Do not choose an arbitrary field or synthesize keyboard shortcuts to switch apps.
 A missing/closed/replaced window, denied activation, unsupported field, intervening
@@ -26,7 +28,8 @@ may deny activation; failure must preserve text and avoid automatic retry.
 
 ## Data and operation lifetime
 
-Snapshot the exact selected text before closing the menu. Insert an independent,
+Snapshot the exact selected text before destination activation. Insert an
+independent,
 memory-only copy so saved text, comparison choices and previous receipts remain
 unchanged, including for already-inserted source items. Do not create a saved
 History or private-review duplicate. Retain published carriers and unfinished provider work for delayed-confirmation/
