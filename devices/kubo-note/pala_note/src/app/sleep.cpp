@@ -5,7 +5,7 @@
 #include "sleep.h"
 #include "ui.h"
 #include "network.h"
-#include "brain.h"
+#include "notes.h"
 #include "battery.h"
 #include "../../sounds.h"
 #include "WiFi.h"
@@ -49,7 +49,7 @@ void enterUltraSleep() {
   // A press during the panel refresh must still cancel sleep safely.
   if (digitalRead(BTN_PWR) == LOW) {
     resetActivity();
-    showIdle(pendingBrainMemoryCount(), readBattery().percent);
+    showIdle(pendingTranscriptionCount(), readBattery().percent);
     return;
   }
   stopTransferMode();

@@ -11,6 +11,10 @@ namespace LocalDictation.App;
 
 public sealed partial class AppController : IDisposable
 {
+    PalaBridgeController? palaBridge;
+    PalaUsbWatcher? palaUsbWatcher;
+    bool stoppingPalaWatcher;
+    internal PalaBridgeController PalaBridge => palaBridge ??= new();
     sealed class Run(Settings settings)
     {
         public Settings Settings=settings;
@@ -363,6 +367,18 @@ public sealed partial class AppController : IDisposable
         menu.Items.Add("Start / stop dictation",null,(_,_)=>Toggle());
         menu.Items.Add("Open Local Dictation",null,(_,_)=>ShowSettings());
         menu.Items.Add("History",null,(_,_)=>ShowHistory());
+        var bridgeStatus = new Forms.ToolStripMenuItem { Enabled = false };
+        var bridgeRestart = new Forms.ToolStripMenuItem("Restart Bridge");
+        bridgeRestart.Click += async (_, _) => await PalaBridge.StopAsync(restart: true);
+        menu.Items.Add(new Forms.ToolStripSeparator());
+        menu.Items.Add(bridgeStatus);
+        menu.Items.Add(bridgeRestart);
+        menu.Opening += (_, _) =>
+        {
+            var status = PalaBridge.ReadStatus();
+            bridgeStatus.Text = "Pala Bridge · " + status.Summary;
+            bridgeRestart.Enabled = status.CanStop;
+        };
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Exit",null,(_,_)=>Exit());
         tray=new Forms.NotifyIcon {Text="Local Dictation",Icon=System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!)??System.Drawing.SystemIcons.Application,
@@ -850,6 +866,37 @@ public sealed partial class AppController : IDisposable
         Changed?.Invoke();
     }
 
+    internal void InitializePalaIntegration()
+    {
+        UpdatePalaIntegration();
+        if (Settings.PalaIntegrationEnabled && Settings.PalaBridgeAutoStart) PalaBridge.Start();
+    }
+
+    void UpdatePalaIntegration()
+    {
+        var enabled = Settings.PalaIntegrationEnabled;
+        PalaBridge.SetEnabled(enabled);
+        if (stoppingPalaWatcher) return;
+        if (enabled) palaUsbWatcher ??= PalaUsbWatcher.TryStart();
+        else if (palaUsbWatcher is { } watcher) _ = StopPalaWatcher(watcher);
+    }
+
+    async Task StopPalaWatcher(PalaUsbWatcher watcher)
+    {
+        stoppingPalaWatcher = true;
+        try { await watcher.StopAsync(); }
+        catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            Diagnostics.Error("Pala USB watcher shutdown", error);
+        }
+        finally
+        {
+            palaUsbWatcher = null;
+            stoppingPalaWatcher = false;
+        }
+        if (!disposed && Settings.PalaIntegrationEnabled) UpdatePalaIntegration();
+    }
+
     public void SaveSettings(Settings settings)
     {
         if(Models.FirstOrDefault(m=>m.Id==settings.PrimaryModel) is {} model)
@@ -859,8 +906,10 @@ public sealed partial class AppController : IDisposable
                 throw new ArgumentException("Choose a verification model supporting every preferred Auto language supported by Dictation.");
         }
         var retentionChanged=Settings.AudioRetentionDays!=settings.AudioRetentionDays;
+        var palaIntegrationChanged=Settings.PalaIntegrationEnabled!=settings.PalaIntegrationEnabled;
         settings.Save();
         Settings=settings;
+        if(palaIntegrationChanged)UpdatePalaIntegration();
         ThemeManager.Apply(settings.Theme);
         RecheckShortcut();
         if(retentionChanged)ApplyHistoryRetention();
@@ -1514,6 +1563,8 @@ public sealed partial class AppController : IDisposable
     }
     public void Dispose()
     {
+        if (!stoppingPalaWatcher) palaUsbWatcher?.Dispose();
+        palaBridge?.Dispose();
         disposed=true;ClipboardRecovery.Changed-=ClipboardRecoveryChanged;
         timer.Stop();reconnectTimer.Stop();historyRetentionTimer.Stop();resumeTimer.Stop();historyWindowTracker?.Dispose();input.Dispose();tray.Visible=false;tray.Dispose();active?.Cancel.Cancel();automation.Dispose();
     }

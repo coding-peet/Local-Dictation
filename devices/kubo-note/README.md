@@ -21,6 +21,141 @@ pairing material locally with the setup tool before a paired deployment.
 The Android companion is under `samsung`. Its Gradle wrapper uses JDK 17
 and Android SDK 35. Keep the APK and Gradle build output outside Git.
 
+## Synchronize recordings after waking Pala
+
+Keep Local Dictation running on the paired Windows PC. Press the lower
+button to wake Pala. When Pala is already awake on Home, the lower button
+also starts a check if recordings are waiting.
+
+1. When an active USB data connection is present, Pala first gives the
+   paired Windows client time to authenticate over USB.
+2. Otherwise Pala tries its paired HTTPS Bridge over Wi-Fi. Bridge must
+   support the authenticated readiness endpoint below.
+3. When the Wi-Fi Bridge is unreachable, Pala briefly advertises the
+   Bluetooth LE transfer service. Keep Bluetooth enabled in Windows.
+   The watcher uses the existing Pala Bridge pairing token and the
+   BLE dependencies in `mac-bridge/requirements.txt`.
+
+The client returns the local transcript to the same SD note over USB or
+Bluetooth. The watcher releases the COM port between queue checks. An
+empty USB check leaves the device's usual sleep deadline in effect.
+If all routes fail, the original recording stays queued.
+
+### Manual USB check
+
+For a manual one-recording check, run the following from the Local Dictation
+repository root while the automated watcher is idle.
+
+~~~powershell
+$env:VIRTUAL_ENV = Join-Path $env:LOCALAPPDATA 'PalaBridge/app/.venv'
+Invoke-RestMethod http://127.0.0.1:48125/health
+py -B -m serial.tools.list_ports -v
+py -B devices/kubo-note/mac-bridge/usb_sync.py --port COM24
+~~~
+
+Use the COM port found for Pala and optionally add `--note` followed by its
+pending note number. The command uses existing pairing, transcribes one
+stored WAV through Local Dictation and saves the result on Pala. This USB
+path keeps the transcript local and preserves the WAV on the SD card.
+A disconnected session expires or can be cancelled with a device button.
+
+To read the stored text, wake Pala and hold both buttons for three seconds
+from Home to open the Web Companion. Use the address on the display from
+the same private network, or join Pala's hotspot if the display offers it.
+In **Memories**, locate the note by number and use **Download TXT** for
+the full transcript.
+
+USB transcription stores text on the note's SD card and uses the Local
+Dictation API. It does not add a desktop History entry. Google routing is
+available when the private Bridge has approved destination bindings.
+
+## Verify one saved transcript in Google
+
+Export one existing TXT from Pala and keep its original note number. The
+command below identifies the route locally. It neither invokes ASR nor
+opens any other recording.
+
+~~~powershell
+py -B devices/kubo-note/mac-bridge/pala_google.py --transcript 'C:\path\note_20.txt' --note 20
+~~~
+
+Use the Bridge Python environment above. With the authorized Tasks
+account and the agreed trial list, a clearly dictated task can be tested
+with `--task-list 'Kubo notes general' --apply`. Use
+`--general-list 'Kubo notes general' --apply` for an ordinary personal
+transcript. Short dictations fit in the Google Tasks title alone. A longer
+dictation uses up to three topic words from across the transcript as its
+title. The complete transcript stays in details. Title selection runs
+locally and excludes common Slovak filler words.
+For a Docs trial use the
+approved document ID with `--docs-id`, an authorized Docs token, and the
+original recording time with `--captured`. Do not substitute the import
+date for the recording date. The export candidate also accepts `--usb-port`
+in place of `--transcript` and reads the existing text and capture time
+directly from the paired device.
+
+Automatic USB delivery uses explicit `google_routes` bindings in the
+private Bridge configuration. Each Tasks, shopping, sorting, General
+or Docs binding contains the verified provider `id` and `title`.
+A General binding can set `provider` to `docs` for a document. A named list
+or document uses a binding such as `list:moj nakup` or `document:kubo napady`.
+Say the title followed by a pause that transcribes as a colon or comma,
+or use a title in quotation marks. An unresolved named destination stays
+pending.
+
+With the bindings in place, the USB client stages a delivery before saving
+its text to Pala and makes the delivery eligible after Pala acknowledges the
+save. The local receipt keeps a verified delivery complete after Google
+edits or deletions. If Google returns no task ID and the write cannot be
+verified, keep it uncertain to prevent a duplicate. Work instructions
+and appointment proposals remain local. Appointments still require
+confirmation before any Google Calendar write.
+
+## Device name
+
+Open **Connections → Pala Note Configuration** in Local Dictation and set
+**Note display name**. The default is **Kubo**. Use 1–10 letters, digits,
+spaces or hyphens, starting with a letter or digit. The paired Note stores
+the name in its settings and uses it after a reboot. Local Dictation sends
+the name on paired USB and Bluetooth sync; the Note can also fetch it
+from the paired HTTPS Bridge when it connects over Wi-Fi.
+
+To verify the name on a paired USB port without processing recordings:
+
+~~~powershell
+py -B devices/kubo-note/mac-bridge/usb_sync.py --port COM24 --name-only
+~~~
+
+Use the actual paired port. A successful response verifies that the Note
+saved the name. The existing pairing and DNS identity stay in use.
+
+## Home weather and Moon
+
+The paired Bridge's authenticated GET /pala/weather endpoint serves the
+seven-day Open-Meteo forecast for Trnava in Celsius. Start the current
+Bridge to make the forecast available. The device checks when idle,
+after queued recording transfers. It keeps the last valid forecast
+on SD and uses only the entry for today's local date. The Moon icon is
+an approximate phase calculated from the device clock.
+
+The current Windows watcher also sends the available forecast on paired
+USB attachment and during a paired Bluetooth sync. This check can run when
+the transcription service is busy. The watcher uses the cached provider
+response when it is fresh. To send and verify weather over USB without
+touching the recording queue, run this from the repository root in the
+Bridge Python environment:
+
+~~~powershell
+py -B devices/kubo-note/mac-bridge/usb_sync.py --port COM24 --weather-only
+~~~
+
+Use the actual paired port. This mode reads back the committed SD cache
+and verifies the values selected for the device's local date.
+
+Weather data by [Open-Meteo](https://open-meteo.com/). The Moon phase
+estimate uses the January 2000 epoch from
+[NASA's Moon phase tables](https://eclipse.gsfc.nasa.gov/phase/phases1901.html).
+
 ## Transcription on Windows
 
 Run the Local Dictation API on the same computer as Pala Bridge.

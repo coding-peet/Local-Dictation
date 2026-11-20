@@ -2,6 +2,7 @@
 
 #if PALA_BRIDGE_DISCOVERY
 #include <ESPmDNS.h>
+#include <HTTPClient.h>
 #include <WiFi.h>
 #include "bridge_address.h"
 #include "settings.h"
@@ -32,6 +33,22 @@ IPAddress lookupPairedBridge() {
   }
   return mdnsStarted ? MDNS.queryHost(PALA_BRIDGE_ID, 1500) : IPAddress();
 }
+}
+
+WifiBacklog pairedWifiBacklog() {
+  ProviderClient client;
+  client.setCACert(PALA_BRIDGE_CERT);
+  client.setHandshakeTimeout(2);
+  HTTPClient http;
+  if (!http.begin(client, "https://" PALA_AUTHORITY "/pala/ready")) return WifiBacklog::Unavailable;
+  http.setConnectTimeout(1500);
+  http.setTimeout(3000);
+  http.addHeader("Authorization", "Bearer " PALA_BRIDGE_TOKEN);
+  const int status = http.GET();
+  http.end();
+  if (status == 200) return WifiBacklog::Ready;
+  if (status == 503) return WifiBacklog::Busy;
+  return WifiBacklog::Unavailable;
 }
 
 void resetBridgeAddressCache() {

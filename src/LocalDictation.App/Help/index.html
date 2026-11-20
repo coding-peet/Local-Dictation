@@ -157,6 +157,7 @@
             <li><a href="#private-recording">Private recording</a></li>
             <li><a href="#personal-dictionary">Personal dictionary</a></li>
             <li><a href="#settings">General and shortcuts</a></li>
+            <li><a href="#connections">Connections and Pala Note</a></li>
             <li><a href="#troubleshooting">Troubleshooting</a></li>
             <li><a href="#privacy">Local files and privacy</a></li>
           </ul>
@@ -393,7 +394,7 @@
 
       <section id="settings" aria-labelledby="settings-title">
         <h2 id="settings-title">General and shortcuts</h2>
-        <p>The main sections are <strong>General → Models → Dictation → History → Connections</strong>. General controls the app, Models manages installed resources, Dictation prepares your next recording, and History works with saved or imported results, and Connections manages the local transcription service. Manual launch opens Dictation; Record/Stop and Help remain available from every section.</p>
+        <p>The main sections are <strong>General → Models → Dictation → History → Connections</strong>. General controls the app, Models manages installed resources, Dictation prepares your next recording, and History works with saved or imported results. <a href="#connections">Connections</a> manages the local transcription service and Pala Note. Manual launch opens Dictation; Record/Stop and Help remain available from every section.</p>
         <h3>Start with Windows</h3>
         <p>In <strong>General → Startup</strong>, enable <strong>Start with Windows</strong> to open Local Dictation in the system tray when you sign in. It is off until you choose it. Automatic startup does not open the main window or start a recording. Double-click the tray icon or choose <strong>Open Local Dictation</strong> to open the window.</p>
         <p>This choice applies to your Windows account. Turning it off does not close the app or stop local APIs. Windows Startup apps settings or organization restrictions can override automatic startup. If the change cannot be confirmed, the app shows an inline explanation and retains the verified state.</p>
@@ -432,9 +433,46 @@
         <h3>Close the main window or exit the app</h3>
         <p>The title-bar <strong>×</strong> closes the main window; the app stays available in the Windows notification area. Choose <strong>Exit</strong> from its notification-area menu to quit.</p>
         <p>If a session is active, Exit asks to stop it, then waits while it saves the received text and original recording before closing. Stopping this way keeps the text for Review and does not complete automatic insertion. Captured audio can appear in History even if recognition returned no text. If protected Review saving fails, the app stays open so you can copy or explicitly dismiss the unsaved text.</p>
+      </section>
+
+      <section id="connections" aria-labelledby="connections-title">
+        <h2 id="connections-title">Connections and Pala Note</h2>
+
         <h3>Local transcription service</h3>
-        <p>The app starts its local transcription service automatically when it opens. An existing listener is preserved, including while its runtime prepares. Wait for <strong>Ready · Local transcription</strong> before recording; reconnection is automatic. If startup fails, correct the service address or launcher problem and use <strong>Start local API</strong> to retry. Closing the app leaves the service running.</p>
-        <p>Current address: <code>http://127.0.0.1:48125</code>. TypeWhisper's separate batch server on port <code>8123</code> is not this client's session service.</p>
+        <p>Local Dictation starts its local transcription service automatically when it opens.
+          In <strong>Connections → Local transcription service</strong>, use <strong>Reconnect</strong>
+          to check the connection again or <strong>Start local API</strong> to retry startup.
+          Wait for <strong>Ready · Local transcription</strong> before recording.</p>
+        <p>To edit the address, open <strong>Advanced → Local service address</strong>.
+          The default is <code>http://127.0.0.1:48125</code>. Pala Bridge uses this same service.
+          TypeWhisper uses its separate service on port <code>8123</code>.
+          The local transcription service keeps running after the app exits.</p>
+
+        <h3>Sync a paired Pala Note</h3>
+        <p>Open <strong>Pala Note Configuration</strong> and turn on <strong>Enable Pala sync</strong>.
+          Some versions call this switch <strong>Enable Pala integration</strong>.
+          Keep Local Dictation running and wake the Note with the lower button.</p>
+        <ul>
+          <li><strong>USB</strong> takes priority when the Note is connected with a data cable.</li>
+          <li><strong>Wi-Fi</strong> requires the Note and PC to be on the same approved network. Select
+            <strong>Start Bridge</strong> to enable the paired HTTPS connection.</li>
+          <li><strong>Bluetooth</strong> is the fallback for a paired Note when USB is unavailable and
+            the Note cannot reach Bridge over Wi-Fi.</li>
+        </ul>
+        <p><strong>Start with Local Dictation</strong> starts the network Bridge on the next app launch.
+          A Bridge started from Local Dictation keeps running when Settings closes. Choose
+          <strong>Exit</strong> in the Windows tray to stop it along with the app.</p>
+
+        <h3>Name, model and activity</h3>
+        <p><strong>Note display name</strong> sets the label shown on the device after synchronization
+          with compatible firmware. <strong>Pala transcription model</strong> lets you keep the paired
+          profile's model, follow the main Local Dictation model, or select another installed model
+          that supports Slovak. Model changes apply to the next Pala transcription.</p>
+        <p>The network status shows the pairing profile, HTTPS listener and latest authenticated contact.
+          When available, the activity row shows the current step, such as <strong>Receiving recording</strong>,
+          <strong>Transcribing on this PC</strong>, or <strong>Saving to Google</strong>.
+          <strong>Saving to Google</strong> appears while Bridge writes to a configured Google destination.
+          If a recording stays queued, check the connection and wake the Note again once the local service is ready.</p>
       </section>
 
       <section id="troubleshooting" aria-labelledby="troubleshooting-title">

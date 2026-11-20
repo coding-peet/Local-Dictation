@@ -80,12 +80,44 @@ public static class GeneralStartupChecks
 
             Search(window,shell,"windows-startup","start with windows","General");Require(shell.Navigation.SelectedIndex==(int)MainSection.General,"Startup search missed General.");
             Search(window,shell,"service-address","service address","Connections");Require(service.IsExpanded&&shell.Navigation.SelectedIndex==(int)MainSection.Connections,"Service search failed to expand Connections Advanced.");
+            Search(window,shell,"pala-sync","Pala sync","Connections");
+            var syncToggle = Get<ToggleButton>(window,"palaIntegration");
+            Require(AutomationProperties.GetName(syncToggle)=="Enable Pala sync" &&
+                AutomationProperties.GetHelpText(syncToggle).Contains("Wi-Fi"),"Pala sync must explain Wi-Fi.");
+            Search(window,shell,"pala-bridge-name","Note display name","Connections");
+            Search(window,shell,"pala-bridge-model","Pala transcription model","Connections");
+            Require(shell.Navigation.SelectedIndex==(int)MainSection.Connections,
+                "Bridge settings search did not open Connections.");
+            var activityDirectory = Path.Combine(output, "bridge-activity-fixture");
+            Directory.CreateDirectory(activityDirectory);
+            File.WriteAllText(Path.Combine(activityDirectory, "bridge-activity-usb-fixture.json"),
+                JsonSerializer.Serialize(new { Pid = Environment.ProcessId, Transport = "usb",
+                    Phase = "transcribing", UpdatedAt = DateTimeOffset.UtcNow }));
+            File.WriteAllText(Path.Combine(activityDirectory, "bridge-activity-network-stale.json"),
+                JsonSerializer.Serialize(new { Pid = int.MaxValue, Transport = "network",
+                    Phase = "processing", UpdatedAt = DateTimeOffset.UtcNow.AddSeconds(1) }));
+            var activityReader = typeof(AppController).Assembly.GetType("LocalDictation.App.Services.PalaBridgeActivity")!
+                .GetMethod("ReadCurrent")!;
+            var current = (string?)activityReader.Invoke(null, [activityDirectory]);
+            Require(current=="Transcribing on this PC · USB","Bridge activity must accept the live worker and ignore a dead one.");
+            var activity = typeof(SettingsWindow).GetMethod("ApplyPalaActivity",Fields)!;
+            var statusLine = Get<TextBlock>(window,"palaActivityText");
+            var statusProgress = Get<ProgressBar>(window,"palaActivityProgress");
+            activity.Invoke(window, [current, true]);
+            Require(statusLine.Text=="Transcribing on this PC · USB" &&
+                statusProgress.IsIndeterminate==SystemParameters.ClientAreaAnimation &&
+                statusProgress.Visibility==(SystemParameters.ClientAreaAnimation?Visibility.Visible:Visibility.Hidden),
+                "Active Bridge status or reduced-motion behavior is incorrect.");
+            activity.Invoke(window, ["Bridge idle", false]);
+            Require(statusLine.Text=="Bridge idle" && statusProgress.Visibility==Visibility.Hidden &&
+                !statusProgress.IsIndeterminate,"Idle Bridge activity left an animated progress bar.");
+            checks.Add("Bridge activity reports the phase in text, animates only when active, and honors reduced motion.");
             Search(window,shell,"dictionary-hints","recognition hints","Dictation");Require(dictation.IsExpanded&&shell.Navigation.SelectedIndex==(int)MainSection.Dictation,"Dictionary search failed to reveal Dictation Advanced.");
             dictation.IsExpanded=false;Search(window,shell,"compatibility","application compatibility","Dictation");Require(dictation.IsExpanded,"Compatibility search did not reveal its current target.");
             Require(JsonSerializer.Serialize(owner.Settings)==settings&&store.Writes+store.Deletes==mutations,"Search applied settings or startup registration.");
             window.SelectHistory();Require(shell.Navigation.SelectedIndex==(int)MainSection.History,"History command opened the reordered Dictation page.");
             Require(Get<HistoryPanel>(window,"historyPanel")!=null,"History route lost its persistent panel.");
-            checks.Add("Search routes General, Connections and Dictation categories, expands Advanced without edits and preserves reordered History command");
+            checks.Add("Search routes General, Connections, Bridge settings and Dictation, expands Advanced without edits, and preserves reordered History command");
 
             dictation.IsExpanded=false;owner.RetainDictionaryDraft("Synthetic hints","invalid correction","Synthetic unsaved dictionary warning");Call(window,"RefreshAdvancedStatus");
             var summary=Get<TextBlock>(window,"dictationAdvancedSummary");Require(summary.Visibility==Visibility.Visible&&summary.Text.Contains("Synthetic unsaved dictionary warning"),"Collapsing Advanced hid the unsaved dictionary error.");

@@ -2,7 +2,7 @@
 #include <cstring>
 #include <cstdint>
 
-inline bool validCalendarDate(int year, int month, int day) {
+constexpr bool validCalendarDate(int year, int month, int day) {
   if (year < 2020 || year > 2100 || month < 1 || month > 12 || day < 1) return false;
   const int days[] = {31,28,31,30,31,30,31,31,30,31,30,31};
   const bool leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);

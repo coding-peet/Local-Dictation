@@ -1,5 +1,6 @@
 #pragma once
 #include "provider.h"
+#include "backlog_transport.h"
 #include <WiFiClientSecure.h>
 
 #if PALA_BRIDGE_DISCOVERY
@@ -10,6 +11,7 @@ public:
   int connect(const char* host, uint16_t port, int32_t timeout) override;
 };
 void resetBridgeAddressCache();
+WifiBacklog pairedWifiBacklog();
 #else
 using ProviderClient = WiFiClientSecure;
 #endif

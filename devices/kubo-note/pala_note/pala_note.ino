@@ -29,6 +29,13 @@ extern "C" {
 #include "src/app/sleep.h"
 #include "src/app/tasks.h"
 #include "src/app/ui.h"
+#include "src/app/usb_sync.h"
+#include "src/app/bridge_client.h"
+#include "src/app/bluetooth_sync.h"
+#include "src/app/home_weather.h"
+#if PALA_BRIDGE_DISCOVERY
+#include <driver/usb_serial_jtag.h>
+#endif
 
 board_power_bsp_t board(EPD_PWR_PIN, Audio_PWR_PIN, VBAT_PWR_PIN);
 epaper_driver_display* display = nullptr;
@@ -56,6 +63,14 @@ bool companionExitArmed = false;
 bool idleInputArmed = true;
 uint32_t companionGestureStartedAt = 0;
 uint32_t nextBackgroundAttemptAt = 0;
+uint32_t backlogRequestedAt = 0;
+bool backlogRequested = false;
+bool bluetoothWindowShown = false;
+#if PALA_BRIDGE_DISCOVERY
+bool usbDataConnected = false;
+RTC_DATA_ATTR int64_t retryHomeWeatherAfter = 0;
+uint32_t nextHomeWeatherCheckAt = 0;
+#endif
 bool backlogSyncActive = false;
 int backlogSyncTotal = 0;
 uint32_t nextHomeClockCheckAt = 0;
@@ -78,6 +93,7 @@ uint32_t setupCompanionHoldStartedAt = 0;
 int processPendingMemories(int preferredNote, int maxNotes);
 
 String usbSetupLine;
+bool discardUsbLine = false;
 
 struct FlashSetupHeader {
   char magic[8];
@@ -194,12 +210,16 @@ void handleUsbSetup() {
   while (Serial.available()) {
     const char c = static_cast<char>(Serial.read());
     if (c == '\n') {
-      usbSetupLine.trim();
-      applyUsbSetupLine(usbSetupLine);
+      if (!discardUsbLine) {
+        usbSetupLine.trim();
+        if (!handleUsbSyncLine(usbSetupLine, state == STATE_IDLE) && !usbSyncActive())
+          applyUsbSetupLine(usbSetupLine);
+      }
       usbSetupLine = "";
-    } else if (c != '\r') {
+      discardUsbLine = false;
+    } else if (c != '\r' && !discardUsbLine) {
       if (usbSetupLine.length() < 720) usbSetupLine += c;
-      else usbSetupLine = "";
+      else { usbSetupLine = ""; discardUsbLine = true; }
     }
   }
 }
@@ -250,16 +270,25 @@ String localDayKey() {
   return local.length() >= 10 && local != "time not set" ? local.substring(0, 10) : "";
 }
 
+bool hasQueuedAudio() {
+  for (const auto& note : noteIndex) {
+    if (!note.hasText && noteQueueState(note.num) != "blocked") return true;
+  }
+  return false;
+}
+
+void requestBacklogSync() {
+  backlogRequestedAt = millis();
+  backlogRequested = true;
+  nextBackgroundAttemptAt = 0;
+}
+
 void renderReadyHome() {
   const BatteryReading battery = readBattery();
   // The home screen only exposes recordings that are not transcribed yet.
   // Rebuilding structure/vector indexes is silent maintenance: the transcript
   // is already searchable and must not leave a permanent "waiting" badge.
-  int untranscribed = 0;
-  for (const NoteEntry& note : noteIndex) {
-    if (!note.hasText && noteQueueState(note.num) != "blocked") untranscribed++;
-  }
-  showIdle(untranscribed, battery.valid ? battery.percent : -1);
+  showIdle(pendingTranscriptionCount(), battery.valid ? battery.percent : -1);
   displayedHomeDay = localDayKey();
   nextHomeClockCheckAt = millis() + 60000UL;
 }
@@ -309,12 +338,15 @@ void browseAnswerPages(const String& answer, int sourceCount) {
   }
 }
 
-bool connectConfiguredWifi(uint8_t attempts = 20) {
+bool connectConfiguredWifi(uint8_t attempts = 20, uint32_t budgetMs = 0) {
   if (!palaHasWifi()) return false;
+  const uint32_t startedAt = millis();
+  const auto hasTime = [&] { return !budgetMs || millis() - startedAt < budgetMs; };
+  const uint32_t clockTimeout = budgetMs ? 1200 : 4000;
   // Background processing may already have a healthy association. Calling
   // WiFi.begin again tears it down and adds an avoidable 1-3 second reconnect.
   if (WiFi.status() == WL_CONNECTED) {
-    if (time(nullptr) < 1700000000) syncTimeFromNTP(4000);
+    if (time(nullptr) < 1700000000) syncTimeFromNTP(clockTimeout);
     return true;
   }
   WiFi.mode(WIFI_STA);
@@ -336,10 +368,11 @@ bool connectConfiguredWifi(uint8_t attempts = 20) {
     WiFi.mode(WIFI_STA);
     delay(60);
     WiFi.begin(quick.ssid.c_str(), quick.password.c_str());
-    for (uint8_t attempt = 0; attempt < quickAttempts && WiFi.status() != WL_CONNECTED; attempt++) delay(200);
+    for (uint8_t attempt = 0; attempt < quickAttempts && hasTime() &&
+         WiFi.status() != WL_CONNECTED; attempt++) delay(200);
     if (WiFi.status() == WL_CONNECTED) {
       palaSetLastWifiSsid(quick.ssid);
-      if (time(nullptr) < 1700000000) syncTimeFromNTP(4000);
+      if (time(nullptr) < 1700000000) syncTimeFromNTP(clockTimeout);
       Serial.printf("[WiFi] quick reconnect: %s\n", quick.ssid.c_str());
       return true;
     }
@@ -360,7 +393,7 @@ bool connectConfiguredWifi(uint8_t attempts = 20) {
     // take longer than the quick window.
     tried[profile] = false;
   }
-  const int visible = WiFi.scanNetworks(false, true);
+  const int visible = hasTime() ? WiFi.scanNetworks(false, true, false, budgetMs ? 120 : 300) : 0;
   Serial.printf("[WiFi] scan found %d networks; %d profiles saved\n",
                 visible, palaWifiProfileCount());
   for (int network = 0; network < visible; network++) {
@@ -374,7 +407,7 @@ bool connectConfiguredWifi(uint8_t attempts = 20) {
   WiFi.scanDelete();
 
   const uint8_t perProfileAttempts = attempts < 4 ? 4 : (attempts < 8 ? attempts : 8);
-  for (int pass = 0; pass < palaWifiProfileCount(); pass++) {
+  for (int pass = 0; pass < palaWifiProfileCount() && hasTime(); pass++) {
     int selectedProfile = -1;
     int strongestRssi = -3000;
     for (int profile = 0; profile < palaWifiProfileCount(); profile++) {
@@ -403,11 +436,11 @@ bool connectConfiguredWifi(uint8_t attempts = 20) {
     // short fallback for unseen profiles, but allow visible saved APs six seconds.
     const uint8_t associationAttempts = strongestRssi > -2000 ? 20 : perProfileAttempts;
     for (uint8_t attempt = 0;
-         attempt < associationAttempts && WiFi.status() != WL_CONNECTED;
+         attempt < associationAttempts && hasTime() && WiFi.status() != WL_CONNECTED;
          ++attempt) delay(300);
     if (WiFi.status() == WL_CONNECTED) {
       palaSetLastWifiSsid(selected.ssid);
-      if (time(nullptr) < 1700000000) syncTimeFromNTP(4000);
+      if (time(nullptr) < 1700000000) syncTimeFromNTP(clockTimeout);
       Serial.printf("[WiFi] connected: %s\n", selected.ssid.c_str());
       return true;
     }
@@ -479,7 +512,7 @@ void enterCompanion() {
 }
 
 void leaveCompanion() {
-  setupRequired = !palaHasWifi() || !(PALA_MAC_BRIDGE || palaHasOpenAiKey());
+  setupRequired = (!palaHasWifi() && !PALA_BRIDGE_DISCOVERY) || !(PALA_MAC_BRIDGE || palaHasOpenAiKey());
   soundBack();
   stopTransferMode();
   companionExitArmed = false;
@@ -561,6 +594,7 @@ void captureMemory() {
   // E-paper refreshes are blocking. Starting one here used to delay I2S reads
   // and cut the first spoken words from the recording.
   palaSoundSetEnabled(false);
+  const String capturedUtc = currentUtcIso();
   const bool recorded = record();
   palaSoundSetEnabled(true);
 
@@ -571,7 +605,7 @@ void captureMemory() {
     return;
   }
 
-  if (!saveTag(lastRecNum, "Inbox")) {
+  if (!saveTag(lastRecNum, "Inbox", capturedUtc)) {
     // The WAV is retained for orphan recovery; never claim a failed index
     // commit succeeded or launch cloud work against an uncommitted capture.
     showError("STORAGE FULL"); delay(1300); returnToReady(); return;
@@ -580,13 +614,15 @@ void captureMemory() {
   showSaved(lastRecNum);
   delay(350);
 
-  // The WAV is durable before any network work starts. Process this specific
-  // memory visibly now; if the network fails it remains safely queued.
+#if PALA_BRIDGE_DISCOVERY
+  // Paired captures enter the same transport queue as recordings saved offline.
+  returnToReady();
+  requestBacklogSync();
+#else
   processCapturedMemoryNow(lastRecNum);
-  // Do not make the freshly returned home screen mysteriously unresponsive by
-  // immediately starting unrelated backlog work.
   nextBackgroundAttemptAt = millis() + BACKGROUND_RETRY_MS;
   returnToReady();
+#endif
 }
 
 void askBrain() {
@@ -876,6 +912,9 @@ void handleIdle() {
     takeLatchedPress(false);
     resetActivity();
     if (digitalRead(BTN_PWR) == HIGH) {
+#if PALA_BRIDGE_DISCOVERY
+      if (hasQueuedAudio()) { requestBacklogSync(); return; }
+#endif
       lastUpperTapAt = 0;
       state = STATE_AGENDA;
       agendaShowsEvents = true;
@@ -895,6 +934,9 @@ void handleIdle() {
         playWeeklyBriefing();
         return;
       }
+#if PALA_BRIDGE_DISCOVERY
+      if (hasQueuedAudio()) { requestBacklogSync(); return; }
+#endif
       lastUpperTapAt = 0;
       state = STATE_AGENDA;
       agendaShowsEvents = true;
@@ -951,10 +993,17 @@ void handleBackgroundBrain() {
   // Do not launch another network stage after the sleep budget has expired.
   // A stage already running is allowed to finish and save its result safely.
   if (millis() - lastActivityMs >= AUTO_SLEEP_GRACE_MS) return;
-  if (!palaHasWifi() || !(PALA_MAC_BRIDGE || palaHasOpenAiKey())) return;
+  if ((!palaHasWifi() && !PALA_BRIDGE_DISCOVERY) || !(PALA_MAC_BRIDGE || palaHasOpenAiKey())) return;
   if (nextBackgroundAttemptAt && static_cast<int32_t>(millis() - nextBackgroundAttemptAt) < 0) return;
-  if (millis() - lastActivityMs < BACKGROUND_IDLE_MS) return;
+  if (!backlogRequested && millis() - lastActivityMs < BACKGROUND_IDLE_MS) return;
   if (!bothButtonsUp()) return;
+#if PALA_BRIDGE_DISCOVERY
+  // Give the Windows watcher a full poll interval plus time to authenticate.
+  if (backlogLink(usbSyncActive(), usbDataConnected,
+                  backlogRequested && millis() - backlogRequestedAt < 3500,
+                  WifiBacklog::Unchecked) == BacklogLink::Usb) return;
+#endif
+  backlogRequested = false;
   // This scan touches per-note metadata, so never perform it in every 8 ms
   // idle-loop iteration. At scale it must only run when a pass is actually due.
   int pendingBefore = pendingBrainMemoryCount();
@@ -1021,10 +1070,23 @@ void handleBackgroundBrain() {
   const int completedBefore = max(0, backlogSyncTotal - pendingBefore);
   showBacklogProcessing(completedBefore, backlogSyncTotal, "CONNECTING");
 
-  // Separate network association from the cloud stage so the screen always
-  // describes what the device is actually doing. A failed association keeps
-  // the durable recording queued and returns to Home without appearing stuck.
+  // Association and an authenticated Bridge readiness reply are separate.
+#if PALA_BRIDGE_DISCOVERY
+  const WifiBacklog wifi = connectConfiguredWifi(8, 4500) ? pairedWifiBacklog() : WifiBacklog::Unavailable;
+  if (wifi != WifiBacklog::Unavailable && homeNoteNameNeedsRefresh()) refreshHomeNoteName();
+  const BacklogLink link = backlogLink(false, false, false, wifi);
+  if (link != BacklogLink::Wifi) {
+    stopWifi();
+    if (link == BacklogLink::Bluetooth && hasQueuedAudio() && startBluetoothSync()) {
+      bluetoothWindowShown = true;
+      backlogSyncActive = false;
+      backlogSyncTotal = 0;
+      nextBackgroundAttemptAt = millis() + BACKGROUND_RETRY_MS;
+      return;
+    }
+#else
   if (!connectConfiguredWifi(8)) {
+#endif
     showBacklogProcessing(completedBefore, backlogSyncTotal, "QUEUED");
     delay(900);
     backlogSyncActive = false;
@@ -1076,6 +1138,31 @@ void handleBackgroundBrain() {
     nextBackgroundAttemptAt = millis() + BACKGROUND_RETRY_MS;
     returnFromBackgroundSync();
   }
+}
+
+void refreshHomeWeatherWhenIdle() {
+#if PALA_BRIDGE_DISCOVERY
+  const uint32_t now = millis();
+  if (!palaHasWifi() || backlogRequested || backlogSyncActive ||
+      now - lastActivityMs < BACKGROUND_IDLE_MS ||
+      now - lastActivityMs >= AUTO_SLEEP_IDLE_MS - 12000 ||
+      (nextHomeWeatherCheckAt && static_cast<int32_t>(now - nextHomeWeatherCheckAt) < 0) ||
+      !bothButtonsUp() || upperPressLatched || lowerPressLatched) return;
+  nextHomeWeatherCheckAt = now + 15000;
+  const int64_t utc = time(nullptr);
+  const bool weatherDue = homeForecastNeedsRefresh(localDayKey(), utc);
+  const bool nameDue = homeNoteNameNeedsRefresh();
+  if ((utc < retryHomeWeatherAfter && retryHomeWeatherAfter - utc <= 300) ||
+      (!weatherDue && !nameDue) || hasQueuedAudio()) return;
+  retryHomeWeatherAfter = utc + 300;
+  bool updated = false;
+  if (connectConfiguredWifi(8, 4500)) {
+    if (nameDue) updated = refreshHomeNoteName();
+    if (weatherDue) updated = refreshHomeForecast() || updated;
+  }
+  stopWifi();
+  if (updated && bothButtonsUp() && !upperPressLatched && !lowerPressLatched) renderReadyHome();
+#endif
 }
 
 void handleCompanion() {
@@ -1167,6 +1254,7 @@ void initializeStorage() {
   // Normal reloads read the compact catalog, while search/vector indexes are
   // rebuilt lazily by the first operation that actually needs them.
   loadIndex(true);
+  loadHomeForecast();
   Serial.printf("[SD] %d memories\n", static_cast<int>(noteIndex.size()));
 }
 
@@ -1219,7 +1307,7 @@ void setup() {
   audio_play_init();
   initializeStorage();
 
-  setupRequired = !palaHasWifi() || !(PALA_MAC_BRIDGE || palaHasOpenAiKey());
+  setupRequired = (!palaHasWifi() && !PALA_BRIDGE_DISCOVERY) || !(PALA_MAC_BRIDGE || palaHasOpenAiKey());
   if (setupRequired) {
     state = STATE_IDLE;
     showSetupRequired();
@@ -1232,13 +1320,49 @@ void setup() {
   // Ignore the held wake press until both buttons are released so it cannot
   // accidentally open Appointments or start recording during boot.
   if (wokeFromUltraSleep && state == STATE_IDLE) idleInputArmed = false;
+#if PALA_BRIDGE_DISCOVERY
+  if (!setupRequired && hasQueuedAudio()) requestBacklogSync();
+#endif
   // The wake press itself only wakes to Home. New presses from this point on
   // are retained even if they happen during a display update.
   clearLatchedPresses();
 }
 
 void loop() {
+#if PALA_BRIDGE_DISCOVERY
+  const bool dataCable = usb_serial_jtag_is_connected();
+  if (dataCable && !usbDataConnected && state == STATE_IDLE && !bluetoothSyncActive()) {
+    stopBluetoothSync();
+    requestBacklogSync();
+  }
+  usbDataConnected = dataCable;
+#endif
   handleUsbSetup();
+  if (usbSyncActive()) {
+    stopBluetoothSync();
+    if (bothButtonsUp()) idleInputArmed = true;
+    else if (idleInputArmed) cancelUsbSync();
+    // Checking an empty cable leaves the normal idle-to-sleep deadline intact.
+    if (usbSyncWorking()) resetActivity();
+    delay(5);
+    return;
+  }
+  const bool bluetoothOpen = pollBluetoothSync();
+  if (bluetoothOpen && bluetoothSyncActive()) {
+    if (bothButtonsUp()) idleInputArmed = true;
+    else if (idleInputArmed) stopBluetoothSync();
+    resetActivity();
+    delay(5);
+    return;
+  }
+  if (bluetoothOpen && (upperPressLatched || lowerPressLatched)) stopBluetoothSync();
+  if (!bluetoothOpen && bluetoothWindowShown) {
+    bluetoothWindowShown = false;
+    takeSyncHomeChanged();
+    if (state == STATE_IDLE && !setupRequired) returnFromBackgroundSync();
+  } else if (!bluetoothOpen && takeSyncHomeChanged() && state == STATE_IDLE && !setupRequired) {
+    renderReadyHome();
+  }
 
   // Companion must also be serviced on a device that still needs setup.
   if (state == STATE_TRANSFER) {
@@ -1272,12 +1396,17 @@ void loop() {
 
   if (state == STATE_IDLE) {
     handleIdle();
-    if (state == STATE_IDLE) handleBackgroundBrain();
+    if (state == STATE_IDLE && !bluetoothOpen) handleBackgroundBrain();
+    if (bluetoothOpen || bluetoothWindowShown) {
+      delay(8);
+      return;
+    }
+    if (state == STATE_IDLE) refreshHomeWeatherWhenIdle();
     if (state == STATE_IDLE &&
         static_cast<int32_t>(millis() - nextHomeClockCheckAt) >= 0) {
       nextHomeClockCheckAt = millis() + 60000UL;
       const String day = localDayKey();
-      if (day.length() && day != displayedHomeDay) renderReadyHome();
+      if (day != displayedHomeDay) renderReadyHome();
     }
     if (state == STATE_IDLE &&
         idleInputArmed && bothButtonsUp() &&
@@ -1291,7 +1420,8 @@ void loop() {
         static uint32_t nextQueueCheck = 0;
         static bool workPending = false;
         if (!nextQueueCheck || static_cast<int32_t>(millis() - nextQueueCheck) >= 0) {
-          workPending = palaHasWifi() && (PALA_MAC_BRIDGE || palaHasOpenAiKey()) && pendingBrainMemoryCount() > 0;
+          workPending = (palaHasWifi() || PALA_BRIDGE_DISCOVERY) &&
+                        (PALA_MAC_BRIDGE || palaHasOpenAiKey()) && pendingBrainMemoryCount() > 0;
           nextQueueCheck = millis() + 1000UL;
         }
         if (!workPending || idleFor >= AUTO_SLEEP_GRACE_MS) enterUltraSleep();

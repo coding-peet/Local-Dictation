@@ -56,6 +56,28 @@ static String value(const char* key) {
   return ready ? storedString(key) : String();
 }
 
+static bool validNoteName(const String& name) {
+  if (!name.length() || name.length() > kPalaNoteNameMax || name[name.length() - 1] == ' ') return false;
+  for (size_t i = 0; i < name.length(); ++i) {
+    const char c = name[i];
+    if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) continue;
+    if (!i || (c != ' ' && c != '-')) return false;
+  }
+  return true;
+}
+
+String palaNoteName() {
+  const String name = value("note_name");
+  return validNoteName(name) ? name : String("PALA");
+}
+
+bool palaSetNoteName(const String& name) {
+  if (!validNoteName(name)) return false;
+  if (value("note_name") == name) return true;
+  if (!ready || prefs.putString("note_name", name) == 0) return false;
+  return storedString("note_name") == name;
+}
+
 int palaWifiProfileCount() {
   palaSettingsBegin();
   if (!ready) return 0;

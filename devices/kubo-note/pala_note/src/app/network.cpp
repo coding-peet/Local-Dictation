@@ -395,18 +395,7 @@ bool transcribe(const String& wavPath, int noteNum) {
   // upload immediately could hold the UI for another 30 seconds while adding
   // little value on a weak WLAN or service error.
   if (!transcribeTextOnce(wavPath, text)) return false;
-  String tp = wavPath; tp.replace(".wav", ".txt");
-  const String temp = tp + ".tmp";
-  SD_MMC.remove(temp.c_str());
-  File tf = SD_MMC.open(temp.c_str(), FILE_WRITE);
-  if (!tf) return false;
-  const size_t written = tf.print(text);
-  tf.flush();
-  const bool complete = written == text.length() && tf.size() == text.length();
-  tf.close();
-  if (!complete) return false;
-  if (!replaceNetworkFileAtomically(tp, temp)) return false;
-  return updateIndexHasText(noteNum);
+  return saveNoteTranscript(noteNum, text);
 }
 
 bool transcribeQuestion(const String& wavPath, String& question) {
@@ -436,10 +425,10 @@ bool understandNote(int noteNum) {
   transcript.trim();
   if (transcript.length() == 0) return false;
 
-  String capturedUtc = noteCreatedUtc(noteNum);
-  if (capturedUtc.length() < 16) capturedUtc = currentUtcIso();
-  const String capturedLocal = utcToLocalDeviceLabel(capturedUtc);
-  const String tomorrowLocal = shiftedLocalDate(capturedUtc, 1);
+  const String capturedUtc = noteCreatedUtc(noteNum);
+  const bool captureKnown = validUtcTimestamp(capturedUtc.c_str());
+  const String capturedLocal = captureKnown ? utcToLocalDeviceLabel(capturedUtc) : "";
+  const String tomorrowLocal = captureKnown ? shiftedLocalDate(capturedUtc, 1) : "";
   const bool germanMemory = palaUiLanguage() == "de";
   const String outputLanguage = configuredLanguageName();
   const String outputLanguageCode = palaUiLanguage();
@@ -469,7 +458,8 @@ bool understandNote(int noteNum) {
     "ISO-8601 UTC using the supplied LOCAL calendar context; otherwise dueUtc must be empty. "
     "Relative words such as heute/today and morgen/tomorrow always refer to the supplied local dates, "
     "not the UTC date. Convert the resulting local wall-clock time to UTC with the supplied offset. "
-    "Double-check that tomorrow is strictly the calendar day after today. Resolve weekdays against the supplied calendar. "
+    "Until confirmation, interpret tomorrow as the calendar day after the supplied local today. "
+    "Resolve weekdays against the supplied calendar. If capture time is unavailable, leave relative dates unresolved. "
     "For ambiguous expressions such as later, soon, sometime, or next time, leave dueUtc empty. Never invent a date. "
     "Set datePrecision=time only when a clock time is explicit, day when only a calendar day is known, otherwise none. "
     "Copy the exact temporal phrase into originalTimeText and rate date interpretation confidence from 0 to 100. "
@@ -489,7 +479,7 @@ bool understandNote(int noteNum) {
                      "\nCaptured local time: " + capturedLocal +
                      "\nLocal today: " + (capturedLocal.length() >= 10 ? capturedLocal.substring(0, 10) : "unknown") +
                      "\nLocal tomorrow: " + tomorrowLocal +
-                     "\nLocal UTC offset: " + String(offset) +
+                     "\nLocal UTC offset: " + String(captureKnown ? offset : "unknown") +
                      "\nLocal calendar: " + shiftedLocalDate(capturedUtc, -2) + " (-2), " +
                      shiftedLocalDate(capturedUtc, -1) + " (-1), " +
                      (capturedLocal.length() >= 10 ? capturedLocal.substring(0, 10) : "unknown") + " (today), " +

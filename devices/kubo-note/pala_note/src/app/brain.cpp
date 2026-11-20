@@ -663,7 +663,8 @@ int pendingBrainMemoryCount() {
   for (const NoteEntry& note : noteIndex) {
     // Embeddings improve semantic ranking but are optional derived data. They
     // must never keep the device awake or pull Home into a processing loop.
-    if (noteQueueState(note.num) != "blocked" &&
+    const String queueState = noteQueueState(note.num);
+    if (queueState != "blocked" && queueState != "usb-local" &&
         (!note.hasText || !brainMemoryIsCurrent(note.num))) pending++;
   }
   return pending;

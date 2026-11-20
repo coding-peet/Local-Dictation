@@ -41,6 +41,7 @@ public partial class App : System.Windows.Application
             controller=new AppController(e.Args.Contains("--no-hotkey"));
             if (launch.ShowSettings) controller.ShowSettings();
             _=controller.InitializeConnection();
+            controller.InitializePalaIntegration();
         }
         catch(Exception)
         {

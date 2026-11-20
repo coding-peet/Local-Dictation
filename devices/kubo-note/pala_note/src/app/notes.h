@@ -6,14 +6,16 @@ void   loadIndex(bool recoverOrphans = false);
 bool   saveIndex();
 bool   addToIndex(int num, const char* tag, bool hasText);
 bool   updateIndexHasText(int num);
+bool   saveNoteTranscript(int num, const String& text);
 bool   deleteNote(int num);
 bool   deleteAllNotes();
 int    nextNoteNumber();
-bool   saveTag(int num, const char* tag);
+bool   saveTag(int num, const char* tag, const String& capturedUtc);
 
 String noteMetaPath(int num);
 String readNoteMetaValue(int num, const char* key);
-bool   writeNoteMeta(int num, const char* tag);
+bool   writeNoteMeta(int num, const char* tag, const String& capturedUtc = String());
+int    pendingTranscriptionCount();
 String noteQueueState(int num);
 String noteQueueError(int num);
 int    noteQueueRetries(int num);

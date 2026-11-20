@@ -117,6 +117,12 @@ public sealed class Settings
     public string? MicrophoneId { get; set; }
     public string PrimaryModel { get; set; } = "kinit/whisper-large-v3-turbo-sk";
     public string? VerificationModel { get; set; }
+    public const string DefaultPalaNoteName = "Kubo";
+    public string PalaBridgeName { get; set; } = DefaultPalaNoteName;
+    public bool PalaIntegrationEnabled { get; set; } = true;
+    public bool PalaBridgeAutoStart { get; set; }
+    // Null preserves the Bridge profile. An empty string follows the main Dictation model.
+    public string? PalaBridgeModel { get; set; }
     public bool VerifyAfterRecording { get; set; }
     [System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<AfterRecordingAction>))]
     public AfterRecordingAction AfterRecording { get; set; } = AfterRecordingAction.InsertDirectly;
@@ -148,11 +154,29 @@ public sealed class Settings
     public static Settings Load(string? directory = null)
     {
         var file = Path.Combine(directory ?? AppPaths.Data, "settings.json");
-        return File.Exists(file) ? JsonSerializer.Deserialize<Settings>(File.ReadAllText(file)) ?? new() : new();
+        var settings = File.Exists(file) ? JsonSerializer.Deserialize<Settings>(File.ReadAllText(file)) ?? new() : new();
+        if (!IsPalaNoteName(settings.PalaBridgeName)) settings.PalaBridgeName = DefaultPalaNoteName;
+        return settings;
     }
+    public static bool IsPalaNoteName(string? name) =>
+        name is { Length: >= 1 and <= 10 } &&
+        char.IsAsciiLetterOrDigit(name[0]) && name[^1] != ' ' &&
+        name.All(character => char.IsAsciiLetterOrDigit(character) || character is ' ' or '-');
+
+    public static string ValidatePalaBridgeName(string name)
+    {
+        if (!IsPalaNoteName(name))
+            throw new ArgumentException("Enter a name of 1 to 10 characters using A–Z, numbers, spaces or hyphens.");
+        return name;
+    }
+
     public void Save(string? directory = null)
     {
         ServerUri();
+        ValidatePalaBridgeName(PalaBridgeName);
+        if (PalaBridgeModel is { Length: > 0 } model &&
+            (model.Length > 256 || model.Any(char.IsWhiteSpace) || model.Any(char.IsControl)))
+            throw new ArgumentException("Choose a valid Bridge model.");
         if(!Enum.IsDefined(AfterRecording))throw new ArgumentException("Choose Insert directly or Preview first.");
         if(!Enum.IsDefined(ShortcutMode))throw new ArgumentException("Choose Toggle or Hold to record.");
         if(AudioRetentionDays is <0 or >3650)throw new ArgumentException("Choose 0 (Forever) or 1 to 3650 days for recordings.");

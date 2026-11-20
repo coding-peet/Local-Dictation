@@ -151,6 +151,24 @@ bool updateIndexHasText(int num) {
   return writeNoteMeta(num, foundTag);
 }
 
+bool saveNoteTranscript(int num, const String& text) {
+  char path[64];
+  snprintf(path, sizeof(path), "%s/note_%03d.txt", NOTES_DIR, num);
+  const String temp = String(path) + ".tmp";
+  SD_MMC.remove(temp.c_str());
+  File file = SD_MMC.open(temp.c_str(), FILE_WRITE);
+  if (!file) return false;
+  const size_t written = file.print(text);
+  file.flush();
+  const bool complete = written == text.length() && file.size() == text.length();
+  file.close();
+  if (!complete || !commitStoredFile(SD_MMC, String(path), temp)) {
+    SD_MMC.remove(temp.c_str());
+    return false;
+  }
+  return updateIndexHasText(num);
+}
+
 bool deleteNote(int num) {
   const char* exts[] = {"txt", "meta", "queue", "moments", "brain.json", "brain.vec", "mac.vec", "wav", nullptr};
   char path[64];
@@ -234,8 +252,8 @@ int nextNoteNumber() {
   return maxNum;
 }
 
-bool saveTag(int num, const char* tag) {
-  if (!writeNoteMeta(num, tag)) return false;
+bool saveTag(int num, const char* tag, const String& capturedUtc) {
+  if (!writeNoteMeta(num, tag, capturedUtc)) return false;
   if (!addToIndex(num, tag, false)) return false;
   return writeNoteQueueState(num, "queued");
 }
@@ -264,11 +282,13 @@ String readNoteMetaValue(int num, const char* key) {
   return "";
 }
 
-bool writeNoteMeta(int num, const char* tag) {
+bool writeNoteMeta(int num, const char* tag, const String& capturedUtc) {
   String path = noteMetaPath(num);
   String temp = path + ".tmp";
-  String existingCreated = readNoteMetaValue(num, "created_utc");
-  String created = existingCreated.length() ? existingCreated : currentUtcIso();
+  const String existingCreated = readNoteMetaValue(num, "created_utc");
+  // Only the recording caller supplies a capture time. A later index repair or
+  // transcription cannot turn an unknown capture time into its processing time.
+  const String& created = existingCreated.length() ? existingCreated : capturedUtc;
   SD_MMC.remove(temp.c_str());
   File f = SD_MMC.open(temp.c_str(), FILE_WRITE);
   if (!f) return false;
@@ -311,6 +331,14 @@ String noteQueueState(int num) {
   return state.length() ? state : "queued";
 }
 
+int pendingTranscriptionCount() {
+  int count = 0;
+  for (const NoteEntry& note : noteIndex) {
+    if (!note.hasText && noteQueueState(note.num) != "blocked") count++;
+  }
+  return count;
+}
+
 String noteQueueError(int num) { return readQueueValue(num, "error"); }
 int noteQueueRetries(int num) { return readQueueValue(num, "retries").toInt(); }
 int noteQueueFailureCount(int num) { return readQueueValue(num, "failures").toInt(); }
@@ -340,8 +368,9 @@ void resumeBlockedCloudNotes() {
 }
 
 bool noteQueueRetryDue(int num) {
-  if (noteQueueState(num) == "blocked") return false;
-  if (noteQueueState(num) != "retry" && noteQueueFailureCount(num) <= 0) return true;
+  const String state = noteQueueState(num);
+  if (state == "blocked" || state == "usb-local") return false;
+  if (state != "retry" && noteQueueFailureCount(num) <= 0) return true;
   const int failures = max(1, noteQueueFailureCount(num));
   String failedUtc = readQueueValue(num, "last_failure_utc");
   if (!failedUtc.length()) failedUtc = noteQueueUpdatedUtc(num); // old queue files

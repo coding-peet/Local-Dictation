@@ -90,6 +90,18 @@ public sealed partial class SettingsWindow
     {
         historyPanel?.SetActive(index==(int)MainSection.History);
         if(index==(int)MainSection.General)RefreshStartup();
+        if(index==(int)MainSection.Connections)
+        {
+            RefreshPalaBridgeStatus();
+            RefreshPalaActivity();
+            palaBridgePoll.Start();
+            palaActivityPoll.Start();
+        }
+        else
+        {
+            palaBridgePoll.Stop();
+            palaActivityPoll.Stop();
+        }
     }
     void RefreshStartup()
     {

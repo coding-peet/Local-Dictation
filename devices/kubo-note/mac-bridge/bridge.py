@@ -23,8 +23,11 @@ from urllib.parse import urlsplit
 
 from zoneinfo import ZoneInfo
 
+from appointment_dates import recording_time, resolve_yearless, valid_future_start
+from bridge_activity import BridgeActivity, activity_step
 from bridge_discovery import authorized_device, BridgeServer, serve
 from pair import STATE, WINDOWS_DICTATION_MODEL
+from weather import ForecastCache
 
 MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 LOCAL_DICTATION_DEFAULT_ENDPOINT = "http://127.0.0.1:48125"
@@ -53,7 +56,7 @@ def digest(value):
     return hashlib.sha256(encode(value)).hexdigest()
 
 
-def local_dictation_address():
+def local_dictation_settings():
     root = Path(os.environ.get("LOCAL_DICTATION_HOME", r"C:\AI\LocalDictation"))
     path = root / "data" / "settings.json"
     try:
@@ -62,6 +65,32 @@ def local_dictation_address():
         settings = {}
     if not isinstance(settings, dict):
         raise ValueError("Neplatné nastavenia Local Dictation.")
+    return settings
+
+
+def valid_note_name(name):
+    return isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 -]{0,9}", name) is not None and name == name.rstrip()
+
+
+def local_dictation_note_name(settings):
+    name = settings.get("PalaBridgeName")
+    return name if valid_note_name(name) else "Kubo"
+
+
+def local_dictation_model(config, settings):
+    chosen = settings.get("PalaBridgeModel")
+    primary = settings.get("PrimaryModel") or WINDOWS_DICTATION_MODEL
+    if chosen is None:
+        chosen = config.get("transcription_model") or primary
+    elif chosen == "":
+        chosen = primary
+    if not isinstance(chosen, str) or not chosen.strip():
+        raise ValueError("Invalid Bridge transcription model.")
+    return chosen
+
+
+def local_dictation_address(settings=None):
+    settings = local_dictation_settings() if settings is None else settings
     value = settings.get("Endpoint", LOCAL_DICTATION_DEFAULT_ENDPOINT)
     if not isinstance(value, str):
         raise ValueError("Neplatná adresa Local Dictation.")
@@ -91,8 +120,16 @@ def codex_command():
     return [shutil.which("codex") or "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex"]
 
 
+def require_chatgpt_login(cli):
+    status = subprocess.run(cli + ["login", "status"], capture_output=True,
+                            stdin=subprocess.DEVNULL, timeout=10)
+    if status.returncode or b"chatgpt" not in (status.stdout + status.stderr).lower():
+        raise RuntimeError("Prihlás Codex CLI cez ChatGPT (codex login).")
+
+
 def codex(prompt, schema):
     cli = codex_command()
+    require_chatgpt_login(cli)
     with tempfile.TemporaryDirectory() as work:
         out = Path(work) / "result"
         args = cli + ["exec", "--ephemeral", "--ignore-user-config",
@@ -114,31 +151,26 @@ YEARLESS = {
 }
 
 
-def next_occurrence(value, reference, timed):
-    # Keep wall-clock time and skip invalid candidates such as Feb 29 in a non-leap year.
-    year = reference.year
-    while True:
-        try:
-            candidate = value.replace(year=year)
-        except ValueError:
-            year += 1
-            continue
-        if candidate.date() > reference.date() or (candidate.date() == reference.date() and
-                (not timed or candidate.time() >= reference.time())):
-            return candidate
-        year += 1
-
-
-def resolve_yearless(action, reference):
-    if not action.pop("yearless", False) or not action["due"]:
-        return
+def resolve_action_yearless(action, reference):
+    if not action.get("yearless", False) or not action["due"]:
+        action.pop("yearless", None)
+        return True
     original = dt.datetime.fromisoformat(action["due"])
+    if original.tzinfo is not None:
+        return False
     timed = "T" in action["due"]
-    due = next_occurrence(original, reference, timed)
+    due = resolve_yearless(original, reference, timed=timed)
+    if due is None:
+        return False
+    wall = due.replace(tzinfo=None)
     if action["end"]:
-        end = dt.datetime.fromisoformat(action["end"]) + (due - original)
-        action["end"] = end.isoformat(timespec="minutes")
-    action["due"] = due.isoformat(timespec="minutes") if timed else due.date().isoformat()
+        end = dt.datetime.fromisoformat(action["end"])
+        if end.tzinfo is not None:
+            return False
+        action["end"] = (end + (wall - original)).isoformat(timespec="minutes")
+    action["due"] = wall.isoformat(timespec="minutes") if timed else wall.date().isoformat()
+    action.pop("yearless")
+    return True
 
 
 def validate_action(a):
@@ -174,6 +206,9 @@ class Bridge:
         self.config = config
         self.lock = threading.Lock()
         self.encoder = None
+        self.last_contact = None
+        self.activity = BridgeActivity(state, "network")
+        self.weather = ForecastCache()
         with self.database() as db:
             db.execute("CREATE TABLE IF NOT EXISTS memories (id TEXT PRIMARY KEY, data TEXT)")
             db.execute("CREATE TABLE IF NOT EXISTS actions (id TEXT PRIMARY KEY, data TEXT, status TEXT)")
@@ -192,7 +227,8 @@ class Bridge:
                 deliver(self.state, self.config, action, key)
                 return
             from google_store import apply_google
-            apply_google(self.config, self.state, action, key)
+            with self.activity.step("google"):
+                apply_google(self.config, self.state, action, key)
             return
         kind = action["kind"]
         if kind == "apple_note":
@@ -214,7 +250,7 @@ class Bridge:
             if not row:
                 action_schema = json.loads(json.dumps(ACTION_SCHEMA))
                 zone = ZoneInfo(self.config.get("timezone", "Europe/Bratislava"))
-                reference = dt.datetime.now(zone)
+                reference = recording_time(doc.get("pala_created"), zone)
                 action_schema["properties"]["yearless"] = YEARLESS
                 action_schema["required"].append("yearless")
                 if "tasks" in schema["properties"]:
@@ -225,9 +261,12 @@ class Bridge:
                         "description": "True only if this task merely duplicates adding groceries to the list."
                     }
                     task["required"].extend(["yearless", "shoppingListEntry"])
-                prompt = APPLE_PROMPT + (
-                    f" For upcoming day/month dates with no year, use the next occurrence from "
-                    f"{reference.isoformat(timespec='minutes')} ({zone.key}) in ALL fields. "
+                date_context = (
+                    f" The recording was made at {reference.isoformat(timespec='minutes')} ({zone.key}). "
+                    "Use that recording date as the reference for relative dates and dates without a year. "
+                    if reference else " The recording time is unavailable. Preserve ambiguous time wording. "
+                )
+                prompt = APPLE_PROMPT + date_context + (
                     "Respect explicit years and intentional past references. "
                     "A shopping-list instruction is fulfilled by the shopping actions. "
                     "For a shopping-list-only note use kind=reference, tasks=[], and a descriptive title. "
@@ -261,12 +300,20 @@ class Bridge:
                 for task in result.get("tasks", []):
                     if task.pop("yearless", False) and task["dueUtc"]:
                         local = dt.datetime.fromisoformat(task["dueUtc"].replace("Z", "+00:00")).astimezone(zone)
-                        due = next_occurrence(local, reference, task["datePrecision"] == "time")
-                        task["dueUtc"] = due.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                        due = resolve_yearless(local, reference, timed=task["datePrecision"] == "time")
+                        if due is None:
+                            task["dueUtc"] = ""
+                            task["datePrecision"] = "none"
+                        else:
+                            task["dueUtc"] = due.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 if len(actions) > 64 or not result.get("title") or not result.get("summary"):
                     raise ValueError("Neplatná poznámka")
                 for i, a in enumerate(actions):
-                    resolve_yearless(a, reference)
+                    if not resolve_action_yearless(a, reference):
+                        # Preserve the proposal locally until the device can collect a date.
+                        db.execute("INSERT INTO actions VALUES(?,?,?)",
+                                   (key + "-" + str(i), json.dumps(a), "needs-date"))
+                        continue
                     if a["kind"] == "apple_note" and not (self.config.get("destination") == "apple" and
                             isinstance(a.get("body"), str) and a["body"].strip()):
                         raise ValueError("Neplatný obsah poznámky")
@@ -300,9 +347,17 @@ class Bridge:
             row = db.execute("SELECT data,status FROM actions WHERE id=?", (doc["id"],)).fetchone()
         if not row or json.loads(row[0])["kind"] not in ("event", "work_event") or type(doc["accept"]) != bool:
             raise ValueError("Neplatné potvrdenie")
+        if row[1] == "needs-date":
+            raise ValueError("Termín potrebuje konkrétny dátum.")
         if row[1] == "pending":
             if doc["accept"]:
-                self.deliver(json.loads(row[0]), doc["id"])
+                action = json.loads(row[0])
+                if self.config.get("destination") == "google":
+                    zone = ZoneInfo(self.config.get("timezone", "Europe/Bratislava"))
+                    if not valid_future_start(action["due"], zone, dt.datetime.now(dt.timezone.utc)):
+                        self.mark(doc["id"], "needs-date")
+                        raise ValueError("Termín uplynul alebo potrebuje nový dátum.")
+                self.deliver(action, doc["id"])
             self.mark(doc["id"], "done" if doc["accept"] else "declined")
         return {"ok": True}
 
@@ -346,7 +401,8 @@ class Bridge:
 
     def transcribe_local(self, audio):
         boundary = "pala-" + uuid.uuid4().hex
-        model = self.config.get("transcription_model", WINDOWS_DICTATION_MODEL)
+        settings = local_dictation_settings()
+        model = local_dictation_model(self.config, settings)
         fields = {"model": model, "language": "sk", "response_format": "json"}
         parts = [
             f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
@@ -358,7 +414,7 @@ class Bridge:
             audio,
             f'\r\n--{boundary}--\r\n'.encode(),
         ))
-        host, port = local_dictation_address()
+        host, port = local_dictation_address(settings)
         connection = http.client.HTTPConnection(host, port, timeout=100)
         try:
             local_dictation_health(connection)
@@ -428,12 +484,25 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         bridge = self.server.bridge
-        if self.path == "/pala/ready":
+        if self.path in ("/pala/ready", "/pala/weather", "/pala/name"):
             if not authorized_device(bridge.config, self.headers.get("Authorization", "")):
                 self.send_error(401)
                 return
-            ready = bridge.local_transcription_ready()
-            self.send_json(200 if ready else 503, {"ready": ready})
+            bridge.last_contact = dt.datetime.now(dt.timezone.utc).isoformat()
+            if self.path == "/pala/name":
+                try:
+                    name = local_dictation_note_name(local_dictation_settings())
+                except (OSError, ValueError):
+                    self.send_error(503)
+                    return
+                self.send_json(200, {"name": name})
+            elif self.path == "/pala/weather":
+                with activity_step(getattr(bridge, "activity", None), "weather"):
+                    forecast = bridge.weather.get()
+                self.send_json(200 if forecast is not None else 503, forecast or {})
+            else:
+                ready = bridge.local_transcription_ready()
+                self.send_json(200 if ready else 503, {"ready": ready})
             return
 
         path = bridge.state / "phone-token"
@@ -455,6 +524,7 @@ class Handler(BaseHTTPRequestHandler):
         if not authorized_device(bridge.config, self.headers.get("Authorization", "")):
             self.send_error(401)
             return
+        bridge.last_contact = dt.datetime.now(dt.timezone.utc).isoformat()
         try:
             limit = 25100000 if self.path == "/v1/audio/transcriptions" else 1024 * 1024
             size = int(self.headers.get("Content-Length", 0))
@@ -462,11 +532,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(413)
                 return
             self.connection.settimeout(180)
-            data = self.rfile.read(size)
+            activity = getattr(bridge, "activity", None)
+            transcription = self.path == "/v1/audio/transcriptions"
+            with activity_step(activity, "receiving" if transcription else "processing"):
+                data = self.rfile.read(size)
             if len(data) != size:
                 self.send_error(400)
                 return
-            result = bridge.dispatch(self.path, data, self.headers.get("Content-Type", ""))
+            with activity_step(activity, "transcribing" if transcription else "processing"):
+                result = bridge.dispatch(self.path, data, self.headers.get("Content-Type", ""))
             binary = isinstance(result, bytes)
             payload = result if binary else encode(result)
             self.send_response(200)
@@ -501,6 +575,67 @@ def managed_stop_event(parent_input):
     return stop
 
 
+def serve_configured_bridge(config, stop, report):
+    bridge = Bridge(STATE, config)
+    if config.get("discovery_id"):
+        serve(STATE, config, Handler, bridge, stop=stop,
+              on_status=lambda listeners, desired: report(
+                  "running", listeners=sorted(listeners), last_contact=bridge.last_contact,
+                  error=("HTTPS could not bind to every approved interface."
+                         if desired - listeners.keys() else None)),
+              drain=stop is not None)
+        return
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(STATE / "cert.pem", STATE / "key.pem")
+    with BridgeServer((config["host"], 8443), Handler, bridge, ctx) as server:
+        print("Pala Bridge počúva na", config["host"], flush=True)
+        if stop is None and os.name != "nt":
+            server.serve_forever()
+            return
+        server.daemon_threads = stop is None
+        server.timeout = 1
+        while stop is None or not stop.is_set():
+            report("running", listeners=[config["host"]], last_contact=bridge.last_contact)
+            server.handle_request()
+
+
+def run_bridge(config, stop):
+    if os.name != "nt":
+        serve_configured_bridge(config, stop, lambda *args, **kwargs: None)
+        return
+    import msvcrt
+
+    # The first byte is an OS lock. Windows releases it when the process exits.
+    with (STATE / "bridge-runtime.lock").open("a+b") as lock:
+        try:
+            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            sys.exit("A Pala Bridge is already running for this profile.")
+
+        def report(state, *, listeners=(), last_contact=None, error=None):
+            data = dict(Pid=os.getpid(), Owner=os.environ.get("PALA_BRIDGE_MANAGED_OWNER"),
+                        State=state, UpdatedAt=dt.datetime.now(dt.timezone.utc).isoformat(),
+                        Listeners=listeners, LastContact=last_contact, Error=error)
+            temporary = STATE / "bridge-runtime.tmp"
+            temporary.write_text(json.dumps(data), encoding="utf-8")
+            try:
+                os.replace(temporary, STATE / "bridge-runtime.json")
+            except PermissionError:
+                # A Windows reader can block replacement briefly. The next tick retries.
+                temporary.unlink(missing_ok=True)
+
+        report("starting")
+        try:
+            serve_configured_bridge(config, stop, report)
+        except KeyboardInterrupt:
+            report("stopped")
+        except Exception as error:
+            report("error", error=f"Bridge startup or listener failed ({type(error).__name__}).")
+            raise
+        else:
+            report("stopped")
+
+
 if __name__ == "__main__":
     os.umask(0o077)
     config = json.loads((STATE / "config.json").read_text())
@@ -523,27 +658,10 @@ if __name__ == "__main__":
             if reply in ("a", "n"):
                 bridge.confirm({"id": ident, "accept": reply == "a"})
         sys.exit(0)
-    # Never use a CLI session authenticated with a billing API key.
     stop = managed_stop_event(sys.stdin.buffer) if sys.argv[1:] == ["--managed"] else None
-    status = subprocess.run(codex_command() + ["login", "status"], capture_output=True,
-                            stdin=subprocess.DEVNULL, timeout=10)
-    if status.returncode or b"chatgpt" not in (status.stdout + status.stderr).lower():
-        sys.exit("Prihlás Codex CLI cez ChatGPT (codex login).")
-    if config.get("discovery_id"):
-        try:
-            serve(STATE, config, Handler, Bridge(STATE, config), stop=stop)
-        except ModuleNotFoundError as error:
-            if error.name not in ("ifaddr", "zeroconf"):
-                raise
-            sys.exit("Install the mDNS dependencies from mac-bridge/requirements.txt, then start Bridge again.")
-        sys.exit(0)
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    ctx.load_cert_chain(STATE / "cert.pem", STATE / "key.pem")
-    with BridgeServer((config["host"], 8443), Handler, Bridge(STATE, config), ctx) as server:
-        print("Pala Bridge počúva na", config["host"], flush=True)
-        if stop is None:
-            server.serve_forever()
-        else:
-            server.timeout = 0.5
-            while not stop.is_set():
-                server.handle_request()
+    try:
+        run_bridge(config, stop)
+    except ModuleNotFoundError as error:
+        if error.name not in ("ifaddr", "zeroconf"):
+            raise
+        sys.exit("Install the mDNS dependencies from mac-bridge/requirements.txt, then start Bridge again.")

@@ -107,11 +107,12 @@ class BridgeServer(ThreadingHTTPServer):
 
 
 class Listener:
-    def __init__(self, address, state, config, handler, bridge):
+    def __init__(self, address, state, config, handler, bridge, *, drain=False):
         self.address = address
         self.hostname = bridge_name(config)
         tls = make_tls_context(state, config, legacy=address == config["host"])
         self.server = BridgeServer((address, PORT), handler, bridge, tls)
+        self.server.daemon_threads = not drain
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.mdns = None
@@ -158,7 +159,7 @@ class Listener:
             self.thread.join()
 
 
-def serve(state, config, handler, bridge, *, stop=None):
+def serve(state, config, handler, bridge, *, stop=None, on_status=None, drain=False):
     # Check dependencies and certificates before opening any listener.
     import zeroconf  # noqa: F401
 
@@ -169,9 +170,12 @@ def serve(state, config, handler, bridge, *, stop=None):
     try:
         while not stop.is_set():
             addresses = allowed_addresses(config, [ip for ip, _ in ipv4_interfaces()])
-            reconcile(listeners, addresses, lambda ip: Listener(ip, state, config, handler, bridge))
+            reconcile(listeners, addresses,
+                      lambda ip: Listener(ip, state, config, handler, bridge, drain=drain))
             for listener in listeners.values():
                 listener.refresh_discovery()
+            if on_status is not None:
+                on_status(listeners, addresses)
             stop.wait(3)
     except KeyboardInterrupt:
         pass

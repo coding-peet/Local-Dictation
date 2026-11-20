@@ -7,13 +7,31 @@
 #include "tasks.h"
 #include "task_visibility.h"
 #include "settings.h"
+#include "calendar_week.h"
+#include "home_almanac.h"
+#include "home_weather.h"
+
+#include <ctime>
 
 namespace {
 constexpr int kInset = 14;
 constexpr int kRight = W - kInset;
 constexpr int kContentWidth = W - 2 * kInset;
 constexpr int kHeaderY = 10;
+constexpr int kHomeSideSlotOffset = 62;
+constexpr int kBatteryBodyWidth = 23;
+constexpr int kBatteryContactWidth = 2;
+constexpr int kBatteryWidth = kBatteryBodyWidth + kBatteryContactWidth;
+constexpr int kHomeBatteryX = kRight - kBatteryWidth;
+constexpr int kSleepLockGap = 7;
+constexpr int kSleepLockWidth = 11;
+constexpr int kSleepLockX = kHomeBatteryX - kSleepLockGap - kSleepLockWidth;
+static_assert(kSleepLockX >= kInset && kHomeBatteryX + kBatteryWidth <= W);
 constexpr int kHeaderRuleY = 31;
+constexpr int kHomeAgendaRuleY = 156;
+constexpr int kHomeAgendaColumnGap = 4;
+constexpr int kHomeAgendaLabelY = kHomeAgendaRuleY + 7;
+constexpr int kHomeAgendaCountY = kHomeAgendaRuleY + 22;
 constexpr int kContentTop = 43;
 constexpr int kFooterRuleY = 174;
 constexpr int kFooterTextY = 181;
@@ -124,7 +142,7 @@ void labelRight(int y, const char* text, int scale, uint8_t color, int maxWidth 
 }
 
 void drawHeader(const char* right, uint8_t color) {
-  labelLeft(kHeaderY, "PALA", 1, color, 76);
+  labelLeft(kHeaderY, palaNoteName().c_str(), 1, color, 76);
   labelRight(kHeaderY, right, 1, color, 88);
   hline(kInset, kHeaderRuleY, kContentWidth, color);
 }
@@ -148,10 +166,9 @@ void drawFooterCentered(const char* text, uint8_t color) {
 void drawBattery(int percent) {
   if (percent < 0) return;
   percent = constrain(percent, 0, 100);
-  constexpr int width = 23, height = 12;
-  const int x = kRight - width - 2, y = 9;
-  strokeRect(x, y, width, height, 1, BLACK);
-  fillRect(x + width, y + 3, 2, 6, BLACK);
+  constexpr int x = kHomeBatteryX, y = 9, height = 12;
+  strokeRect(x, y, kBatteryBodyWidth, height, 1, BLACK);
+  fillRect(x + kBatteryBodyWidth, y + 3, kBatteryContactWidth, 6, BLACK);
   const int bars = percent > 66 ? 3 : percent > 33 ? 2 : percent > 10 ? 1 : 0;
   for (int i = 0; i < bars; i++) fillRect(x + 3 + i * 6, y + 3, 5, 6, BLACK);
 }
@@ -304,36 +321,6 @@ std::vector<String> answerLines(const String& raw) {
   return lines;
 }
 
-String homeDateLabel() {
-  String local = utcToLocalDeviceLabel(currentUtcIso());
-  if (local.length() < 10 || local == "time not set") return uiText("DATUM FEHLT", "DATE NOT SET");
-  static const UiTranslation months[] = {
-    {"JAN","JAN","ENE","GEN","STY","LED","YAN","SIC","JAN","JAN"},
-    {"FEB","FEV","FEB","FEB","LUT","UNO","FEV","LYU","FEB","FEV"},
-    {"MAR","MAR","MAR","MAR","MAR","BRE","MAR","BER","MRT","MAR"},
-    {"APR","AVR","ABR","APR","KWI","DUB","APR","KVI","APR","ABR"},
-    {"MAY","MAI","MAY","MAG","MAJ","KVE","MAY","TRA","MEI","MAI"},
-    {"JUN","JUI","JUN","GIU","CZE","CER","IYU","CHE","JUN","JUN"},
-    {"JUL","JUI","JUL","LUG","LIP","CEC","IYU","LYP","JUL","JUL"},
-    {"AUG","AOU","AGO","AGO","SIE","SRP","AVG","SER","AUG","AGO"},
-    {"SEP","SEP","SEP","SET","WRZ","ZAR","SEN","VER","SEP","SET"},
-    {"OCT","OCT","OCT","OTT","PAZ","RIJ","OKT","ZHO","OKT","OUT"},
-    {"NOV","NOV","NOV","NOV","LIS","LIS","NOY","LYS","NOV","NOV"},
-    {"DEC","DEC","DIC","DIC","GRU","PRO","DEK","HRU","DEC","DEZ"}
-  };
-  const int month = constrain(local.substring(5, 7).toInt(), 1, 12);
-  const String language = palaUiLanguage();
-  const UiTranslation& row = months[month - 1];
-  static const char* skMonths[] = {"JAN","FEB","MAR","APR","MAJ","JUN","JUL","AUG","SEP","OKT","NOV","DEC"};
-  const char* label = language == "sk" ? skMonths[month - 1] : row.en;
-  if (language == "fr") label = row.fr; else if (language == "es") label = row.es;
-  else if (language == "it") label = row.it; else if (language == "pl") label = row.pl;
-  else if (language == "cs") label = row.cs; else if (language == "ru") label = row.ru;
-  else if (language == "uk") label = row.uk; else if (language == "nl") label = row.nl;
-  else if (language == "pt") label = row.pt;
-  return local.substring(8, 10) + " " + label;
-}
-
 String greetingLabel() {
   const String local = utcToLocalDeviceLabel(currentUtcIso());
   if (local.length() < 13 || local == "time not set") return "TODAY";
@@ -401,12 +388,217 @@ int agendaPages(const std::vector<BrainTaskRecord>& items) {
   }
   return max(1, pages);
 }
+
+void drawSunGlyph(int x, int y, bool rays) {
+  strokeCircle(x, y, 3, 1, BLACK);
+  if (!rays) return;
+  hline(x - 7, y, 2, BLACK);
+  hline(x + 6, y, 2, BLACK);
+  vline(x, y - 7, 2, BLACK);
+  vline(x, y + 6, 2, BLACK);
+  for (int dx : {-1, 1}) {
+    for (int dy : {-1, 1}) line(x + 4 * dx, y + 4 * dy, x + 5 * dx, y + 5 * dy, BLACK);
+  }
+}
+
+void drawCloudGlyph(int x, int y) {
+  static constexpr int outline[][2] = {
+    {-7, 3}, {-8, 1}, {-7, -1}, {-4, -1}, {-3, -4}, {0, -5},
+    {3, -4}, {4, -2}, {6, -2}, {8, 0}, {8, 2}, {6, 4}, {-6, 4}, {-7, 3},
+  };
+  for (size_t i = 1; i < sizeof(outline) / sizeof(outline[0]); ++i) {
+    line(x + outline[i - 1][0], y + outline[i - 1][1],
+         x + outline[i][0], y + outline[i][1], BLACK);
+  }
+}
+
+void drawWeatherGlyph(int x, int y, WeatherGlyph glyph) {
+  switch (glyph) {
+    case WeatherGlyph::Sun: drawSunGlyph(x, y, true); return;
+    case WeatherGlyph::PartlyCloudy:
+      drawSunGlyph(x - 4, y - 4, false);
+      hline(x - 11, y - 4, 2, BLACK);
+      vline(x - 4, y - 9, 2, BLACK);
+      fillRect(x - 6, y - 4, 10, 5, WHITE);
+      drawCloudGlyph(x + 2, y + 2);
+      return;
+    case WeatherGlyph::Cloud: drawCloudGlyph(x, y); return;
+    case WeatherGlyph::Fog:
+      hline(x - 7, y - 4, 14, BLACK);
+      hline(x - 5, y, 12, BLACK);
+      hline(x - 8, y + 4, 15, BLACK);
+      return;
+    case WeatherGlyph::Rain:
+    case WeatherGlyph::Snow:
+    case WeatherGlyph::Thunder:
+      drawCloudGlyph(x, y - 3);
+      if (glyph == WeatherGlyph::Rain) {
+        for (int dx : {-4, 0, 4}) line(x + dx, y + 4, x + dx - 1, y + 6, BLACK);
+      } else if (glyph == WeatherGlyph::Snow) {
+        for (int dx : {-4, 0, 4}) {
+          px(x + dx, y + 4, BLACK);
+          px(x + dx + 1, y + 7, BLACK);
+        }
+      } else {
+        line(x + 1, y + 2, x - 2, y + 5, BLACK);
+        line(x - 2, y + 5, x + 2, y + 5, BLACK);
+        line(x + 2, y + 5, x, y + 7, BLACK);
+      }
+      return;
+    case WeatherGlyph::Unknown: return;
+  }
+}
+
+void drawMoonGlyph(int x, int y, MoonPhase phase) {
+  constexpr int radius = 6;
+  if (phase == MoonPhase::Unknown) return;
+  if (phase == MoonPhase::Full) {
+    fillCircle(x, y, radius, BLACK);
+    return;
+  }
+  strokeCircle(x, y, radius, 1, BLACK);
+  if (phase == MoonPhase::New) return;
+  const int index = static_cast<int>(phase);
+  const int illumination = index < 4 ? index : 8 - index;
+  const int edge = illumination == 1 ? 7 : illumination == 2 ? 0 : -7;
+  for (int dy = -radius + 1; dy < radius; ++dy) {
+    int span = radius - 1;
+    while (span * span + dy * dy >= radius * radius) --span;
+    for (int dx = -span; dx <= span; ++dx) {
+      if ((index < 4 ? dx : -dx) * 10 >= edge * span) px(x + dx, y + dy, BLACK);
+    }
+  }
+}
+
+void drawHomeWeather(int y, const String& todayKey, int64_t utc) {
+  HomeForecast forecast{};
+  if (homeForecastFor(todayKey, forecast)) {
+    drawWeatherGlyph(kInset + 19, y + 8, weatherGlyph(forecast.code));
+    char temperature[17];
+    snprintf(temperature, sizeof(temperature), "%d / %d", forecast.minimum, forecast.maximum);
+    const int width = textW(temperature, 1);
+    const int x = (W - width - 5) / 2;
+    drawStr(x, y + 2, temperature, 1, BLACK);
+    strokeCircle(x + width + 2, y + 4, 2, 1, BLACK);
+  }
+  drawMoonGlyph(kRight - 19, y + 8, moonPhaseAt(utc));
+}
+
+void drawHomeWeek(const String& todayKey, int64_t utc) {
+  constexpr int top = kHeaderRuleY + 1;
+  constexpr int bottom = kHomeAgendaRuleY;
+  constexpr int largeWeekdayScale = 3;
+  constexpr int compactWeekdayScale = 2;
+  constexpr int labelScale = 1;
+  constexpr int sideGap = 5;
+  constexpr int rowGap = 13;
+  constexpr int highlightPaddingTop = 3;
+  constexpr int highlightHeight = 18;
+  constexpr int weatherGap = 12;
+  constexpr int weatherHeight = 16;
+  const int weekdayHeight = uiFontHeight(largeWeekdayScale);
+  const int calendarHeight = weekdayHeight + rowGap + highlightHeight + weatherGap + weatherHeight;
+  const int headingY = top + (bottom - top - calendarHeight) / 2;
+  const int sideHeadingY = headingY + (weekdayHeight - uiFontHeight(labelScale)) / 2;
+  const int dateY = headingY + weekdayHeight + rowGap + highlightPaddingTop;
+  const int month = todayKey.substring(5, 7).toInt();
+  const auto week = calendarWeek(todayKey.substring(0, 4).toInt(),
+      month, todayKey.substring(8, 10).toInt());
+  if (!week.number) {
+    drawStrC(W / 2, top + (bottom - top - uiFontHeight(1)) / 2,
+        uiText("DATUM FEHLT", "DATE NOT SET"), 1, BLACK);
+    return;
+  }
+
+  static const char* const months[] = {
+    "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"
+  };
+  static const char* const weekdays[] = {"MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"};
+  char weekNumber[8];
+  snprintf(weekNumber, sizeof(weekNumber), "CW%02d", week.number);
+  const char* monthLabel = months[month - 1];
+  const char* weekdayLabel = weekdays[week.today];
+  const int desiredWidth = textW(weekdayLabel, largeWeekdayScale);
+  const auto fitsLargeWeekday = [&] {
+    const int centerHalfWidth = min(W / 2 - kInset - textW(monthLabel, labelScale),
+                                   kRight - textW(weekNumber, labelScale) - W / 2);
+    return desiredWidth <= 2 * (centerHalfWidth - sideGap);
+  };
+  if (!fitsLargeWeekday()) snprintf(weekNumber, sizeof(weekNumber), "W%02d", week.number);
+  const int weekdayScale = fitsLargeWeekday() ? largeWeekdayScale : compactWeekdayScale;
+  const int weekdayY = headingY + (weekdayHeight - uiFontHeight(weekdayScale)) / 2;
+  labelLeft(sideHeadingY, monthLabel, labelScale, BLACK);
+  drawStrC(W / 2, weekdayY, weekdayLabel, weekdayScale, BLACK);
+  labelRight(sideHeadingY, weekNumber, labelScale, BLACK);
+
+  constexpr int weekendStart = 5;
+  constexpr int weekendGap = 4;
+  constexpr int cell = (kContentWidth - weekendGap) / 7;
+  constexpr int weekX = (W - 7 * cell - weekendGap) / 2;
+  for (int i = 0; i < 7; i++) {
+    const int x = weekX + i * cell + (i >= weekendStart ? weekendGap : 0);
+    const bool today = i == week.today;
+    if (today) fillRect(x + 1, dateY - highlightPaddingTop, cell - 2, highlightHeight, BLACK);
+    const String date = String(week.days[i]);
+    drawStrC(x + cell / 2, dateY, date.c_str(), 1, today ? WHITE : BLACK);
+  }
+  vline(weekX + weekendStart * cell + weekendGap / 2, dateY - 2, highlightHeight - 2, BLACK);
+  drawHomeWeather(dateY - highlightPaddingTop + highlightHeight + weatherGap, todayKey, utc);
+}
+
+int drawPendingRecordings(int count) {
+  if (count <= 0) return W / 2;
+  constexpr int wave[] = {0, -2, -4, -5, -5, -4, -2, 0, 2, 4, 5, 5, 4, 2, 0};
+  constexpr int waveWidth = sizeof(wave) / sizeof(wave[0]);
+  constexpr int waveY = kHeaderY + 6;
+  constexpr int gap = 6;
+  const String label = String(count);
+  const int x = (W - waveWidth - gap - textW(label.c_str(), 1)) / 2;
+  for (int i = 1; i < waveWidth; i++) {
+    line(x + i - 1, waveY + wave[i - 1], x + i, waveY + wave[i], BLACK);
+    line(x + i - 1, waveY + wave[i - 1] + 1, x + i, waveY + wave[i] + 1, BLACK);
+  }
+  drawStr(x + waveWidth + gap, kHeaderY, label.c_str(), 1, BLACK);
+  return x;
+}
+
+const char* compactHomeAgendaLabel(const char* label) {
+  static constexpr struct { const char* full; const char* compact; } labels[] = {
+    {"AUFGABEN", "AUFG."},
+    {"ZAVDANNYA", "ZAVD."},
+    {"RENDEZ-VOUS", "RDV"},
+    {"SOBYTIYA", "SOBYT."},
+    {"AFSPRAKEN", "AFSPR."},
+  };
+  for (const auto& entry : labels) {
+    if (strcmp(label, entry.full) == 0) return entry.compact;
+  }
+  return label;
+}
+
+void drawHomeAgendaCount(int left, const char* label, int count) {
+  constexpr int width = (kContentWidth - kHomeAgendaColumnGap) / 2;
+  const int center = left + width / 2;
+  label = compactHomeAgendaLabel(label);
+  if (textW(label, 1) <= width) drawStrC(center, kHomeAgendaLabelY, label, 1, BLACK);
+  else drawStrFit(left, kHomeAgendaLabelY, width, label, 1, BLACK);
+
+  char value[8];
+  snprintf(value, sizeof(value), "%d", min(count, 999));
+  drawStrC(center, kHomeAgendaCountY, value, 2, BLACK);
+}
 }  // namespace
 
 void showIdle(int pendingCount, int batteryPercent) {
   clearWhite();
-  drawHeader(nullptr, BLACK);
+  const int nameRight = drawPendingRecordings(pendingCount) - 4;
+  const String name = palaNoteName();
+  const int nameWidth = textW(name.c_str(), 1);
+  const int nameLeft = max(kInset, W / 2 - kHomeSideSlotOffset - nameWidth / 2);
+  drawStrFit(nameLeft, kHeaderY, nameRight - nameLeft, name.c_str(), 1, BLACK);
   drawBattery(batteryPercent);
+  hline(kInset, kHeaderRuleY, kContentWidth, BLACK);
   const String nowUtc = currentUtcIso();
   const String localNow = utcToLocalDeviceLabel(nowUtc);
   const String todayKey = localNow.length() >= 10 && localNow != "time not set" ? localNow.substring(0, 10) : "";
@@ -428,17 +620,12 @@ void showIdle(int pendingCount, int batteryPercent) {
     }
     else if (dueDay <= todayKey) taskCount++;
   }
-  const String date = homeDateLabel();
-  labelLeft(kContentTop, date.c_str(), 1, BLACK);
-  drawHero(uiText("HEUTE", "TODAY"), 63, BLACK, 109);
-  hline(kInset, 116, kContentWidth, BLACK);
-  labelLeft(128, uiText("AUFGABEN", "TASKS"), 1, BLACK, 120);
-  char count[8];
-  snprintf(count, sizeof(count), "%d", min(taskCount, 999));
-  labelRight(124, count, 2, BLACK, 48);
-  labelLeft(159, uiText("TERMINE", "EVENTS"), 1, BLACK, 120);
-  snprintf(count, sizeof(count), "%d", min(eventCount, 999));
-  labelRight(155, count, 2, BLACK, 48);
+  drawHomeWeek(todayKey, time(nullptr));
+  hline(kInset, kHomeAgendaRuleY, kContentWidth, BLACK);
+  const int eventsLeft = W / 2 + kHomeAgendaColumnGap / 2;
+  vline(W / 2, kHomeAgendaLabelY, 31, BLACK);
+  drawHomeAgendaCount(kInset, uiText("AUFGABEN", "TASKS"), taskCount);
+  drawHomeAgendaCount(eventsLeft, uiText("TERMINE", "EVENTS"), eventCount);
   refresh();
 }
 
@@ -651,7 +838,7 @@ void showSetupRequired() {
 void showError(const char* message) {
   Serial.printf("[UI] error: %s\n", message ? message : "unspecified");
   clearWhite();
-  drawHeader("PALA", BLACK);
+  drawHeader(uiText("FEHLER", "ERROR"), BLACK);
   drawStatusHero(uiText("NOCHMAL?", "TRY AGAIN"), 72, BLACK);
   labelLeft(143, uiText("HAT NICHT GEKLAPPT", "SOMETHING WENT WRONG"), 1, BLACK);
   if (message && *message) labelLeft(158, translatedUi(message), 1, BLACK);
@@ -661,9 +848,9 @@ void showError(const char* message) {
 void showSleepLocked() {
   // Preserve the useful home screen and add only a compact persistent sleep
   // indicator beside the battery. E-paper keeps this visible without power.
-  constexpr int x = kRight - 43;
-  constexpr int y = 10;
-  strokeRect(x, y + 5, 11, 9, 1, BLACK);
+  constexpr int x = kSleepLockX;
+  constexpr int y = kHeaderY;
+  strokeRect(x, y + 5, kSleepLockWidth, 9, 1, BLACK);
   // Lock shackle: two vertical shoulders joined by a short top line.
   vline(x + 2, y + 2, 4, BLACK);
   vline(x + 8, y + 2, 4, BLACK);
@@ -675,7 +862,10 @@ void showSleepLocked() {
 void showUltraSleepScreen() {
   clearWhite();
   drawHeader(translatedUi("RESTING"), BLACK);
-  drawStrC(W / 2, 76, "PALA", 3, BLACK);
+  const String name = palaNoteName();
+  int nameScale = 3;
+  while (nameScale > 1 && textW(name.c_str(), nameScale) > kContentWidth) nameScale--;
+  drawStrC(W / 2, 76, name.c_str(), nameScale, BLACK);
   drawStrC(W / 2, 123, translatedUi("PRESS TO WAKE"), 1, BLACK);
   refreshClean();
 }

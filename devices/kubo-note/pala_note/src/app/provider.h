@@ -2,6 +2,8 @@
 // Generated locally by mac-bridge/pair.py. Without pairing the stock provider is used.
 #if __has_include("../../bridge_pairing.h")
 #include "../../bridge_pairing.h"
+#elif __has_include("bridge_pairing.h")
+#include "bridge_pairing.h"
 #else
 #define PALA_MAC_BRIDGE 0
 #define PALA_HOST "api.openai.com"

@@ -55,6 +55,9 @@ public sealed partial class SettingsWindow
         Add("shortcut-mode",MainSection.General,shortcutHold,"Recording shortcut behavior","Press to start/stop or Hold to record until you release the keys.","hold press release toggle push to talk mode");
         Add("history-retention",MainSection.General,historyRetention,"Keep recordings for","Choose how long audio is kept. Transcripts stay until you delete them.","history retention days week month privacy storage audio lifetime expire delete");
         Add("service-address",MainSection.Connections,endpoint,"Local service address","The loopback session service supplies models and transcriptions.","endpoint API port localhost connection reconnect");
+        Add("pala-sync",MainSection.Connections,palaIntegration,"Enable Pala sync","Sync the paired Note over USB, Bluetooth or Wi-Fi through Bridge.","pala kubo sync integration Wi-Fi Bluetooth USB");
+        Add("pala-bridge-name",MainSection.Connections,palaBridgeName,"Note display name","The name synchronized to the paired Note display.","pala kubo device rename");
+        Add("pala-bridge-model",MainSection.Connections,palaBridgeModel,"Pala transcription model","Use the Dictation model or choose a separate installed model.","pala kubo bridge slovak asr");
         Add("compatibility",MainSection.Dictation,compatibility,"Application compatibility","Outlook inserts after Finish. Remembered applications use final-only delivery with Insert directly.","Outlook paused live insertion reset");
         shell.Search.SetEntries(entries);
         shell.Search.Selected+=OpenSearchSetting;

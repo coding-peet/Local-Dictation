@@ -75,12 +75,12 @@ public sealed partial class SettingsWindow : Window
         ConfigureShortcutCapture();
         controller.Changed+=Refresh;
         Closing+=(_,_)=>CommitTextEdits();
-        Closed+=(_,_)=>{closed=true;controller.Changed-=Refresh;shell.Dispose();poll.Stop();saveDelay.Stop();historyPanel?.Dispose();};
+        Closed+=(_,_)=>{closed=true;controller.Changed-=Refresh;shell.Dispose();poll.Stop();saveDelay.Stop();palaBridgePoll.Stop();palaActivityPoll.Stop();historyPanel?.Dispose();};
         poll.Tick+=(_,_)=>_ = PollDownload();
         foreach(var box in new[]{microphone,primary,verifier,language,theme,afterRecording,historyRetention})box.SelectionChanged+=(_,_)=>SelectionChanged(box);
         foreach(var check in new[]{live,verify,insert,shortcutEnabled})
         {check.Checked+=(_,_)=>SelectionChanged(check);check.Unchecked+=(_,_)=>SelectionChanged(check);}
-        foreach(var text in new[]{endpoint})
+        foreach(var text in new[]{endpoint,palaBridgeName})
         {
             text.TextChanged+=(_,_)=>QueueTextEdit(text);
             text.LostKeyboardFocus+=(_,_)=>CommitTextEdits(text);
@@ -287,6 +287,7 @@ public sealed partial class SettingsWindow : Window
                 RefreshShortcutPresentation();theme.SelectedItem=controller.Settings.Theme;
                 language.SelectedItem=controller.Settings.Language;LoadMicrophones();
             }
+            RefreshPalaBridgeSettings();
             UpdateModelChoices(false);
             UpdateOutputDependencies();UpdateShortcutOptions();RefreshHistoryOptions(initial);RefreshPrivate();RefreshAdvancedStatus();
             UpdateSaveStatus();
@@ -437,6 +438,8 @@ public sealed partial class SettingsWindow : Window
             {
                 if(text==endpoint)
                 {var candidate=Snapshot();candidate.Endpoint=text.Text.Trim();candidate.ServerUri();value.Endpoint=candidate.Endpoint;}
+                if(text==palaBridgeName)
+                    value.PalaBridgeName=Settings.ValidatePalaBridgeName(text.Text.Trim());
 
                 textErrors.Remove(text);valid.Add(text);
             }

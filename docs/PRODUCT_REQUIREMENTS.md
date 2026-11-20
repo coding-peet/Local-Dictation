@@ -814,6 +814,22 @@ clear to the user, preserve original recognition, and keep manual edits dominant
   hosts local transcription service controls. Reconnect and Start local API
   are visible on that page. The endpoint field is under Advanced and search
   can open it without applying settings.
+- Show the network Bridge status, approved HTTPS listeners, pairing profile,
+  last authenticated HTTPS contact, and available error details in Connections.
+  Provide Start, Restart, Stop, and an opt-in to start with Local Dictation.
+  Use the existing tray for Bridge status and restart. Closing Settings
+  keeps the managed Bridge running. Tray Exit closes its control pipe.
+- Show the current Bridge activity in plain language for USB, Bluetooth,
+  Wi-Fi and Google delivery. Use a linear indicator while the duration is
+  unknown. Keep recording contents out of activity status.
+- Use Pala Note Configuration as the hardware card title. Synchronize the
+  device display name, initially Kubo, through paired USB, Bluetooth and
+  HTTPS without changing the pairing identity. Keep the name available offline.
+  Provide an integration switch for Local Dictation-managed transports and
+  access to the shared loopback API address.
+  Preserve the paired profile's model by default. Let the user follow the
+  main Dictation model or choose an installed Slovak-compatible ASR model.
+  Apply the selected model to the next Pala transcription.
 
 ## Connected devices
 
@@ -824,3 +840,30 @@ clear to the user, preserve original recognition, and keep manual edits dominant
   transcription succeeds.
 - Keep pairing material, credentials, user data, firmware images, and device
   backups outside Git. Track physical acceptance separately from builds and tests.
+- A lower-button wake checks the recording queue. Try a paired USB data
+  connection first, then the paired Bridge over Wi-Fi, then Bluetooth LE
+  when the Wi-Fi Bridge is unreachable. Existing pairing is sufficient
+  for the automatic connection. A busy local service keeps recordings queued.
+- While Local Dictation is running, transcribe USB and Bluetooth recordings
+  through the local service and return each transcript to the same SD note.
+  Release the COM port between checks so Pala can sleep normally.
+- Deliver each plain personal dictation to the configured Google General
+  list or document as a separate entry with the complete original text.
+  Keep the approved dedicated Google destinations for explicit commands.
+- Use short Google Tasks dictations as their own title. For longer
+  dictations, select a compact topic title locally and retain the
+  complete transcript in the task details.
+- Keep the home screen status row at the top. Center the pending count and
+  the continuous sound wave together in that row and hide both at zero.
+  Put Tasks and Events side by side in one compact bottom strip. Center
+  each count underneath its label and use the extra height for separation
+  between the weekday, weekly dates, and weather row.
+- Center the calendar block vertically in the space between the status
+  and agenda sections. Give the abbreviated English weekday the largest
+  type in the calendar. Keep the month on the left and the ISO week on the
+  right in regular type. Shorten CW to W when the weekday needs the space.
+  Show one regular-weight date row with today highlighted and a divider
+  before the weekend. Under it, show the forecast icon, today's low and high
+  in Trnava, and a locally calculated Moon phase. Cache up to seven days
+  on the device for offline use. Refresh the cache during paired USB or
+  Bluetooth synchronization even when the transcription service is busy.
