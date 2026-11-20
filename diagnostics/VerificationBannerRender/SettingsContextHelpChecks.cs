@@ -63,7 +63,7 @@ static class SettingsContextHelpChecks
                     Require(icons.Length>=3,"Settings page lost its contextual help controls.");
                     var helpLeft=icons.Min(icon=>Bounds(icon).Left);
                     Require(icons.All(icon=>Math.Abs(Bounds(icon).Left-helpLeft)<1),"Settings help icons do not share one rightmost column.");
-                    var fields=page==(int)MainSection.Dictation?new[]{"microphone","primary","language","afterRecording","preferredLanguages","live","insert","privateNext","verify","dictionaryHints","dictionaryCorrections","resetCompatibility"}:new[]{"startWithWindows","theme","endpoint","shortcutEnabled","shortcutKeys","historyRetention"};
+                    var fields=page==(int)MainSection.Dictation?new[]{"microphone","primary","language","afterRecording","preferredLanguages","live","insert","privateNext","verify","dictionaryHints","dictionaryCorrections","resetCompatibility"}:new[]{"startWithWindows","theme","shortcutEnabled","shortcutKeys","historyRetention"};
                     foreach(var field in fields)
                     {
                         var element=Get<FrameworkElement>(window,field);

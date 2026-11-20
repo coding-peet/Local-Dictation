@@ -807,3 +807,20 @@ clear to the user, preserve original recognition, and keep manual edits dominant
   Maintain clipboard restoration, privilege, field-identity and no-submit guards.
 - Validate with synthetic controller/state tests and keep native destination
   acceptance separate. No voice tests or running API changes are included.
+
+## Connections section
+
+- Keep existing app, model, dictation and history destinations. Connections
+  hosts local transcription service controls. Reconnect and Start local API
+  are visible on that page. The endpoint field is under Advanced and search
+  can open it without applying settings.
+
+## Connected devices
+
+- Develop Kubo Note (Pala Note hardware), its Bridge and Android companion,
+  and DeskGadget in this checkout alongside Local Dictation.
+- Use the paired Bridge for local transcription. Preserve TLS identity and
+  per-device authentication. Keep offline recordings recoverable until
+  transcription succeeds.
+- Keep pairing material, credentials, user data, firmware images, and device
+  backups outside Git. Track physical acceptance separately from builds and tests.

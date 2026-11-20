@@ -12,7 +12,7 @@ namespace LocalDictation.App.Views;
 /// Main-window layout without a Window or device/controller dependency. The same
 /// chrome can be measured and rendered offline with representative page content.
 /// </summary>
-public enum MainSection { General, Models, Dictation, History }
+public enum MainSection { General, Models, Dictation, History, Connections }
 
 public sealed class MainWindowShell : Grid, IDisposable
 {
@@ -31,7 +31,7 @@ public sealed class MainWindowShell : Grid, IDisposable
         Button record, Button help, TextBlock connection, TextBlock saveStatus,
         TextBlock message, Action<int>? pageSelected=null)
     {
-        if(pages.Count!=4)throw new ArgumentException("Provide General, Models, Dictation and History pages.",nameof(pages));
+        if(pages.Count!=Enum.GetValues<MainSection>().Length)throw new ArgumentException("Provide one page per section.",nameof(pages));
         this.pages=pages;this.pageSelected=pageSelected;this.saveStatus=saveStatus;Navigation=navigation;
         Margin=new(16,8,16,8);SetResourceReference(BackgroundProperty,"Canvas");
         RowDefinitions.Add(new(){Height=GridLength.Auto});
@@ -54,7 +54,7 @@ public sealed class MainWindowShell : Grid, IDisposable
         navigation.SetResourceReference(Control.BackgroundProperty,"Canvas");
         ScrollViewer.SetHorizontalScrollBarVisibility(navigation,ScrollBarVisibility.Disabled);
         System.Windows.Automation.AutomationProperties.SetName(navigation,"Sections");
-        var destinations=new[]{("General",PackIconKind.CogOutline),("Models",PackIconKind.CubeOutline),("Dictation",PackIconKind.Microphone),("History",PackIconKind.History)};
+        var destinations=new[]{("General",PackIconKind.CogOutline),("Models",PackIconKind.CubeOutline),("Dictation",PackIconKind.Microphone),("History",PackIconKind.History),("Connections",PackIconKind.LanConnect)};
         foreach(var (label,icon) in destinations)
         {
             var caption=Ui.Text(label);caption.FontSize=13;
@@ -165,7 +165,7 @@ public sealed class MainWindowShell : Grid, IDisposable
         {
             if(values[0] is not string text||string.IsNullOrWhiteSpace(text))return Visibility.Collapsed;
             var routine=text.StartsWith("Saved automatically",StringComparison.OrdinalIgnoreCase)||text.Equals("All changes saved",StringComparison.OrdinalIgnoreCase)||text is "Saving…" or "Saving...";
-            var relevant=values[1] is int index&&index is (int)MainSection.General or (int)MainSection.Dictation&&values[2] is false;
+            var relevant=values[1] is int index&&index is (int)MainSection.General or (int)MainSection.Dictation or (int)MainSection.Connections&&values[2] is false;
             // Only recognized routine states are contextual. Keep unrecognized and
             // failure messages visible on every page, including search results.
             return relevant||!routine?Visibility.Visible:Visibility.Collapsed;

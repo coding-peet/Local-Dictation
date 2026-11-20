@@ -12,7 +12,7 @@ public sealed partial class SettingsWindow
     readonly TextBlock startupStatus=Ui.Text("",12),startupError=Ui.Text("",12);
     readonly Expander serviceAdvanced=new(){Header="Advanced",HorizontalContentAlignment=HorizontalAlignment.Stretch};
     readonly Expander dictationAdvanced=new(){Header="Advanced",HorizontalContentAlignment=HorizontalAlignment.Stretch};
-    readonly TextBlock serviceAdvancedSummary=Ui.Text("Local transcription service.",12),dictationAdvancedSummary=Ui.Text("",12);
+    readonly TextBlock dictationAdvancedSummary=Ui.Text("",12);
     bool refreshingStartup;
 
     static void ConfigureAdvanced(Expander expander)
@@ -26,7 +26,7 @@ public sealed partial class SettingsWindow
     }
     UIElement GeneralPage()
     {
-        ConfigureAdvanced(serviceAdvanced);ConfigureAdvanced(dictationAdvanced);
+        ConfigureAdvanced(dictationAdvanced);
         var page=new StackPanel{Margin=new(0,8,8,0)};
         var startup=new StackPanel();startup.Children.Add(Ui.Text("Startup",18,true));
         startup.Children.Add(Ui.SwitchRow("Start with Windows",startWithWindows,
@@ -39,14 +39,6 @@ public sealed partial class SettingsWindow
         Ui.Label(appearance,"Color theme",theme,"System follows Windows. Light and Dark override it.");
         page.Children.Add(Section(appearance));
         page.Children.Add(Section(ShortcutSection()));page.Children.Add(Section(HistorySection()));
-        var service=new StackPanel();service.Children.Add(Ui.Text("Local transcription service",18,true));
-        Ui.Label(service,"Local service address",endpoint,"The session service supplies your installed models and transcriptions.");
-        service.Children.Add(Ui.Row(Ui.Button("Reconnect",()=>_ = Reconnect()),Ui.Button("Start local API",()=>_ = controller.StartLocalApi())));
-        serviceAdvanced.Content=Ui.SettingsGroup(service);
-        serviceAdvancedSummary.SetResourceReference(TextBlock.ForegroundProperty,"Muted");
-        serviceAdvanced.Expanded+=(_,_)=>RefreshAdvancedStatus();serviceAdvanced.Collapsed+=(_,_)=>RefreshAdvancedStatus();
-        var advanced=new StackPanel();advanced.Children.Add(serviceAdvanced);advanced.Children.Add(Ui.SettingRow(serviceAdvancedSummary));
-        page.Children.Add(Ui.Card(advanced));
         return new ScrollViewer{Content=page,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,HorizontalScrollBarVisibility=ScrollBarVisibility.Disabled,MaxWidth=880,HorizontalAlignment=HorizontalAlignment.Stretch};
     }
 
@@ -85,7 +77,6 @@ public sealed partial class SettingsWindow
 
     void RefreshAdvancedStatus()
     {
-        serviceAdvancedSummary.Visibility=serviceAdvanced.IsExpanded?Visibility.Collapsed:Visibility.Visible;
         var draft=controller.DictionaryEditorDraft;
         var warning=draft!=null||compatibilityWarning.Length>0||controller.PersonalDictionaryStatus.Contains("could not",StringComparison.OrdinalIgnoreCase);
         dictationAdvancedSummary.Text=draft!=null?"Unsaved dictionary changes in Advanced. "+(draft.Error??"Open Advanced to review or save them."):

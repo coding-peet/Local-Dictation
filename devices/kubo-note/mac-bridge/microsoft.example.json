@@ -1,0 +1,7 @@
+{
+  "tenant_id": "TENANT-ID",
+  "client_id": "PUBLIC-CLIENT-APPLICATION-ID",
+  "section_id": "ONENOTE-SECTION-ID",
+  "plan_id": "PLANNER-PLAN-ID",
+  "bucket_id": "PLANNER-BUCKET-ID"
+}

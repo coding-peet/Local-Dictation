@@ -67,7 +67,7 @@ public sealed partial class SettingsWindow : Window
         Title="Local Dictation";Width=1040;Height=820;MinWidth=640;MinHeight=620;
         WindowStartupLocation=WindowStartupLocation.CenterScreen;
         record=Ui.Button("Record",RecordInBanner,true);
-        var pages=new[]{GeneralPage(),ModelsPage(),DictationPage(),HistoryPage()};
+        var pages=new[]{GeneralPage(),ModelsPage(),DictationPage(),HistoryPage(),ConnectionsPage()};
         shell=new MainWindowShell(navigation,pages,record,Ui.Button("Help",OpenHelp),
             connection,saveStatus,message,MainSectionSelected);
         Content=shell;

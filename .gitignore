@@ -76,3 +76,22 @@ TestResults/
 *.pfx
 *.p12
 local.settings.json
+
+# Connected-device builds and private pairing
+.pio/
+.gradle/
+devices/**/build/
+devices/**/local.properties
+devices/**/bridge_pairing.h
+devices/**/secrets.h
+devices/**/*.ino.cpp
+devices/**/pala-phone.json
+devices/**/phone-token
+devices/**/google-client.json
+devices/**/google-tasks-token.json
+devices/**/config.json
+devices/**/*-key.pem
+devices/**/key.pem
+*.apk
+*.aab
+*.whl

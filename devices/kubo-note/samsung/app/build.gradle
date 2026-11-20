@@ -1,0 +1,12 @@
+plugins { id 'com.android.application' version '8.10.1' }
+android {
+    namespace 'local.palanote.phone'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'local.palanote.phone'
+        minSdk 29
+        targetSdk 35
+        versionCode 1
+        versionName '1.0'
+    }
+}

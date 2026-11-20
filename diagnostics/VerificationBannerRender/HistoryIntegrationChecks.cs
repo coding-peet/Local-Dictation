@@ -103,7 +103,7 @@ static class HistoryIntegrationChecks
             TextBlock Text(string label)=>(TextBlock)ui.GetMethod("Text",BindingFlags.Static|BindingFlags.Public)!.Invoke(null,[label,12d,false])!;
             var nav=new ListBox();var record=Button("Record",true);var help=Button("Help");
             var connection=Text("Ready · Local transcription");var saved=Text("Saved automatically");var alert=Text("");
-            using(var shell=new MainWindowShell(nav,[new Border(),new Border(),new Border(),page],record,help,connection,saved,alert))
+            using(var shell=new MainWindowShell(nav,[new Border(),new Border(),new Border(),page,new Border()],record,help,connection,saved,alert))
             {
                 try
                 {

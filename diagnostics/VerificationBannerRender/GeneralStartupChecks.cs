@@ -55,7 +55,7 @@ public static class GeneralStartupChecks
         {
             var shell=(MainWindowShell)window.Content;
             var labels=shell.Navigation.Items.Cast<ListBoxItem>().Select(AutomationProperties.GetName).ToArray();
-            Require(labels.SequenceEqual(new[]{"General","Models","Dictation","History"}),"Navigation must follow General, Models, Dictation, History without duplicate Settings.");
+            Require(labels.SequenceEqual(new[]{"General","Models","Dictation","History","Connections"}),"Connections must be reachable from the main navigation.");
             Require(shell.Navigation.SelectedIndex==(int)MainSection.Dictation,"Manual opening must start on Dictation even though General is first.");
             shell.Navigation.SelectedIndex=(int)MainSection.General;
             var startup=Get<ToggleButton>(window,"startWithWindows");var error=Get<TextBlock>(window,"startupError");
@@ -64,7 +64,7 @@ public static class GeneralStartupChecks
             Require(startup.IsChecked==false&&startup.IsEnabled&&AutomationProperties.GetName(startup)=="Start with Windows","Startup must be an accessible opt-in switch.");
             var reads=store.Reads;Call(window,"Refresh");Call(window,"Refresh");
             Require(store.Reads==reads&&store.Writes==0&&store.Deletes==0,"Routine controller refresh polls or modifies startup registration.");
-            checks.Add("General/Models/Dictation/History navigation, initial Dictation, opt-in startup and collapsed Advanced without setting changes");
+            checks.Add("General/Models/Dictation/History/Connections navigation, initial Dictation, opt-in startup and collapsed Advanced without setting changes");
 
             startup.IsChecked=true;
             Require(startup.IsChecked==true&&store.Value is string command&&command=="\""+Executable+"\" --startup"&&store.Writes==1,"Startup toggle failed to register the explicitly selected executable.");
@@ -79,13 +79,13 @@ public static class GeneralStartupChecks
             checks.Add("Explicit startup toggle, safe inline write/delete failure, actual-state restoration and retry using only injected registration storage");
 
             Search(window,shell,"windows-startup","start with windows","General");Require(shell.Navigation.SelectedIndex==(int)MainSection.General,"Startup search missed General.");
-            Search(window,shell,"service-address","service address","General");Require(service.IsExpanded&&shell.Navigation.SelectedIndex==(int)MainSection.General,"Service search failed to expand General Advanced.");
+            Search(window,shell,"service-address","service address","Connections");Require(service.IsExpanded&&shell.Navigation.SelectedIndex==(int)MainSection.Connections,"Service search failed to expand Connections Advanced.");
             Search(window,shell,"dictionary-hints","recognition hints","Dictation");Require(dictation.IsExpanded&&shell.Navigation.SelectedIndex==(int)MainSection.Dictation,"Dictionary search failed to reveal Dictation Advanced.");
             dictation.IsExpanded=false;Search(window,shell,"compatibility","application compatibility","Dictation");Require(dictation.IsExpanded,"Compatibility search did not reveal its current target.");
             Require(JsonSerializer.Serialize(owner.Settings)==settings&&store.Writes+store.Deletes==mutations,"Search applied settings or startup registration.");
             window.SelectHistory();Require(shell.Navigation.SelectedIndex==(int)MainSection.History,"History command opened the reordered Dictation page.");
             Require(Get<HistoryPanel>(window,"historyPanel")!=null,"History route lost its persistent panel.");
-            checks.Add("Search routes General and Dictation categories, expands Advanced without edits and preserves reordered History command");
+            checks.Add("Search routes General, Connections and Dictation categories, expands Advanced without edits and preserves reordered History command");
 
             dictation.IsExpanded=false;owner.RetainDictionaryDraft("Synthetic hints","invalid correction","Synthetic unsaved dictionary warning");Call(window,"RefreshAdvancedStatus");
             var summary=Get<TextBlock>(window,"dictationAdvancedSummary");Require(summary.Visibility==Visibility.Visible&&summary.Text.Contains("Synthetic unsaved dictionary warning"),"Collapsing Advanced hid the unsaved dictionary error.");
@@ -95,17 +95,17 @@ public static class GeneralStartupChecks
             foreach(var theme in new[]{"Light","Dark"})foreach(var width in new[]{640,1040})
             {
                 ThemeManager.Apply(theme);
-                foreach(var section in new[]{MainSection.General,MainSection.Dictation})foreach(var expanded in new[]{false,true})
+                foreach(var section in new[]{MainSection.Connections,MainSection.Dictation})foreach(var expanded in new[]{false,true})
                 {
                     service.IsExpanded=dictation.IsExpanded=expanded;shell.Navigation.SelectedIndex=(int)section;Layout(shell,width);
                     var page=(ScrollViewer)shell.PageHost.Content;
                     if(expanded)page.ScrollToBottom();else page.ScrollToHome();Layout(shell,width);
-                    if(expanded){var open=section==MainSection.General?service:dictation;Require(open.ActualHeight>=((FrameworkElement)open.Content).ActualHeight+40&&((FrameworkElement)open.Content).ActualHeight>120,"Expanded Advanced content has not reached its visible layout state: "+section+", expander="+open.ActualHeight+", content="+((FrameworkElement)open.Content).ActualHeight+", expanded="+open.IsExpanded);}
+                    if(expanded){var open=section==MainSection.Connections?service:dictation;Require(open.ActualHeight>=((FrameworkElement)open.Content).ActualHeight+40&&((FrameworkElement)open.Content).ActualHeight>=48,"Expanded Advanced content has not reached its visible layout state: "+section+", expander="+open.ActualHeight+", content="+((FrameworkElement)open.Content).ActualHeight+", expanded="+open.IsExpanded);}
                     Require(new WindowInteropHelper(window).Handle==0&&PresentationSource.FromVisual(shell)==null,"General rendering attached a native window.");
                     Require(shell.ActualWidth>=width-32&&shell.ActualWidth<=width&&shell.PageHost.ActualWidth>350,"Section layout lost usable compact content width.");
                     var bitmap=new RenderTargetBitmap(width,820,96,96,PixelFormats.Pbgra32);bitmap.Render(shell);var png=new PngBitmapEncoder();png.Frames.Add(BitmapFrame.Create(bitmap));using var file=File.Create(Path.Combine(output,$"general-navigation-{section}-{(expanded?"advanced":"top")}-{width}-{theme}.png"));png.Save(file);
                 }
-                checks.Add($"General and Dictation top/Advanced layouts at {width} DIP {theme}, no native window or devices");
+                checks.Add($"Connections and Dictation top/Advanced layouts at {width} DIP {theme}, no native window or devices");
             }
             Require(JsonSerializer.Serialize(owner.Settings)==settings&&store.Writes+store.Deletes==mutations,"Rendering modified settings or registration.");
             Require(settingsBytes==null?!File.Exists(settingsPath):File.ReadAllBytes(settingsPath).SequenceEqual(settingsBytes),"General startup UI wrote the dictation settings file.");

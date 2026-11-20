@@ -17,13 +17,21 @@ generated from this repository; model weights and personal data stay outside Git
 - [Agent instructions](AGENTS.md): development constraints and verification.
 - [Workspace and data locations](docs/development/workspace-layout.md).
 
+## Connected devices
+
+- [Kubo Note](devices/kubo-note/README.md) contains the Pala Note firmware,
+  paired Bridge, and Android companion. Bridge uses the same local
+  transcription API as the Windows client.
+- [DeskGadget](devices/DeskGadget/README.md) contains the separate ESP32-S3
+  desk gadget firmware and its optional calendar tool.
+
 ## Current workflows
 
-The main sections are General, Models, Dictation and History. A normal manual
+The main sections are General, Models, Dictation, History and Connections. A normal manual
 launch opens Dictation. Record/Stop and Help remain available across sections.
 
 - **General:** opt-in Start with Windows, appearance, global shortcut, recording
-  retention, and Advanced local-service controls. Start with Windows registers
+  retention. Start with Windows registers
   the current user's client and opens it in the tray after sign-in.
 - **Models:** manage installed and available models. Choose the active dictation
   and verification model roles in Dictation.
@@ -35,6 +43,9 @@ launch opens Dictation. Record/Stop and Help remain available across sections.
   audio. Filters opens a floating draft panel beside search. Apply commits the
   conditions; Cancel, Escape or outside click discards the draft. Only active
   filters occupy a chip row; Clear filters preserves the search text.
+
+- **Connections:** reconnect to the local transcription API or start it.
+  The service address is under Advanced.
 
 Choose **Insert directly** to return completed text to a validated original
 field when the workflow permits it. **Preview first** waits for explicit Insert.

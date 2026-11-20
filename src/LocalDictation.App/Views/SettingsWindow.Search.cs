@@ -54,7 +54,7 @@ public sealed partial class SettingsWindow
         Add("shortcut",MainSection.General,shortcutValue,"Start / stop recording","Press a key combination to set the recording shortcut. Default Ctrl+Shift.","hotkey key binding");
         Add("shortcut-mode",MainSection.General,shortcutHold,"Recording shortcut behavior","Press to start/stop or Hold to record until you release the keys.","hold press release toggle push to talk mode");
         Add("history-retention",MainSection.General,historyRetention,"Keep recordings for","Choose how long audio is kept. Transcripts stay until you delete them.","history retention days week month privacy storage audio lifetime expire delete");
-        Add("service-address",MainSection.General,endpoint,"Local service address","The loopback session service supplies models and transcriptions.","endpoint API port localhost connection reconnect");
+        Add("service-address",MainSection.Connections,endpoint,"Local service address","The loopback session service supplies models and transcriptions.","endpoint API port localhost connection reconnect");
         Add("compatibility",MainSection.Dictation,compatibility,"Application compatibility","Outlook inserts after Finish. Remembered applications use final-only delivery with Insert directly.","Outlook paused live insertion reset");
         shell.Search.SetEntries(entries);
         shell.Search.Selected+=OpenSearchSetting;

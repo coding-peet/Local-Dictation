@@ -26,7 +26,7 @@ static class SettingsSearchChecks
     public static void Run(string theme, string output, List<string> checks)
     {
         var draft = new TextBox { Text = "An unsaved page value." };
-        var pages = new UIElement[] { new Border(), new Border(), new Border { Child = draft }, new Border() };
+        var pages = new UIElement[] { new Border(), new Border(), new Border { Child = draft }, new Border(), new Border() };
         var pageChanges = 0;
         var ui = typeof(MainWindowShell).Assembly.GetType("LocalDictation.App.Views.Ui")!;
         var buttonFactory = ui.GetMethod("Button", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)!;
@@ -50,8 +50,8 @@ static class SettingsSearchChecks
         Require(AutomationProperties.GetName(box) == "Search settings" && box.Focusable,
             "Search is missing its accessible keyboard target.");
         Require(shell.StatusBar.ActualHeight <= 64.1, "Search inflates the compact bottom status bar.");
-        Require(shell.Navigation.Items.Count == 4 && shell.Navigation.Items.Cast<ListBoxItem>().All(item => item.ActualWidth >= 140),
-            "Search hides or narrows the four named navigation destinations.");
+        Require(shell.Navigation.Items.Count == pages.Length && shell.Navigation.Items.Cast<ListBoxItem>().All(item => item.ActualWidth >= 140),
+            "Search hides or narrows the named navigation destinations.");
         var originalPageChanges = pageChanges;
         SettingsSearchEntry? selected = null;
         var restoredBeforeCallback = false;
