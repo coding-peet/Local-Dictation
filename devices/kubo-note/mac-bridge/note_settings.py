@@ -82,6 +82,8 @@ def note_request(data):
         return {"op": op, "address": text(data.get("address"), 15, empty=True)}
     if op == "sleep.save" and bounded_integer(data.get("minutes"), 0, IDLE_SLEEP_MINUTES_MAX):
         return {"op": op, "minutes": data["minutes"]}
+    if op == "sync.save" and bounded_integer(data.get("mode"), 0, 3):
+        return {"op": op, "mode": data["mode"]}
     if op == "pages.save" and valid_display_pages(data.get("pages")):
         return {"op": op, "pages": data["pages"]}
     if op == "bridge.order":
@@ -135,6 +137,8 @@ def note_response(reply, transport, op="get"):
         result["device"]["keepsWifiPassword"] = True
     if bounded_integer(device.get("sleepMinutes"), 0, IDLE_SLEEP_MINUTES_MAX):
         result["device"]["sleepMinutes"] = device["sleepMinutes"]
+    if bounded_integer(device.get("syncTiming"), 0, 3):
+        result["device"]["syncTiming"] = device["syncTiming"]
     if valid_display_pages(device.get("displayPages")):
         result["device"]["displayPages"] = device["displayPages"]
     if "bridgeAddress" in device:

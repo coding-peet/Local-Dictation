@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include "recording_sync_schedule.h"
 
 void palaSettingsBegin();
 constexpr int PALA_MAX_WIFI_PROFILES = 5;
@@ -27,6 +28,8 @@ bool palaStoreDeliveryCounts(const String& counts);
 String palaBridgeAddress();
 bool palaSetBridgeAddress(const String& address);
 String palaUiLanguage();
+SyncTiming palaSyncTiming();
+bool palaSetSyncTiming(SyncTiming mode);
 int palaIdleSleepMinutes();
 bool palaSetIdleSleepMinutes(int minutes);
 String palaDisplayPages();

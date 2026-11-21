@@ -52,7 +52,7 @@ constexpr bool aquariumTimeline() {
   state.upper(ButtonAction::Single, 2441);
   if (state.scene != AquariumScene::Feeding) return false;
   state.advance(6141);
-  state.lower(6142);
+  state.lower(ButtonAction::Single, 6142);
   if (state.scene != AquariumScene::Current) return false;
   state.advance(11842);
   state.advance(26841);
@@ -70,7 +70,36 @@ constexpr bool aquariumTimeline() {
   return state.scene == AquariumScene::Hiding;
 }
 
+constexpr bool lowerTapDuringDisplayRefresh() {
+  AquariumState state;
+  state.open(0);
+  state.advance(2190);
+  ButtonGesture gesture;
+  gesture.edge(true, 2400, 1);
+  if (gesture.poll(2420, 1) != ButtonAction::None) return false;
+
+  // The panel held up the loop. The release still carries its original time.
+  if (gesture.edge(false, 2460, 1) != ButtonAction::None) return false;
+  state.lower(gesture.poll(2850, 1), 2850);
+  return state.scene == AquariumScene::Current && state.since == 2850;
+}
+
+constexpr bool lowerHoldDoesNotStartCurrent() {
+  AquariumState state;
+  state.open(0);
+  state.advance(2190);
+  ButtonGesture gesture;
+  gesture.edge(true, 2400, 1);
+  const auto hold = gesture.edge(false, 2800, 1);
+  if (hold != ButtonAction::Hold) return false;
+  state.lower(hold, 3100);
+  state.lower(gesture.poll(3100, 1), 3100);
+  return state.scene == AquariumScene::Ready;
+}
+
 static_assert(preservesQueuedButtonGestures());
 static_assert(aquariumDoubleNeverFeeds());
 static_assert(aquariumTimeline());
+static_assert(lowerTapDuringDisplayRefresh());
+static_assert(lowerHoldDoesNotStartCurrent());
 }

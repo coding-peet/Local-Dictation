@@ -496,3 +496,17 @@ class ManagedWatcherSettingsTests(unittest.TestCase):
                 self.assertFalse(process.is_alive())
                 self.assertFalse(descriptor.exists())
                 self.assertFalse((state / "config.json").exists())
+
+
+class SyncTimingSettingsTests(unittest.TestCase):
+    def test_timing_round_trip_and_validation(self):
+        for mode in range(4):
+            request = {"op": "sync.save", "mode": mode}
+            self.assertEqual(note_request(request), request)
+            device = {"name": "Willow", "language": "en", "syncTiming": mode}
+            self.assertEqual(note_response({"ok": True, "device": device}, "USB")["device"], device)
+        for mode in (-1, 4, True, "0", None):
+            with self.subTest(mode=mode), self.assertRaises(SettingsError):
+                note_request({"op": "sync.save", "mode": mode})
+        device = {"name": "Willow", "language": "en"}
+        self.assertNotIn("syncTiming", note_response({"ok": True, "device": device}, "BLE")["device"])

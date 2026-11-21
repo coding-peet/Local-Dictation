@@ -24,7 +24,7 @@ class Element {
   scrollIntoView() { this.scrolled = true; }
 }
 
-function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, hash = '', name = 'Willow', displayPages, sleepMinutes } = {}) {
+function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, hash = '', name = 'Willow', displayPages, sleepMinutes, syncTiming } = {}) {
   const elements = new Map();
   const buttons = [];
   for (const match of settings.matchAll(/<([a-z][a-z0-9]*)\b[^<>]*\bid="([^"]+)"[^<>]*>/g)) {
@@ -61,7 +61,7 @@ function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, ha
         case 'get':
           reply = {
             ...reply, ok: connected, csrf: 'synthetic-nonce', transport, capabilities: { devicePortal: portal },
-            device: connected ? { name, language: 'en', memoryTrash, displayPages, sleepMinutes } : undefined, wifi: [], peers: [],
+            device: connected ? { name, language: 'en', memoryTrash, displayPages, sleepMinutes, syncTiming } : undefined, wifi: [], peers: [],
           };
           break;
         case 'settings.save':
@@ -69,6 +69,9 @@ function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, ha
           break;
         case 'sleep.save':
           sleepMinutes = data.minutes;
+          break;
+        case 'sync.save':
+          syncTiming = data.mode;
           break;
         case 'pages.save':
           displayPages = data.pages;
@@ -288,7 +291,7 @@ test('the third month can be enabled and reordered alongside other pages', async
   checkbox.checked = true;
   checkbox.dispatch('change');
   monthAfterNext.children[1].children[0].dispatch('click');
-  list.children[1].children[1].children[0].dispatch('click');
+  list.children[1].children[1].children.find(control => control.textContent === 'Move up').dispatch('click');
   assert.equal(list.children[0].children[0].children[1], 'Month after next');
   list.children[0].children[1].children[0].dispatch('click');
   await page.dispatch('display-pages-form', 'submit');
@@ -317,4 +320,27 @@ test('sleep settings are hidden if the connected firmware lacks them', async () 
   const page = fixture();
   await page.refresh();
   assert.equal(page.el('sleep-timeout').hidden, true);
+});
+
+
+test('page order buttons place down before up without reversing their actions', async () => {
+  const page = fixture({ displayPages: 'TECNM' });
+  await page.refresh();
+  const list = page.el('display-pages-list');
+  const middle = list.children[2].children[1].children;
+  assert.deepEqual(middle.map(control => control.textContent), ['Move down', 'Move up']);
+});
+
+test('sync timing saves and reads back and is hidden with older firmware', async () => {
+  const page = fixture({ syncTiming: 0 });
+  await page.refresh();
+  assert.equal(page.el('sync-timing').hidden, false);
+  assert.equal(page.el('sync-mode').value, '0');
+  page.el('sync-mode').value = '3';
+  await page.dispatch('sync-timing-form', 'submit');
+  assert(page.calls.some(call => call.op === 'sync.save' && call.mode === 3));
+  assert.equal(page.el('sync-mode').value, '3');
+  const old = fixture();
+  await old.refresh();
+  assert.equal(old.el('sync-timing').hidden, true);
 });

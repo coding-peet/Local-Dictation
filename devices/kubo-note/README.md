@@ -81,12 +81,14 @@ permanently deletes the items in Trash and requires explicit confirmation.
 
 ## Aquarium
 
-From the awake Home screen, press the upper button three times quickly.
+From the awake Home screen, press the lower button three times quickly.
 The clownfish peeks out of the anemone and swims beside it.
 
 - Press the upper button once to drop a flake.
-- Press the lower button once for a current. The fish turns into the flow
-  and circles the anemone as the water settles.
+- After the fish swims out, tap the lower button once for a current.
+  The fish turns into the flow
+  and circles the anemone as the water settles. The anemone polyps bend
+  with the current and straighten as it fades.
 - Press the upper button twice to end the visit. After inactivity the fish
   performs the same closing sequence and returns Home.
 
@@ -113,6 +115,26 @@ These commands save the corresponding authorization on the Bridge computer.
 They do not create tasks or appointments. An existing Google OAuth client
 configuration is required by these Google sign-in commands.
 
+### Windows voice for Ask Kubo
+
+Bridge can synthesize answers locally with Piper. For Slovak, use the
+[Piper Lili voice](https://huggingface.co/rhasspy/piper-voices/tree/main/sk/sk_SK/lili/medium).
+Keep its ONNX model and adjacent `.onnx.json` file outside the repository.
+Install `piper-tts==1.8.0` and `scipy` in a dedicated Python environment.
+
+Save `speech-voice.json` in `%LOCALAPPDATA%\PalaBridge` with the absolute
+paths to that environment's Python executable and the voice model.
+
+~~~json
+{
+  "python": "C:/AI/LocalDictation/tts/piper-lili/.venv/Scripts/python.exe",
+  "model": "C:/AI/LocalDictation/tts/piper-lili/sk_SK-lili-medium.onnx"
+}
+~~~
+
+Bridge reads the profile for each answer and produces 24 kHz mono PCM for
+the Note. Profiles without this file use the installed Windows speech voice.
+
 ## Build and run checks
 
 Run these commands from this directory. Use a Python environment with the
@@ -134,7 +156,7 @@ header keeps the original standalone provider setup.
 The Android companion is under `samsung`. Its Gradle wrapper uses JDK 17
 and Android SDK 35. Keep the APK and Gradle build output outside Git.
 
-## Synchronize recordings after waking Pala
+## Synchronize recordings
 
 Keep Local Dictation running on the paired Windows PC. Press the lower
 button to wake Pala. On the awake **Home** screen, the lower button has
@@ -144,11 +166,24 @@ four actions.
 | --- | --- |
 | One tap | Open Events if enabled in Display pages |
 | Two quick taps | Play the weekly briefing |
-| Three quick taps | Synchronize queued recordings |
+| Three quick taps | Open the aquarium |
 | Hold | Ask Kubo. Keep holding while you speak and release to finish the question. |
 
 The Note waits briefly after the first or second tap to distinguish the
-gestures. On a display page, the lower button returns to Home.
+gestures. On a display page, the lower button returns to Home. On Home,
+tap the upper button three times to synchronize queued recordings.
+
+In **Note settings → Recording sync**, choose when automatic recording
+sync starts and select **Save sync timing**.
+
+- **Immediately on wake** starts processing the existing queue on wake.
+- **After recording** starts processing the queue when a recording is saved.
+- **Before sleep** is the default. When Home has been idle for the configured
+  timeout, the Note allows up to two more minutes to start and drain queued work.
+  A stage already running can finish safely.
+- **Manual only** leaves recordings queued until you trigger sync.
+
+The upper-button triple press works in every mode.
 
 1. When an active USB data connection is present, Pala first gives the
    paired Windows client time to authenticate over USB.
@@ -264,6 +299,8 @@ saved the name. The existing pairing and DNS identity stay in use.
 The Home display counts dictations whose Google Tasks or Docs writes were
 all confirmed today and transcribed dictations still waiting for a required
 confirmation. The first count follows the device's Central European date.
+After submitting a note over Wi-Fi, the Note fetches the counters on the same
+connection and briefly checks again while Google delivery is still pending.
 A dictation that creates several shopping entries counts once. The Bridge
 keeps the date of the final confirmation and the device shows its last
 received waiting count while offline. Deliveries recorded before the Bridge

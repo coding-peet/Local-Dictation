@@ -12,6 +12,7 @@ static bool ready = false;
 static int cachedWifiCount = -1;
 static int cachedApiConfigured = -1;
 static int cachedIdleSleepMinutes = -1;
+static int cachedSyncTiming = -1;
 
 static bool supportedLanguage(const String& language) {
   return language == "de" || language == "en" || language == "fr" ||
@@ -186,6 +187,27 @@ bool palaSetBridgeAddress(const String& address) {
   if (!address.length()) return prefs.remove("bridge_ip");
   return prefs.putString("bridge_ip", address) == address.length() &&
          storedString("bridge_ip") == address;
+}
+
+SyncTiming palaSyncTiming() {
+  if (cachedSyncTiming < 0) {
+    palaSettingsBegin();
+    if (!ready) return SyncTiming::BeforeSleep;
+    const int mode = prefs.getUChar("sync_timing", 0);
+    cachedSyncTiming = validSyncTiming(mode) ? mode : 0;
+  }
+  return static_cast<SyncTiming>(cachedSyncTiming);
+}
+
+bool palaSetSyncTiming(SyncTiming mode) {
+  const auto stored = static_cast<uint8_t>(mode);
+  if (!validSyncTiming(stored)) return false;
+  palaSettingsBegin();
+  if (!ready) return false;
+  if (palaSyncTiming() == mode) return true;
+  if (prefs.putUChar("sync_timing", stored) != sizeof(stored)) return false;
+  cachedSyncTiming = -1;
+  return palaSyncTiming() == mode;
 }
 
 int palaIdleSleepMinutes() {

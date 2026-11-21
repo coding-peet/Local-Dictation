@@ -1,4 +1,5 @@
 #include "home_delivery.h"
+#include "home_delivery_refresh.h"
 #include "home_bridge_status.h"
 #include "bridge_client.h"
 #include "home_almanac.h"
@@ -10,7 +11,7 @@
 #endif
 
 namespace {
-uint32_t lastRefresh = 0;
+HomeDeliveryRefresh refreshSchedule;
 
 bool parseCounts(const String& payload, char (&day)[11], unsigned& delivered, unsigned& waiting) {
   int consumed = 0;
@@ -35,12 +36,22 @@ bool storeHomeDelivery(const String& payload, bool& changed) {
   if (!parseCounts(payload, day, delivered, waiting)) return false;
   changed = payload != palaStoredDeliveryCounts();
   if (!palaStoreDeliveryCounts(payload)) return false;
-  lastRefresh = millis();
+  refreshSchedule.received(millis(), waiting);
   return true;
 }
 
 bool homeDeliveryNeedsRefresh(uint32_t now) {
-  return !lastRefresh || now - lastRefresh >= 300000;
+  return refreshSchedule.needsRoutineRefresh(now);
+}
+
+bool homeDeliveryNeedsFollowup(uint32_t now) {
+  return refreshSchedule.needsFollowup(now);
+}
+
+void refreshHomeDeliveryAfterSubmission() {
+  // The Bridge stages the Google write before replying. Confirmation can follow later.
+  refreshSchedule.submitted(millis());
+  refreshHomeDelivery();
 }
 
 bool refreshHomeDelivery() {

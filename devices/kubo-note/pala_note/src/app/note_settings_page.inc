@@ -72,6 +72,9 @@ li:last-child { border-bottom: 0; }
 li span { overflow-wrap: anywhere; }
 li .actions { flex-shrink: 0; }
 #display-pages-list .row { flex-wrap: wrap; }
+#display-pages-list .actions { display: grid; grid-template-columns: repeat(2, minmax(6.3rem, 1fr)); }
+.page-down { grid-column: 1; }
+.page-up { grid-column: 2; }
 .display-home { padding: .65rem .8rem; border-radius: .75rem; background: var(--container); }
 .page-toggle { display: flex; align-items: center; gap: .5rem; }
 .page-toggle input { width: 1.1rem; min-height: 1.1rem; margin: 0; accent-color: var(--accent); }
@@ -124,6 +127,22 @@ dialog .actions { justify-content: end; }
       <div class="row display-home"><strong>Home</strong><span class="muted">Always on bottom</span></div>
       <div class="actions"><button type="submit" class="primary">Save display pages</button></div>
     </fieldset>
+  </form>
+</section>
+
+<section id="sync-timing" hidden>
+  <h2>Recording sync</h2>
+  <form id="sync-timing-form">
+    <label>Automatic sync
+      <select id="sync-mode">
+        <option value="0">Before sleep (default)</option>
+        <option value="1">Immediately on wake</option>
+        <option value="2">After recording</option>
+        <option value="3">Manual only</option>
+      </select>
+    </label>
+    <p class="muted">To sync manually, tap the upper button three times on Home.</p>
+    <div class="actions"><button type="submit" class="primary">Save sync timing</button></div>
   </form>
 </section>
 
@@ -392,15 +411,17 @@ function drawDisplayPages() {
       drawDisplayPages();
     };
     const controls = [];
-    if (index + 1 < displayPages.length) {
-      const up = button('Move up', () => move(1));
-      up.ariaLabel = 'Move ' + name + ' up';
-      controls.push(up);
-    }
     if (index > 0) {
       const down = button('Move down', () => move(-1));
+      down.className = 'page-down';
       down.ariaLabel = 'Move ' + name + ' down';
       controls.push(down);
+    }
+    if (index + 1 < displayPages.length) {
+      const up = button('Move up', () => move(1));
+      up.className = 'page-up';
+      up.ariaLabel = 'Move ' + name + ' up';
+      controls.push(up);
     }
     row(list, label, controls);
   }
@@ -430,6 +451,10 @@ function show(data) {
   el('display-pages').hidden = !hasPages;
   displayPages = hasPages ? Array.from(pages) : [];
   drawDisplayPages();
+  const syncTiming = attached ? data.device.syncTiming : null;
+  const hasSyncTiming = Number.isInteger(syncTiming) && syncTiming >= 0 && syncTiming <= 3;
+  el('sync-timing').hidden = !hasSyncTiming;
+  if (hasSyncTiming) el('sync-mode').value = String(syncTiming);
   const sleepMinutes = attached ? data.device.sleepMinutes : null;
   const hasSleepTimeout = Number.isInteger(sleepMinutes) && sleepMinutes >= 0 && sleepMinutes <= 99;
   el('sleep-timeout').hidden = !hasSleepTimeout;
@@ -735,6 +760,13 @@ el('display-pages-form').addEventListener('submit', event => {
   event.preventDefault();
   if (!el('display-pages').hidden) {
     save('pages.save', { pages: displayPages.join('') }, 'Display pages saved.');
+  }
+});
+el('sync-timing-form').addEventListener('submit', event => {
+  event.preventDefault();
+  const mode = el('sync-mode').value;
+  if (!el('sync-timing').hidden && ['0', '1', '2', '3'].includes(mode)) {
+    save('sync.save', { mode: Number(mode) }, 'Sync timing saved.');
   }
 });
 el('sleep-form').addEventListener('submit', event => {

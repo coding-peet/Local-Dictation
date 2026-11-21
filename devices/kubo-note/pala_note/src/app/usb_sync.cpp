@@ -216,8 +216,10 @@ bool selectNote(const NoteEntry& note) {
 void selectRecording(bool next, const String& value) {
   resetTransfer();
   if (next) {
-    for (auto note = noteIndex.rbegin(); note != noteIndex.rend(); ++note) {
-      if (notePendingTranscription(*note) && selectNote(*note)) return;
+    if (recordingSyncAllowed()) {
+      for (auto note = noteIndex.rbegin(); note != noteIndex.rend(); ++note) {
+        if (notePendingTranscription(*note) && selectNote(*note)) return;
+      }
     }
     if (owner == Link::Bluetooth) {
       bluetoothDrained = true;

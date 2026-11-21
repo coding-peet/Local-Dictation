@@ -2,6 +2,7 @@
 #include <Arduino.h>
 
 bool handleUsbSyncLine(const String& line, bool idle);
+bool recordingSyncAllowed();
 bool usbSyncActive();
 bool usbSyncWorking();
 void cancelUsbSync();

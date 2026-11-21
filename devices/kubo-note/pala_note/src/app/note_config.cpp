@@ -114,6 +114,7 @@ void getSettings(JsonVariantConst request, NoteConfigTransport link, JsonDocumen
   device["memoryTrash"] = true;
   device["displayPages"] = palaDisplayPages();
   device["sleepMinutes"] = palaIdleSleepMinutes();
+  device["syncTiming"] = static_cast<int>(palaSyncTiming());
 #if PALA_BRIDGE_DISCOVERY
   device["bridgeAddress"] = palaBridgeAddress();
 #endif
@@ -354,6 +355,15 @@ void dispatch(JsonVariantConst request, NoteConfigTransport link, bool authentic
       resetBridgeAddressCache();
     }
 #endif
+  } else if (op == "sync.save") {
+    const JsonVariantConst value = request["mode"];
+    if (!value.is<int>() || !validSyncTiming(value.as<int>())) {
+      fillResult(result, "Choose a supported sync timing.");
+    } else if (!palaSetSyncTiming(static_cast<SyncTiming>(value.as<int>()))) {
+      fillResult(result, "Could not save the sync timing.");
+    } else {
+      resetActivity();
+    }
   } else if (op == "sleep.save") {
     const JsonVariantConst value = request["minutes"];
     if (!value.is<int>() || !validIdleSleepMinutes(value.as<int>())) {

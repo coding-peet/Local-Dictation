@@ -32,8 +32,10 @@ struct AquariumState {
     }
   }
 
-  constexpr void lower(uint32_t now) {
-    if (scene == AquariumScene::Ready) enter(AquariumScene::Current, now);
+  constexpr bool lower(ButtonAction action, uint32_t now) {
+    if (action != ButtonAction::Single || scene != AquariumScene::Ready) return false;
+    enter(AquariumScene::Current, now);
+    return true;
   }
 
   constexpr void advance(uint32_t now, bool gesturePending = false) {

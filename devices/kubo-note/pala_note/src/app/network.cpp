@@ -6,6 +6,7 @@
 #include "provider.h"
 #include "bridge_address.h"
 #include "bridge_client.h"
+#include "home_delivery.h"
 #include "note_config.h"
 #include "notes.h"
 #include "rtc.h"
@@ -666,6 +667,9 @@ bool understandNote(int noteNum) {
   }
   // A usable structured memory is the priority. Its semantic vector is added
   // by a later background pass and never delays the first usable result.
+#if PALA_BRIDGE_DISCOVERY
+  if (selectedWifiBridge().id == bridgeId) refreshHomeDeliveryAfterSubmission();
+#endif
   Serial.printf("[Brain] understood #%d\n", noteNum);
   return true;
 }

@@ -63,6 +63,7 @@ bool audioPlaying = false;
 bool stopPlayback = false;
 
 void resetActivity();
+bool recordingSyncAllowed();
 
 enum class PressResult { Released, LongSingle, Chord };
 
@@ -77,6 +78,7 @@ uint32_t companionGestureStartedAt = 0;
 uint32_t nextBackgroundAttemptAt = 0;
 uint32_t backlogRequestedAt = 0;
 bool backlogRequested = false;
+RecordingSyncSchedule recordingSync;
 struct BacklogScreen {
   BacklogLink link = BacklogLink::Deferred;
   int completed = 0;
@@ -106,8 +108,6 @@ ButtonInput upperButton;
 ButtonInput lowerButton;
 AquariumState aquarium;
 bool aquariumChord = false;
-bool aquariumLowerDown = false;
-uint32_t aquariumLowerAt = 0;
 int lastAquariumFrame = -1;
 uint32_t lastAquariumPaintAt = 0;
 CompanionControls companionControls;
@@ -367,11 +367,17 @@ void requestBacklogSync() {
 #endif
 }
 
+void beginRecordingSync(SyncTiming event) {
+  if (!recordingSync.begin(palaSyncTiming(), event, lastActivityMs)) return;
+  if (pendingBrainMemoryCount() > 0) requestBacklogSync();
+  else recordingSync.finish();
+}
+
 void pollUsbBacklog() {
 #if PALA_BRIDGE_DISCOVERY
   const bool dataCable = usb_serial_jtag_is_connected();
   noteUsbLinkChanged(dataCable);
-  if (dataCable && !usbDataConnected && state == STATE_IDLE && !bluetoothSyncActive() &&
+  if (dataCable && !usbDataConnected && state == STATE_IDLE && recordingSyncAllowed() && !bluetoothSyncActive() &&
       !bluetoothEnrollmentOpen()) {
     stopBluetoothSync();
     requestBacklogSync();
@@ -383,7 +389,7 @@ void pollUsbBacklog() {
     usbSetupLine = "";
     discardUsbLine = false;
     // Discard the preceding session's retry deadline when the cable goes away.
-    if (resumeBacklog) requestBacklogSync();
+    if (resumeBacklog && recordingSyncAllowed()) requestBacklogSync();
   }
   usbDataConnected = dataCable;
 #endif
@@ -664,55 +670,6 @@ void leaveCompanion() {
   clearLatchedPresses();
 }
 
-bool processCapturedMemoryNow(int noteNum) {
-  showMemoryProcessing(noteNum, "CONNECTING");
-  if (!palaHasWifi() || !(PALA_MAC_BRIDGE || palaHasOpenAiKey()) || !connectConfiguredWifi(14)) {
-    stopWifi();
-    writeNoteQueueState(noteNum, "queued", "saved locally; waiting for connection");
-    showMemoryProcessing(noteNum, "QUEUED");
-    delay(900);
-    return false;
-  }
-
-  loadIndex();
-  bool ready = false;
-  // Exactly one durable network stage per iteration. The screen therefore
-  // always describes the operation that can currently take time.
-  // Finish the two user-visible essentials now: transcription and structured
-  // understanding. The optional semantic embedding is derived maintenance and
-  // must never keep a freshly captured thought on a processing screen.
-  for (int stage = 0; stage < 2; stage++) {
-    auto entry = std::find_if(noteIndex.begin(), noteIndex.end(), [noteNum](const NoteEntry& note) {
-      return note.num == noteNum;
-    });
-    if (entry == noteIndex.end()) break;
-    if (!entry->hasText) showMemoryProcessing(noteNum, "DECODING");
-    else if (!brainMemoryIsCurrent(noteNum)) showMemoryProcessing(noteNum, "UNDERSTANDING");
-    else if (!brainEmbeddingExists(noteNum)) showMemoryProcessing(noteNum, "REMEMBERING");
-    else { ready = true; break; }
-
-    if (processPendingNotes(noteNum, 1) <= 0) break;
-    loadIndex();
-  }
-  ready = ready || brainMemoryIsCurrent(noteNum);
-  stopWifi();
-  if (noteQueueError(noteNum) == "no speech recognized") {
-    showError(palaUiLanguage() == "de" ? "KEINE SPRACHE" : "NO SPEECH");
-    delay(900);
-    return false;
-  }
-  if (ready) {
-    writeNoteQueueState(noteNum, "ready");
-    showSaved(noteNum);
-    delay(650);
-  } else {
-    if (noteQueueState(noteNum) == "blocked") showError("PROCESSING FAILED");
-    else showMemoryProcessing(noteNum, "QUEUED");
-    delay(900);
-  }
-  return ready;
-}
-
 void redrawCompanionHome(bool adjustingVolume) {
   const CompanionLink link = transferUrl.isEmpty() ? CompanionLink::Offline
       : companionUsesHotspot ? CompanionLink::Hotspot : CompanionLink::Wifi;
@@ -756,15 +713,13 @@ void captureMemory() {
   showSaved(lastRecNum);
   delay(350);
 
-#if PALA_BRIDGE_DISCOVERY
-  // Paired captures enter the same transport queue as recordings saved offline.
+  // A new recording needs its own scheduling event, including in Manual only.
+  recordingSync.finish();
+  backlogRequested = false;
+  backlogSyncActive = false;
+  backlogSyncTotal = 0;
   returnToReady();
-  requestBacklogSync();
-#else
-  processCapturedMemoryNow(lastRecNum);
-  nextBackgroundAttemptAt = millis() + BACKGROUND_RETRY_MS;
-  returnToReady();
-#endif
+  beginRecordingSync(SyncTiming::AfterRecording);
 }
 
 void askBrain() {
@@ -1014,40 +969,30 @@ void enterAquarium() {
   state = STATE_AQUARIUM;
   aquarium.open(millis());
   aquariumChord = false;
-  aquariumLowerDown = false;
   lastAquariumFrame = -1;
 }
 
 void handleAquarium() {
   const uint32_t now = millis();
   ButtonAction upper = ButtonAction::None;
-  bool lowerTap = false;
+  ButtonAction lower = ButtonAction::None;
   if (bothButtonsDown()) aquariumChord = true;
   if (aquariumChord) {
     clearLatchedPresses();
-    aquariumLowerDown = false;
     if (bothButtonsUp()) aquariumChord = false;
   } else {
     upper = pollButtonGesture(upperButton, 2);
-    if (takeLatchedPress(false) && !aquariumLowerDown) {
-      aquariumLowerDown = digitalRead(BTN_PWR) == LOW;
-      aquariumLowerAt = now;
-      lowerTap = !aquariumLowerDown;
-    }
-    if (aquariumLowerDown && digitalRead(BTN_PWR) == HIGH) {
-      aquariumLowerDown = false;
-      lowerTap = now - aquariumLowerAt < REC_HOLD_MS;
-    }
+    // Real press and release times survive a blocking e-paper refresh.
+    lower = pollButtonGesture(lowerButton, 1);
   }
 
   if (upper != ButtonAction::None && upper != ButtonAction::Hold) {
     aquarium.upper(upper, now);
     resetActivity();
-  } else if (lowerTap && !upperButton.gesture.pending()) {
-    aquarium.lower(now);
+  } else if (!upperButton.gesture.pending() && aquarium.lower(lower, now)) {
     resetActivity();
   }
-  aquarium.advance(now, upperButton.gesture.pending());
+  aquarium.advance(now, upperButton.gesture.pending() || lowerButton.gesture.pending());
   if (aquarium.scene == AquariumScene::Closed) {
     returnToReady();
     return;
@@ -1112,7 +1057,7 @@ void handleIdle() {
         playDailyBriefing();
         break;
       case ButtonAction::Triple:
-        if (!backlogSyncActive && backlogScreen.link == BacklogLink::Deferred) enterAquarium();
+        beginRecordingSync(SyncTiming::Manual);
         break;
       case ButtonAction::Hold:
         if (digitalRead(BTN_REC) == LOW) {
@@ -1142,7 +1087,7 @@ void handleIdle() {
       playWeeklyBriefing();
       break;
     case ButtonAction::Triple:
-      if (hasQueuedAudio()) requestBacklogSync();
+      if (!backlogSyncActive && backlogScreen.link == BacklogLink::Deferred) enterAquarium();
       break;
     case ButtonAction::Hold:
       if (digitalRead(BTN_PWR) == LOW) askBrain();
@@ -1220,7 +1165,9 @@ bool yieldBacklogToUsb() {
 void handleBackgroundBrain(const IdleSleepPolicy& sleep) {
   // Do not launch another network stage after the sleep budget has expired.
   // A stage already running is allowed to finish and save its result safely.
-  const auto sleepDue = [&] { return millis() - lastActivityMs >= sleep.queuedMs; };
+  const auto sleepDue = [&] {
+    return !recordingSync.permits(palaSyncTiming(), millis(), lastActivityMs, sleep);
+  };
   if (sleepDue()) return;
   if ((!palaHasWifi() && !PALA_BRIDGE_DISCOVERY) || !(PALA_MAC_BRIDGE || palaHasOpenAiKey())) return;
   if (nextBackgroundAttemptAt && static_cast<int32_t>(millis() - nextBackgroundAttemptAt) < 0) return;
@@ -1254,6 +1201,7 @@ void handleBackgroundBrain(const IdleSleepPolicy& sleep) {
     }
   }
   if (pendingBefore == 0) {
+    recordingSync.finish();
     stopWifi();
     if (backlogSyncActive) {
       showBacklogProcessing(backlogSyncTotal, backlogSyncTotal, "DONE");
@@ -1363,6 +1311,7 @@ void handleBackgroundBrain(const IdleSleepPolicy& sleep) {
   if (transcribeOnly) {
     pendingBefore = pendingTranscriptionCount();
     if (pendingBefore == 0) {
+      recordingSync.finish();
       stopWifi();
       backlogSyncActive = false;
       backlogSyncTotal = 0;
@@ -1409,6 +1358,7 @@ void handleBackgroundBrain(const IdleSleepPolicy& sleep) {
   const int pendingAfter = transcribeOnly ? pendingTranscriptionCount() :
       indexingNote >= 0 ? (processed > 0 ? 0 : 1) : pendingBrainMemoryCount();
   if (pendingAfter == 0) {
+    recordingSync.finish();
     stopWifi();
     showBacklogProcessing(backlogSyncTotal, backlogSyncTotal, "DONE");
     delay(900);
@@ -1431,7 +1381,7 @@ void handleBackgroundBrain(const IdleSleepPolicy& sleep) {
   }
 }
 
-void refreshHomeWeatherWhenIdle(uint32_t homeSleepMs) {
+void refreshHomeMetadataWhenIdle(uint32_t homeSleepMs) {
 #if PALA_BRIDGE_DISCOVERY
   const uint32_t now = millis();
   if (!palaHasWifi() || backlogRequested || backlogSyncActive ||
@@ -1444,14 +1394,16 @@ void refreshHomeWeatherWhenIdle(uint32_t homeSleepMs) {
   const bool weatherDue = homeForecastNeedsRefresh(localDayKey(), utc);
   const bool nameDue = homeNoteNameNeedsRefresh();
   const bool deliveryDue = homeDeliveryNeedsRefresh(now);
-  if ((utc < retryHomeWeatherAfter && retryHomeWeatherAfter - utc <= 300) ||
-      (!weatherDue && !nameDue && !deliveryDue) || hasQueuedAudio()) return;
-  retryHomeWeatherAfter = utc + 300;
+  const bool deliveryFollowup = homeDeliveryNeedsFollowup(now);
+  const bool onCooldown = utc < retryHomeWeatherAfter && retryHomeWeatherAfter - utc <= 300;
+  const bool routineDue = !onCooldown && (weatherDue || nameDue || deliveryDue);
+  if ((!routineDue && !deliveryFollowup) || (recordingSyncAllowed() && hasQueuedAudio())) return;
+  if (routineDue) retryHomeWeatherAfter = utc + 300;
   bool updated = false;
   if (connectConfiguredWifi(8, 4500)) {
-    if (nameDue) updated = refreshHomeNoteName();
-    if (weatherDue) updated = refreshHomeForecast() || updated;
-    if (deliveryDue) updated = refreshHomeDelivery() || updated;
+    if (routineDue && nameDue) updated = refreshHomeNoteName();
+    if (routineDue && weatherDue) updated = refreshHomeForecast() || updated;
+    if (deliveryFollowup || (routineDue && deliveryDue)) updated = refreshHomeDelivery() || updated;
   }
   stopWifi();
   if (updated && bothButtonsUp() && !upperButton.pressLatched && !lowerButton.pressLatched) renderReadyHome();
@@ -1585,6 +1537,11 @@ bool pollPairingOverlay() {
 
 }  // namespace
 
+bool recordingSyncAllowed() {
+  return recordingSync.permits(palaSyncTiming(), millis(), lastActivityMs,
+                               idleSleepPolicy(palaIdleSleepMinutes()));
+}
+
 void setup() {
   homeBridgeStatus.reset();
   Serial.begin(115200);
@@ -1647,9 +1604,7 @@ void setup() {
   // Ignore the held wake press until both buttons are released so it cannot
   // accidentally open Appointments or start recording during boot.
   if (wokeFromUltraSleep && state == STATE_IDLE) idleInputArmed = false;
-#if PALA_BRIDGE_DISCOVERY
-  if (!setupRequired && hasQueuedAudio()) requestBacklogSync();
-#endif
+  if (!setupRequired) beginRecordingSync(SyncTiming::OnWake);
   // The wake press itself only wakes to Home. New presses from this point on
   // are retained even if they happen during a display update.
   clearLatchedPresses();
@@ -1675,7 +1630,7 @@ void loop() {
     if (bothButtonsUp()) idleInputArmed = true;
     else if (idleInputArmed) cancelUsbSync();
     // Checking an empty cable leaves the normal idle-to-sleep deadline intact.
-    if (usbSyncWorking()) resetActivity();
+    if (usbSyncWorking() && !recordingSync.beforeSleep()) resetActivity();
     delay(5);
     return;
   }
@@ -1691,7 +1646,7 @@ void loop() {
     }
     if (bothButtonsUp()) idleInputArmed = true;
     else if (idleInputArmed) stopBluetoothSync();
-    resetActivity();
+    if (!recordingSync.beforeSleep()) resetActivity();
     delay(5);
     return;
   }
@@ -1745,14 +1700,27 @@ void loop() {
       return;
     }
     const auto sleep = idleSleepPolicy(palaIdleSleepMinutes());
-    if (state == STATE_IDLE && !bluetoothOpen) handleBackgroundBrain(sleep);
+    if (recordingSync.running() && !recordingSyncAllowed()) {
+      recordingSync.finish();
+      backlogRequested = false;
+      if (backlogSyncActive) {
+        stopWifi();
+        backlogSyncActive = false;
+        backlogSyncTotal = 0;
+        renderReadyHome();
+      }
+    }
+    if (idleInputArmed && millis() - lastActivityMs >= sleep.homeMs) {
+      beginRecordingSync(SyncTiming::BeforeSleep);
+    }
+    if (!bluetoothOpen) handleBackgroundBrain(sleep);
     // A panel refresh or Wi-Fi probe can service a newly authenticated USB session.
     if (usbSyncActive() || bluetoothSyncActive() || bluetoothOpen ||
         backlogScreen.link == BacklogLink::Bluetooth) {
       delay(8);
       return;
     }
-    if (state == STATE_IDLE) refreshHomeWeatherWhenIdle(sleep.homeMs);
+    if (state == STATE_IDLE) refreshHomeMetadataWhenIdle(sleep.homeMs);
     if (state == STATE_IDLE && !backlogRequested && !backlogSyncActive &&
         bothButtonsUp() && !upperButton.pressLatched && !lowerButton.pressLatched && !preferUsbForBacklog()) {
       maintainNoteTrash();
@@ -1773,24 +1741,7 @@ void loop() {
         idleInputArmed && bothButtonsUp() && !upperButton.gesture.pending() &&
         !lowerButton.gesture.pending() && !upperButton.pressLatched && !lowerButton.pressLatched &&
         !usbSyncActive() && !bluetoothSyncActive()) {
-      const uint32_t idleFor = millis() - lastActivityMs;
-      if (idleFor >= sleep.queuedMs) {
-        enterUltraSleep();
-        return;
-      }
-      if (idleFor >= sleep.homeMs) {
-        // Give queued memories time to finish, but never let a bad network or
-        // failed cloud request keep the device awake indefinitely.
-        // This scans SD metadata. Never repeat it on every 8 ms idle tick.
-        static uint32_t nextQueueCheck = 0;
-        static bool workPending = false;
-        if (!nextQueueCheck || static_cast<int32_t>(millis() - nextQueueCheck) >= 0) {
-          workPending = (palaHasWifi() || PALA_BRIDGE_DISCOVERY) &&
-                        (PALA_MAC_BRIDGE || palaHasOpenAiKey()) && pendingBrainMemoryCount() > 0;
-          nextQueueCheck = millis() + 1000UL;
-        }
-        if (!workPending) enterUltraSleep();
-      }
+      if (millis() - lastActivityMs >= sleep.homeMs && !recordingSyncAllowed()) enterUltraSleep();
     }
   }
   delay(8);

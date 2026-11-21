@@ -9,4 +9,6 @@ struct HomeDeliveryCounts {
 HomeDeliveryCounts homeDeliveryCounts(const String& today);
 bool storeHomeDelivery(const String& payload, bool& changed);
 bool homeDeliveryNeedsRefresh(uint32_t now);
+bool homeDeliveryNeedsFollowup(uint32_t now);
+void refreshHomeDeliveryAfterSubmission();
 bool refreshHomeDelivery();

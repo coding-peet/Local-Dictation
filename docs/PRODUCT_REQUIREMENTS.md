@@ -879,10 +879,16 @@ clear to the user, preserve original recognition, and keep manual edits dominant
   Web Companion. Default restores 1 minute on Home, a 3-minute budget
   with queued work, and 5 minutes in Web Companion. Finish an active stage
   before sleeping and leave unfinished recordings recoverable.
-- On the awake Home screen, one lower tap opens Events when enabled,
-  two taps play the weekly briefing, three taps request synchronization
-  for queued recordings, and holding the lower button asks Kubo.
-  Finish classifying the gesture before starting background work.
+- On awake Home, one lower tap opens Events when enabled, two lower taps
+  play the weekly briefing, and holding the lower button asks Kubo.
+  Three lower taps open the aquarium. Three upper taps request recording
+  synchronization in every timing mode.
+- Persist the recording sync timing in Note settings. Offer immediately on
+  wake, after recording, before sleep, and manual only. Default to before
+  sleep. Start the before-sleep attempt when Home reaches its idle timeout,
+  allow up to two additional minutes to start stages, and finish an active
+  stage safely. Use the same schedule for automatic Wi-Fi, USB and Bluetooth
+  recording transfer. Finish classifying gestures before starting background work.
 - Calculate month grids offline from the Note's local date. Show ISO week
   numbers and highlight today on the current-month page.
 - Move removed memories and their SD-card files to Trash. Offer a separate
@@ -927,13 +933,14 @@ clear to the user, preserve original recognition, and keep manual edits dominant
 - Use the slot beside the battery for the sleep lock in deep sleep. On wake,
   clear it until paired Bridge communication succeeds. Then show the latest
   verified Wi-Fi, USB or Bluetooth transport for that wake.
-- Open the offline aquarium with a quick upper-button triple press from Home.
+- Open the offline aquarium with a quick lower-button triple press from Home.
   Preserve Home's one-press agenda, two-press daily briefing and hold to
   record. Inside the aquarium, use upper once for a flake, lower once for
   current, and upper twice or inactivity for the closing scene and Home.
   Show the clownfish peeking, swimming calmly between actions, and hiding
-  headfirst before its final peek. Keep the aquarium independent of
-  transcription and delivery.
+  headfirst before its final peek. Bend the anemone polyps in the direction of
+  the current and let them straighten as the water settles. Keep the aquarium
+  independent of transcription and delivery.
 - Show **Doručené dnes** and **Čaká na Google** in the compact bottom strip.
   Count unique dictations with confirmed Google Tasks or Docs delivery
   today, and unique transcribed dictations awaiting any required Google
