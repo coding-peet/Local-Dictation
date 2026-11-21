@@ -20,8 +20,10 @@ public sealed class BannerWindow : Window
     readonly ScrollViewer previewScroll;
     readonly Button action,cancel,language;
     readonly Border outer,cloud;
-    readonly Rectangle[] bars=new Rectangle[7];
-    static readonly int[] WaveHeights=[9,18,28,20,32,16,8];
+    static readonly int[] WaveHeights = [3, 8, 15, 7, 12, 5, 3];
+    const double WavePeak = 15, QuietWaveHeight = 16, LoudWaveHeight = 32, StaticWaveHeight = 20;
+    readonly Rectangle[] bars = new Rectangle[WaveHeights.Length];
+    bool waveRecording;
     bool positioning,dragging,showingPreview;
     PixelBounds? manualPosition;
     PixelBounds dragBounds;
@@ -43,8 +45,17 @@ public sealed class BannerWindow : Window
         var main=new Grid{Height=48};
         foreach(var width in new[]{new GridLength(40),new GridLength(1,GridUnitType.Star),GridLength.Auto,GridLength.Auto})main.ColumnDefinitions.Add(new(){Width=width});
         var wave=new StackPanel{Orientation=Orientation.Horizontal,Height=36,VerticalAlignment=VerticalAlignment.Center};
-        for(var i=0;i<bars.Length;i++)
-        {bars[i]=new Rectangle{Width=3,Height=4,RadiusX=1.5,RadiusY=1.5,Margin=new(0,0,2,0),VerticalAlignment=VerticalAlignment.Center};bars[i].SetResourceReference(Shape.FillProperty,"Recording");wave.Children.Add(bars[i]);}
+        for (var i = 0; i < bars.Length; i++)
+        {
+            bars[i] = new Rectangle
+            {
+                Width = 3, Height = StaticWaveHeight * WaveHeights[i] / WavePeak,
+                RadiusX = 1.5, RadiusY = 1.5, Margin = new(0, 0, 2, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            bars[i].SetResourceReference(Shape.FillProperty, "Muted");
+            wave.Children.Add(bars[i]);
+        }
         main.Children.Add(wave);
         var copy=new StackPanel{VerticalAlignment=VerticalAlignment.Center,Margin=new(8,0,8,0)};
         state.FontSize=14;state.FontWeight=FontWeights.Medium;state.TextWrapping=TextWrapping.NoWrap;state.TextTrimming=TextTrimming.CharacterEllipsis;state.Margin=new(0);
@@ -179,7 +190,24 @@ public sealed class BannerWindow : Window
         var actionLabel=insert?"Insert completed dictation":pending?"Open dictation review":"Finish recording";action.ToolTip=actionLabel;
         System.Windows.Automation.AutomationProperties.SetName(action,actionLabel);
         cancel.IsEnabled=!controller.IsApplyingReview;
-        for(var i=0;i<bars.Length;i++)bars[i].Height=controller.IsRecording?4+(WaveHeights[i]-4)*Math.Min(1,controller.Level*6):4;
+        UpdateWave(SystemParameters.ClientAreaAnimation);
+    }
+
+    void UpdateWave(bool motionEnabled)
+    {
+        var recording = controller.IsRecording;
+        if (recording != waveRecording)
+        {
+            waveRecording = recording;
+            foreach (var bar in bars)
+                bar.SetResourceReference(Shape.FillProperty, recording ? "Recording" : "Muted");
+        }
+
+        var height = StaticWaveHeight;
+        if (recording && motionEnabled)
+            height = QuietWaveHeight + (LoudWaveHeight - QuietWaveHeight) * Math.Clamp(controller.Level * 6, 0, 1);
+        for (var i = 0; i < bars.Length; i++)
+            bars[i].Height = height * WaveHeights[i] / WavePeak;
     }
     [DllImport("user32.dll",EntryPoint="GetWindowLongPtrW")] static extern nint GetWindowLongPtr(nint hwnd,int index);
     [DllImport("user32.dll",EntryPoint="SetWindowLongPtrW")] static extern nint SetWindowLongPtr(nint hwnd,int index,nint value);

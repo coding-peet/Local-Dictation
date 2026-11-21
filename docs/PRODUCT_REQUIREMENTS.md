@@ -207,6 +207,9 @@ window serves an explicit editing/comparison task.
   Action/toggle buttons use true stadium geometry, with semicircular ends and
   straight sides. Compute each layer from its actual dimensions; never stretch
   an ellipse. Keep a 48-DIP hit target around the 40-DIP visible body.
+- Share one asymmetric seven-bar sound-wave mark across the application
+  icon, recording banner and Kubo Note queue. The desktop banner scales
+  the bars with actual input level while recording.
 - Keep the movable recording banner minimal: indicator/waveform, short phase,
   duration, small active model name and small finish/cancel actions. The model
   name shares the phase row in subdued 11-DIP text; keep the complete time and
@@ -561,7 +564,7 @@ especially when every write fails, is not claimed to have transactional recovery
   Keep minimum 160/240-DIP panes, clamp to available space, retain preferred width
   through narrow/wide transitions, and hide the divider while the panes stack.
   Preserve selected dictation, text and audio lifetime during resizing.
-- Preserve the existing Local Dictation waveform icon.
+- Use the shared Local Dictation sound-wave icon.
 
 ## Search-first shell follow-up (14 November 2026)
 
@@ -733,8 +736,11 @@ superpowers/specs/2026-11-14-history-import-and-personal-tools-design.md.
 
 ## Build and packaging safety (2026-11-17)
 
-- Build.ps1 publishes to BuildRoot\client-candidate by default. Build and
-  deployment are separate; direct publish into the installed app is refused.
+- Keep project executables and generated build output beside the checkout
+  under C:\Git\Local-Dictation on the configured PC. Build.ps1 defaults to
+  build\windows for build files and BuildRoot\client-candidate for the
+  published candidate. Build and deployment are separate. Publish into the
+  installed app is refused.
 - Keep build/publish output outside the checkout, configured-PC data/backend
   locations, and running clients' directories. Reject reparse aliases and stop
   if client identity cannot be checked. Never terminate a client to build.
@@ -822,14 +828,35 @@ clear to the user, preserve original recognition, and keep manual edits dominant
 - Show the current Bridge activity in plain language for USB, Bluetooth,
   Wi-Fi and Google delivery. Use a linear indicator while the duration is
   unknown. Keep recording contents out of activity status.
-- Use Pala Note Configuration as the hardware card title. Synchronize the
-  device display name, initially Kubo, through paired USB, Bluetooth and
-  HTTPS without changing the pairing identity. Keep the name available offline.
+- Use Pala Note Configuration as the hardware card title. Open the shared
+  web settings from Connections and from the Note's Web Companion.
+  Save the Note's display name and language on the device without changing
+  its pairing identity. Use the saved name in Web Companion navigation,
+  browser titles, question actions, and the shared Note settings.
   Provide an integration switch for Local Dictation-managed transports and
   access to the shared loopback API address.
   Preserve the paired profile's model by default. Let the user follow the
   main Dictation model or choose an installed Slovak-compatible ASR model.
   Apply the selected model to the next Pala transcription.
+- Set **Weather location** in the shared web settings opened from Connections.
+  Bridge uses the saved town, with an optional two-letter country code.
+  Clearing it disables forecast updates. The automatic source is open.
+- Manage Wi-Fi profiles and paired devices through the shared web page.
+  Use USB or BLE from the PC, or the existing Wi-Fi Companion from a phone.
+  Use the same page asset for all three transports. A phone app is optional.
+- Keep up to five independent pairings on the Note and show the list in
+  the web page. Remove access through that page. Preserve the existing
+  peer when migrating its pairing.
+- Support first pairing by USB with physical confirmation on the Note, or
+  by Bluetooth Secure Connections Numeric Comparison on both devices.
+  The Note labels the upper button for confirmation and the lower button
+  for cancellation. A short two-button press opens the Bluetooth window.
+- Prefer the last available authenticated Bridge over Wi-Fi, followed by
+  configured priority. Use each Bridge's own certificate and credential.
+  If no Wi-Fi Bridge has a usable ASR service, try Bluetooth. A verified busy
+  service can keep the recording queued. Recheck pending work when USB drops.
+  Keep an already submitted organization request linked to its original
+  Bridge for safe retries.
 
 ## Connected devices
 
@@ -838,12 +865,25 @@ clear to the user, preserve original recognition, and keep manual edits dominant
 - Use the paired Bridge for local transcription. Preserve TLS identity and
   per-device authentication. Keep offline recordings recoverable until
   transcription succeeds.
+- Move removed memories and their SD-card files to Trash. Exclude items in
+  Trash from notes, search, export, and processing. Support restoring a
+  memory and manually emptying Trash with explicit confirmation.
+- Keep memories in Trash for 90 days by default. Allow changing retention
+  in Note settings from 1 to 3650 days. Apply retention from the time the
+  memory was moved. Run expiry when the Note is awake and has a valid clock.
 - Keep pairing material, credentials, user data, firmware images, and device
   backups outside Git. Track physical acceptance separately from builds and tests.
 - A lower-button wake checks the recording queue. Try a paired USB data
   connection first, then the paired Bridge over Wi-Fi, then Bluetooth LE
   when the Wi-Fi Bridge is unreachable. Existing pairing is sufficient
   for the automatic connection. A busy local service keeps recordings queued.
+  Both BLE peers contribute fresh connection challenges and authenticate each
+  other with the existing pairing token before exchanging recording data.
+  Require BLE v2 on both peers.
+  Identify connection attempts on the Note as USB, Wi-Fi or BT. During
+  Bluetooth discovery, advertise the current Note display name with
+  `-Note` appended, for example `Kubo-Note`. Bridge selects and
+  authenticates its peer using the existing device identity.
 - While Local Dictation is running, transcribe USB and Bluetooth recordings
   through the local service and return each transcript to the same SD note.
   Release the COM port between checks so Pala can sleep normally.
@@ -853,17 +893,33 @@ clear to the user, preserve original recognition, and keep manual edits dominant
 - Use short Google Tasks dictations as their own title. For longer
   dictations, select a compact topic title locally and retain the
   complete transcript in the task details.
-- Keep the home screen status row at the top. Center the pending count and
-  the continuous sound wave together in that row and hide both at zero.
-  Put Tasks and Events side by side in one compact bottom strip. Center
-  each count underneath its label and use the extra height for separation
-  between the weekday, weekly dates, and weather row.
-- Center the calendar block vertically in the space between the status
-  and agenda sections. Give the abbreviated English weekday the largest
-  type in the calendar. Keep the month on the left and the ISO week on the
-  right in regular type. Shorten CW to W when the weekday needs the space.
-  Show one regular-weight date row with today highlighted and a divider
-  before the weekend. Under it, show the forecast icon, today's low and high
-  in Trnava, and a locally calculated Moon phase. Cache up to seven days
-  on the device for offline use. Refresh the cache during paired USB or
-  Bluetooth synchronization even when the transcription service is busy.
+- Keep the home screen status row at the top. Center the count of
+  recordings awaiting transcription and the seven-bar sound-wave mark
+  together. Use a static monochrome mark on e-ink. Hide both at zero.
+- Use the slot beside the battery for the sleep lock in deep sleep. On wake,
+  clear it until paired Bridge communication succeeds. Then show the latest
+  verified Wi-Fi, USB or Bluetooth transport for that wake.
+- Open the offline aquarium with a quick upper-button triple press from Home.
+  Preserve Home's one-press agenda, two-press daily briefing and hold to
+  record. Inside the aquarium, use upper once for a flake, lower once for
+  current, and upper twice or inactivity for the closing scene and Home.
+  Show the clownfish peeking, swimming calmly between actions, and hiding
+  headfirst before its final peek. Keep the aquarium independent of
+  transcription and delivery.
+- Show **Doručené dnes** and **Čaká na Google** in the compact bottom strip.
+  Count unique dictations with confirmed Google Tasks or Docs delivery
+  today, and unique transcribed dictations awaiting any required Google
+  Tasks or Docs delivery confirmation. Center each count under its label.
+- Between the status row and delivery counters, show weather and Moon
+  first, then the calendar heading, then the weekly date strip. Leave
+  equal space from the upper divider to the weather and from the date
+  strip to the lower divider. Center the heading between the weather
+  and the date strip. Highlight today and keep the thin separator
+  before Saturday.
+- Keep the abbreviated English weekday at a consistent bold size in the
+  center of the heading. Keep the month on the left and the ISO week on
+  the right. Shorten CW to W when spacing requires it.
+- Show the forecast icon and today's low and high for the configured town.
+  Calculate the Moon phase from the device clock. Cache up to seven days
+  for the configured town and refresh during paired USB or Bluetooth
+  synchronization even when transcription is busy.

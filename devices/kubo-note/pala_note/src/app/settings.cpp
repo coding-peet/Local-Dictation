@@ -66,8 +66,20 @@ static bool validNoteName(const String& name) {
   return true;
 }
 
+bool palaNoteNameLocallyManaged() { return value("note_device").indexOf('|') > 0; }
+
+bool palaSaveLocalNoteSettings(const String& name, const String& language) {
+  palaSettingsBegin();
+  if (!ready || !validNoteName(name) || !supportedLanguage(language)) return false;
+  const String settings = name + "|" + language;
+  return storedString("note_device") == settings ||
+      (prefs.putString("note_device", settings) == settings.length() && storedString("note_device") == settings);
+}
+
 String palaNoteName() {
-  const String name = value("note_name");
+  const String local = value("note_device");
+  const int separator = local.indexOf('|');
+  const String name = separator > 0 ? local.substring(0, separator) : value("note_name");
   return validNoteName(name) ? name : String("PALA");
 }
 
@@ -76,6 +88,16 @@ bool palaSetNoteName(const String& name) {
   if (value("note_name") == name) return true;
   if (!ready || prefs.putString("note_name", name) == 0) return false;
   return storedString("note_name") == name;
+}
+
+String palaStoredDeliveryCounts() {
+  return value("home_delivery");
+}
+
+bool palaStoreDeliveryCounts(const String& counts) {
+  if (palaStoredDeliveryCounts() == counts) return true;
+  if (!ready || prefs.putString("home_delivery", counts) == 0) return false;
+  return storedString("home_delivery") == counts;
 }
 
 int palaWifiProfileCount() {
@@ -168,12 +190,15 @@ String palaSpeechVoice() {
   return voice == "coral" ? "coral" : "cedar";
 }
 String palaUiLanguage() {
-  const String language = value("ui_lang");
+  const String local = value("note_device");
+  const int separator = local.indexOf('|');
+  const String language = separator > 0 ? local.substring(separator + 1) : value("ui_lang");
   return supportedLanguage(language) ? language : (PALA_MAC_BRIDGE ? "sk" : "en");
 }
 bool palaSetUiLanguage(const String& language) {
   palaSettingsBegin();
   if (!ready || !supportedLanguage(language)) return false;
+  if (palaNoteNameLocallyManaged()) return palaSaveLocalNoteSettings(palaNoteName(), language);
   return prefs.putString("ui_lang", language) > 0;
 }
 int palaPlaybackVolume() {

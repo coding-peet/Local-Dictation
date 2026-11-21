@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$DotnetPath = 'C:\AI\tools\dotnet-10.0.403\dotnet.exe',
-    [string]$BuildRoot = 'C:\AI\build\Local-Dictation',
+    [string]$BuildRoot,
     [string]$AppDirectory
 )
 $ErrorActionPreference = 'Stop'
@@ -30,6 +30,9 @@ function Assert-NoReparseDirectory([string]$Path) {
     }
 }
 
+if ([string]::IsNullOrWhiteSpace($BuildRoot)) {
+    $BuildRoot = Join-Path (Split-Path $repoRoot -Parent) 'build\windows'
+}
 $BuildRoot = Get-NormalizedDirectory $BuildRoot
 if ([string]::IsNullOrWhiteSpace($AppDirectory)) {
     $AppDirectory = Join-Path $BuildRoot 'client-candidate'

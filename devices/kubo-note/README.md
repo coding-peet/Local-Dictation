@@ -3,6 +3,61 @@
 Pair each Pala once with its owner's Bridge. It can then find that Bridge
 after a DHCP address change on an approved private Wi-Fi network.
 
+## Open the shared settings page
+
+On Windows, open **Connections → Pala Note Configuration → Open Note
+settings** in Local Dictation. The local Bridge uses the paired USB data
+connection or a Bluetooth connection. To make an awake Note available by
+Bluetooth with an empty recording queue, briefly press and release both
+buttons on its Home screen, then refresh the page.
+
+For first pairing, use **Pair over USB** or **Pair over Bluetooth**. Over
+USB, check the computer name on the Note and follow the button prompt.
+Over Bluetooth, compare the six-digit codes on both devices before
+confirming. The Note labels the upper button for confirmation and the
+lower button for cancellation.
+
+Hold both buttons on the Note for three seconds to open Web Companion.
+The display shows the current Wi-Fi network and browser address. When the
+Note opens its hotspot, the display shows the hotspot name, password and
+address. Open **Setup** for the same Note settings page in the phone
+browser. Web Companion and the shared settings show the saved Note name. Both entry points use
+**Wi-Fi networks** at the top of the page. If the Note is unavailable,
+the section shows how to reconnect and disables the form.
+
+The page manages the Note's name, language, Wi-Fi profiles, paired
+clients and optional Bridge IPv4 fallback. Bridge name and weather location
+are editable when the page is opened from that Bridge. An added Bridge has its own credential. The Note keeps at most
+five pairings and shows the list in the page. When Bridge is unavailable,
+the Note searches the remaining eligible bridges in order after trying
+the last one that worked.
+
+## Trash
+
+Use **Move to Trash** in Web Companion to remove a memory from the active
+list. The Note keeps the recording, transcript, and related files on the
+SD card. Restoring returns the memory to its original place.
+
+Open **Trash** in Note settings to restore items or change retention. The
+default is 90 days. Change it to any value from 1 to 3650 days. Expiry is
+checked while the Note is awake with a valid clock. **Empty Trash**
+permanently deletes the items in Trash and requires explicit confirmation.
+
+## Aquarium
+
+From the awake Home screen, press the upper button three times quickly.
+The clownfish peeks out of the anemone and swims beside it.
+
+- Press the upper button once to drop a flake.
+- Press the lower button once for a current. The fish turns into the flow
+  and circles the anemone as the water settles.
+- Press the upper button twice to end the visit. After inactivity the fish
+  performs the same closing sequence and returns Home.
+
+Each action finishes before feeding or current can start again. Opening
+the aquarium is independent of recording, transcription, and Internet
+access.
+
 ## Build and run checks
 
 Run these commands from this directory. Use a Python environment with the
@@ -10,13 +65,16 @@ packages in `mac-bridge/requirements.txt` installed.
 
 ~~~powershell
 py -B -m unittest discover -s tests -v
-py -B -m platformio run -e pala_note_2
+py -B -m platformio run -e pala_note_bridge
 ~~~
 
 The first command exercises Bridge with isolated test identities. The second
 compiles firmware for the 8 MB ESP32-S3 board. PlatformIO downloads the
-versions pinned in `platformio.ini` if they are missing. Generate device-specific
-pairing material locally with the setup tool before a paired deployment.
+versions pinned in platformio.ini if they are missing. Use the Bridge build
+target for a fresh Note and enroll it from the shared settings page. Include
+the previous private pairing material when migrating a Note that already
+uses the older compiled-in pairing. The pala_note_2 target with no pairing
+header keeps the original standalone provider setup.
 
 The Android companion is under `samsung`. Its Gradle wrapper uses JDK 17
 and Android SDK 35. Keep the APK and Gradle build output outside Git.
@@ -33,8 +91,15 @@ also starts a check if recordings are waiting.
    support the authenticated readiness endpoint below.
 3. When the Wi-Fi Bridge is unreachable, Pala briefly advertises the
    Bluetooth LE transfer service. Keep Bluetooth enabled in Windows.
-   The watcher uses the existing Pala Bridge pairing token and the
-   BLE dependencies in `mac-bridge/requirements.txt`.
+   Look for the configured display name plus `-Note`, such as `Kubo-Note`,
+   during this short discovery window. Bridge discovers and authenticates
+   it through the existing pairing. Its Windows environment needs the
+   BLE dependencies listed in `mac-bridge/requirements.txt`.
+
+BLE v2 requires matching firmware and Bridge code. Each side contributes
+a fresh challenge. Both verify the peer's proof using the existing pairing
+before transferring encrypted recording data. Older BLE peers leave the
+recording queued.
 
 The client returns the local transcript to the same SD note over USB or
 Bluetooth. The watcher releases the COM port between queue checks. An
@@ -129,14 +194,35 @@ py -B devices/kubo-note/mac-bridge/usb_sync.py --port COM24 --name-only
 Use the actual paired port. A successful response verifies that the Note
 saved the name. The existing pairing and DNS identity stay in use.
 
+## Google delivery counters
+
+The Home display counts dictations whose Google Tasks or Docs writes were
+all confirmed today and transcribed dictations still waiting for a required
+confirmation. The first count follows the device's Central European date.
+A dictation that creates several shopping entries counts once. The Bridge
+keeps the date of the final confirmation and the device shows its last
+received waiting count while offline. Deliveries recorded before the Bridge
+stored a device ID and confirmation time cannot be assigned to a past date.
+
+Connect the paired Note by USB to transfer and verify only the counters:
+
+~~~powershell
+py -B devices/kubo-note/mac-bridge/usb_sync.py --port COM24 --delivery-only
+~~~
+
+This check leaves recordings and Google destinations untouched.
+
 ## Home weather and Moon
 
-The paired Bridge's authenticated GET /pala/weather endpoint serves the
-seven-day Open-Meteo forecast for Trnava in Celsius. Start the current
-Bridge to make the forecast available. The device checks when idle,
-after queued recording transfers. It keeps the last valid forecast
-on SD and uses only the entry for today's local date. The Moon icon is
-an approximate phase calculated from the device clock.
+Set **Weather location** in the shared page opened from **Connections → Pala Note Configuration**.
+Enter a town. Add a two-letter country code for a narrower search, for
+example `Bratislava, SK`. Clearing the field disables weather updates.
+
+The paired Bridge resolves the saved town with Open-Meteo and supplies up
+to seven days of Celsius forecasts. Start Bridge for Wi-Fi weather updates.
+The device checks when idle, after queued recording transfers. It caches
+the forecast on SD for offline use and displays today's local entry. The
+Moon icon uses the device clock.
 
 The current Windows watcher also sends the available forecast on paired
 USB attachment and during a paired Bluetooth sync. This check can run when
@@ -197,7 +283,7 @@ the item and confirm a manual edit.
 
 ## Use the manual address
 
-1. Open the Pala Web Companion and go to **Settings → Pala Bridge**.
+1. Open the Pala Web Companion and visit /settings at the displayed address. Use the legacy **Pala Bridge** form for its manual fallback address.
 2. Enter the PC's private IPv4 address under **Fallback IPv4 address**.
 3. Save the address. Leave the field empty to clear it.
 

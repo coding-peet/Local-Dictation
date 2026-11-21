@@ -11,7 +11,8 @@ public sealed partial class SettingsWindow
 {
     sealed record BridgeModelChoice(string? Id, string Label);
 
-    readonly TextBox palaBridgeName = new() { MaxLength = 10 };
+    readonly TextBlock palaSettingsError = Ui.Text("", 12);
+    Button palaOpenSettings = null!;
     readonly ComboBox palaBridgeModel = new() { DisplayMemberPath = nameof(BridgeModelChoice.Label) };
     readonly System.Windows.Controls.Primitives.ToggleButton palaBridgeAutoStart = Ui.Switch("Start with Local Dictation");
     readonly System.Windows.Controls.Primitives.ToggleButton palaIntegration = Ui.Switch("Enable Pala sync");
@@ -64,8 +65,20 @@ public sealed partial class SettingsWindow
         activityRow.Children.Add(palaActivityText);
         activityRow.Children.Add(palaActivityProgress);
         group.Children.Add(activityRow);
-        Ui.Label(group, "Note display name", palaBridgeName,
-            "The paired Note receives this name during synchronization. Use 1–10 letters, numbers, spaces or hyphens.");
+        palaOpenSettings = Ui.Button("Open Note settings", () =>
+        {
+            palaSettingsError.Text = controller.OpenPalaNoteSettings() ? "" :
+                controller.Settings.PalaIntegrationEnabled
+                    ? "Note settings are unavailable. Check the Bridge runtime or reopen Local Dictation."
+                    : "Turn on Enable Pala sync to open Note settings.";
+            palaSettingsError.Visibility = palaSettingsError.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        });
+        AutomationProperties.SetHelpText(palaOpenSettings,
+            "Open the local browser page for Note settings, Bridge settings, weather and pairing.");
+        group.Children.Add(Ui.Row(palaOpenSettings));
+        palaSettingsError.SetResourceReference(TextBlock.ForegroundProperty, "Warning");
+        palaSettingsError.Visibility = Visibility.Collapsed;
+        group.Children.Add(palaSettingsError);
         group.Children.Add(Ui.SwitchRow("Enable Pala sync", palaIntegration,
             "Sync the paired Note over USB or Bluetooth while Local Dictation runs. For Wi-Fi, also start Bridge on an approved network."));
         group.Children.Add(palaBridgeStatus);
@@ -141,9 +154,6 @@ public sealed partial class SettingsWindow
     {
         var settings = controller.Settings;
         palaIntegration.IsChecked = settings.PalaIntegrationEnabled;
-        if (!palaBridgeName.IsKeyboardFocusWithin && !pendingText.Contains(palaBridgeName) &&
-            !textErrors.ContainsKey(palaBridgeName))
-            palaBridgeName.Text = settings.PalaBridgeName;
 
         var legacy = controller.PalaBridge.ProfileModel;
         var models = new List<BridgeModelChoice>

@@ -23,6 +23,24 @@ from pair import pair
 
 
 class DiscoveryTests(unittest.TestCase):
+    def test_delivery_summary_is_scoped_to_the_paired_devices_own_token(self):
+        for bearer, expected in (("unit-a", "device-a"), ("unit-b", "device-b"),
+                                 ("legacy-token", None), ("foreign", None)):
+            with self.subTest(bearer=bearer):
+                config = {"token": "legacy-token", "device_tokens": {"device-a": "unit-a", "device-b": "unit-b"}}
+                server = SimpleNamespace(bridge=SimpleNamespace(config=config, state=Path("unused")))
+                handler = SimpleNamespace(server=server, path="/pala/delivery",
+                                          headers={"Authorization": "Bearer " + bearer},
+                                          send_error=Mock(), send_json=Mock())
+                with patch("pala_google.home_delivery_payload", return_value="2026-11-20,2,1") as counts:
+                    bridge.Handler.do_GET(handler)
+                if expected is None:
+                    handler.send_error.assert_called_once_with(401)
+                    counts.assert_not_called()
+                else:
+                    counts.assert_called_once_with(server.bridge.state, config, expected)
+                    handler.send_json.assert_called_once_with(200, {"counts": "2026-11-20,2,1"})
+
     def test_includes_changed_address_and_excludes_unapproved_interface(self):
         config = {"host": "192.168.1.31", "discovery_networks": ["192.168.1.0/24"]}
         self.assertEqual(allowed_addresses(config, ["192.168.1.63", "10.59.167.226"]), {"192.168.1.63"})

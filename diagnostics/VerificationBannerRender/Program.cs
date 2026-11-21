@@ -81,6 +81,7 @@ static class Program
             DeleteDialogChecks.Run(output,checks);
             ShellPlacementChecks.Run(output,checks);
             GeneralStartupChecks.Run(output,checks);
+            WaveMarkChecks.Run(output,checks);
             CompatibilityStatusChecks.Run(output,checks);
             HistoryLayoutChecks.Run(output,checks);
             HistorySearchChecks.Run(output,checks);

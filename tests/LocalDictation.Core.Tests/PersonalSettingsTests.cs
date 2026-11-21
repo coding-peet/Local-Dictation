@@ -40,6 +40,47 @@ public class PersonalSettingsTests
         finally {if(Directory.Exists(path))Directory.Delete(path,true);}
     }
 
+    [Fact]
+    public void PalaWeatherLocationRoundtripsAndCanBeCleared()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "ld-weather-" + Guid.NewGuid());
+        try
+        {
+            var old = new Settings { PalaBridgeName = "Note-2", PalaBridgeModel = "", Theme = "Dark" };
+            old.Save(path);
+            var file = Path.Combine(path, "settings.json");
+            var legacy = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(file))!.AsObject();
+            legacy.Remove("PalaWeatherLocation");
+            File.WriteAllText(file, legacy.ToJsonString());
+
+            var settings = Settings.Load(path);
+            Assert.Equal("", settings.PalaWeatherLocation);
+            settings.PalaWeatherLocation = "  Banská Bystrica, sk  ";
+            settings.Save(path);
+
+            settings = Settings.Load(path);
+            Assert.Equal("Banská Bystrica, SK", settings.PalaWeatherLocation);
+            Assert.Equal("Note-2", settings.PalaBridgeName);
+            Assert.Equal("", settings.PalaBridgeModel);
+            Assert.Equal("Dark", settings.Theme);
+
+            settings.PalaWeatherLocation = "  ";
+            settings.Save(path);
+            Assert.Equal("", Settings.Load(path).PalaWeatherLocation);
+        }
+        finally { if (Directory.Exists(path)) Directory.Delete(path, true); }
+    }
+
+    [Theory]
+    [InlineData("X")]
+    [InlineData(", SK")]
+    [InlineData("Trenčín, Slovakia")]
+    [InlineData("Trenčín, SK, CZ")]
+    public void InvalidPalaWeatherLocationIsRejected(string location)
+    {
+        Assert.Throws<ArgumentException>(() => Settings.NormalizePalaWeatherLocation(location));
+    }
+
     [Fact] public void HistoryKeepsAllTranscriptsAndRestoresOriginalAudio()
     {
         var path=Path.Combine(Path.GetTempPath(),"ld-history-"+Guid.NewGuid());

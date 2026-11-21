@@ -7,3 +7,50 @@ static_assert(backlogLink(false, true, false, WifiBacklog::Unchecked) == Backlog
 static_assert(backlogLink(false, false, false, WifiBacklog::Ready) == BacklogLink::Wifi);
 static_assert(backlogLink(false, false, false, WifiBacklog::Busy) == BacklogLink::Deferred);
 static_assert(backlogLink(false, true, false, WifiBacklog::Unavailable) == BacklogLink::Bluetooth);
+
+
+constexpr bool triesLastWorkingBridgeFirst() {
+  int calls = 0;
+  int first = -1;
+  const auto selection = selectWifiBacklog(3, 2, [&](int index) {
+    if (calls++ == 0) first = index;
+    return WifiBacklog::Ready;
+  });
+  return calls == 1 && first == 2 && selection.index == 2 && selection.status == WifiBacklog::Ready;
+}
+
+static_assert(triesLastWorkingBridgeFirst());
+static_assert(selectWifiBacklog(3, 2, [](int index) {
+  return index == 2 ? WifiBacklog::Unavailable : WifiBacklog::Ready;
+}).index == 0);
+static_assert(selectWifiBacklog(3, 2, [](int index) {
+  return index == 2 ? WifiBacklog::Busy : WifiBacklog::Ready;
+}).index == 0);
+static_assert(selectWifiBacklog(3, 2, [](int index) {
+  return index == 2 || index == 0 ? WifiBacklog::Busy : WifiBacklog::Unavailable;
+}).index == 2);
+static_assert(selectWifiBacklog(0, -1, [](int) {
+  return WifiBacklog::Ready;
+}).status == WifiBacklog::Unavailable);
+
+static_assert(classifyWifiReadiness(200, true, true) == WifiBacklog::Ready);
+static_assert(classifyWifiReadiness(503, true, false) == WifiBacklog::Busy);
+static_assert(classifyWifiReadiness(503, false, false) == WifiBacklog::Unavailable);
+static_assert(classifyWifiReadiness(503, true, true) == WifiBacklog::Unavailable);
+static_assert(classifyWifiReadiness(200, true, false) == WifiBacklog::Unavailable);
+static_assert(classifyWifiReadiness(200, false, false) == WifiBacklog::Unavailable);
+static_assert(classifyWifiReadiness(502, true, false) == WifiBacklog::Unavailable);
+static_assert(classifyWifiReadiness(401, true, true) == WifiBacklog::Unavailable);
+
+static_assert(resumeBacklogAfterUsbDetach(true, true, false));
+static_assert(resumeBacklogAfterUsbDetach(true, false, true));
+static_assert(!resumeBacklogAfterUsbDetach(true, false, false));
+static_assert(!resumeBacklogAfterUsbDetach(false, true, true));
+
+// A Wi-Fi retry delay is not a prohibition on a paired recording transfer.
+static_assert(pairedBacklogAfterWifi(WifiBacklog::Unavailable, false, true) == BacklogLink::Bluetooth);
+static_assert(pairedBacklogAfterWifi(WifiBacklog::Busy, false, true) == BacklogLink::Deferred);
+static_assert(pairedBacklogAfterWifi(WifiBacklog::Ready, false, true) == BacklogLink::Deferred);
+static_assert(pairedBacklogAfterWifi(WifiBacklog::Ready, true, true) == BacklogLink::Wifi);
+static_assert(pairedBacklogAfterWifi(WifiBacklog::Unavailable, true, false) == BacklogLink::Deferred);
+static_assert(pairedBacklogAfterWifi(WifiBacklog::Unchecked, true, true) == BacklogLink::Deferred);

@@ -9,12 +9,35 @@ bool   updateIndexHasText(int num);
 bool   saveNoteTranscript(int num, const String& text);
 bool   deleteNote(int num);
 bool   deleteAllNotes();
+
+struct TrashedNote {
+  int num;
+  String tag;
+  int64_t trashedAt;
+  String capturedUtc;
+};
+
+bool listTrashedNotes(std::vector<TrashedNote>& entries);
+bool restoreTrashedNote(int num);
+bool noteIsTrashed(int num);
+int  trashRetentionDays();
+bool setTrashRetentionDays(int days);
+bool emptyTrash(bool& more);
+
+void discoverNoteTrash();
+void recoverNoteTrash();
+void maintainNoteTrash();
+int  highestTrashedNoteNumber();
+bool noteHasLiveBundle(int num);
 int    nextNoteNumber();
 bool   saveTag(int num, const char* tag, const String& capturedUtc);
 
 String noteMetaPath(int num);
 String readNoteMetaValue(int num, const char* key);
 bool   writeNoteMeta(int num, const char* tag, const String& capturedUtc = String());
+struct NoteEntry;
+bool   noteHasCommittedTranscript(int num);
+bool   notePendingTranscription(const NoteEntry& note);
 int    pendingTranscriptionCount();
 String noteQueueState(int num);
 String noteQueueError(int num);

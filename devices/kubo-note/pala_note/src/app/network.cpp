@@ -6,6 +6,7 @@
 #include "provider.h"
 #include "bridge_address.h"
 #include "bridge_client.h"
+#include "note_config.h"
 #include "notes.h"
 #include "rtc.h"
 #include "ui.h"
@@ -18,6 +19,7 @@
 #include <ArduinoJson.h>
 #include <algorithm>
 #include <atomic>
+#include <climits>
 #if __has_include("../../secrets.h")
 #include "../../secrets.h"
 #else
@@ -83,25 +85,46 @@ static String configuredLanguageInstruction(const char* subject) {
          " entirely in that language, regardless of the language of the source material.";
 }
 
-static void secureClient(WiFiClientSecure& client) {
+static void secureClient(ProviderClient& client) {
+#if PALA_BRIDGE_DISCOVERY
+  client.setHandshakeTimeout(5);
+#else
 #if PALA_MAC_BRIDGE
   client.setCACert(PALA_BRIDGE_CERT);
 #else
   client.setCACert(reinterpret_cast<const char*>(pala_ca_bundle_start));
 #endif
-#if PALA_BRIDGE_DISCOVERY
-  client.setHandshakeTimeout(5);
-#else
   client.setHandshakeTimeout(palaBackgroundNetworkMode() ? 10 : 12);
 #endif
 }
 
-static String providerCredential() {
-#if PALA_MAC_BRIDGE
+static String providerCredential(const ProviderClient& client) {
+#if PALA_BRIDGE_DISCOVERY
+  return client.bridge().token;
+#elif PALA_MAC_BRIDGE
   return PALA_BRIDGE_TOKEN;
 #else
   return palaOpenAiKey();
 #endif
+}
+
+static String providerAuthority(const ProviderClient& client) {
+#if PALA_BRIDGE_DISCOVERY
+  return client.bridge().host + ":" + String(client.bridge().port);
+#else
+  return PALA_AUTHORITY;
+#endif
+}
+
+static bool connectProvider(ProviderClient& client, int32_t timeout = 0) {
+#if PALA_BRIDGE_DISCOVERY
+  const char* host = client.bridge().host.c_str();
+  const uint16_t port = client.bridge().port;
+#else
+  const char* host = PALA_HOST;
+  const uint16_t port = PALA_PORT;
+#endif
+  return timeout > 0 ? client.connect(host, port, timeout) : client.connect(host, port);
 }
 
 static bool transientHttpStatus(int status) {
@@ -138,18 +161,24 @@ static String shiftedLocalDate(const String& utcIso, int days) {
 }
 
 static bool openAiJsonPost(const char* endpoint, const String& payload, String& response,
-                           uint16_t timeoutMs = 0, String* failure = nullptr) {
+                           uint16_t timeoutMs = 0, String* failure = nullptr,
+                           const String& bridgeId = "") {
   if (PALA_MAC_BRIDGE) timeoutMs = 65000;
   response = "";
   permanentCloudFailure = false;
   if (failure) *failure = "organization: network request failed";
-  String apiKey = providerCredential();
-  if (apiKey.length() < 10 || WiFi.status() != WL_CONNECTED) return false;
-  String url = String("https://" PALA_AUTHORITY) + endpoint;
+  if (WiFi.status() != WL_CONNECTED) return false;
+#if PALA_BRIDGE_DISCOVERY
+  ProviderClient client(bridgeId.isEmpty() ? selectedWifiBridge() : notePeerById(bridgeId));
+#else
+  ProviderClient client;
+#endif
+  const String apiKey = providerCredential(client);
+  if (apiKey.length() < 10) return false;
+  const String url = "https://" + providerAuthority(client) + endpoint;
   const int maxAttempts = palaBackgroundNetworkMode() ? 1 : 2;
+  secureClient(client);
   for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-    ProviderClient client;
-    secureClient(client);
     HTTPClient http;
     if (!http.begin(client, url)) return false;
     const char* collectedHeaders[] = {"Transfer-Encoding"};
@@ -265,7 +294,8 @@ static String parseWhisperText(const String& resp) {
 static bool transcribeTextOnce(const String& wavPath, String& text) {
   permanentCloudFailure = false;
   transcriptionHadNoSpeech = false;
-  String apiKey = providerCredential();
+  ProviderClient client;
+  const String apiKey = providerCredential(client);
   if (apiKey.length() < 10) return false;
   File f = SD_MMC.open(wavPath.c_str());
   if (!f) return false;
@@ -282,7 +312,6 @@ static bool transcribeTextOnce(const String& wavPath, String& text) {
   String post = "\r\n--" + bnd + "--\r\n";
   size_t totalLen = pre.length() + fileSize + post.length();
 
-  ProviderClient client;
   secureClient(client);
   // This timeout also governs socket writes. Eight seconds was too aggressive
   // for uploading WAV data on a weak WLAN: the socket closed mid-upload and
@@ -290,11 +319,11 @@ static bool transcribeTextOnce(const String& wavPath, String& text) {
   client.setTimeout(palaBackgroundNetworkMode() ? 20000 : 30000);
 
   const uint32_t startedAt = millis();
-  if (!client.connect(PALA_HOST, PALA_PORT)) { f.close(); return false; }
+  if (!connectProvider(client)) { f.close(); return false; }
   const uint32_t connectedAt = millis();
 
   String headers = String("POST /v1/audio/transcriptions HTTP/1.1\r\n") +
-                   "Host: " PALA_AUTHORITY "\r\n" +
+                   "Host: " + providerAuthority(client) + "\r\n" +
                    "Authorization: Bearer " + apiKey + "\r\n" +
                    "Content-Type: multipart/form-data; boundary=" + bnd + "\r\n" +
                    "Content-Length: " + String(totalLen) + "\r\n" +
@@ -403,6 +432,36 @@ bool transcribeQuestion(const String& wavPath, String& question) {
   // a network timeout. Return a clear error and let the user retry explicitly.
   return transcribeTextOnce(wavPath, question);
 }
+
+#if PALA_BRIDGE_DISCOVERY
+// Retrying an organization request can repeat an external write if its reply
+// was lost. Once dispatched, retry through the same Bridge and its journal.
+bool organizationBridge(int note, String& owner) {
+  char buffer[64];
+  snprintf(buffer, sizeof(buffer), "%s/note_%03d.bridge-owner", NOTES_DIR, note);
+  const String path(buffer);
+  const String backup = path + ".bak";
+  if (SD_MMC.exists(path.c_str()) || SD_MMC.exists(backup.c_str())) {
+    if (!recoverStoredFile(SD_MMC, path)) return false;
+    File file = SD_MMC.open(path, FILE_READ);
+    if (!file || file.isDirectory() || file.size() > 48) return false;
+    owner = file.readString();
+    return notePeerIdValid(owner);
+  }
+
+  const auto peer = selectedWifiBridge();
+  if (!notePeerIdValid(peer.id)) return false;
+  const String temporary = path + ".tmp";
+  SD_MMC.remove(temporary);
+  File file = SD_MMC.open(temporary, FILE_WRITE);
+  if (!file) return false;
+  const size_t written = file.print(peer.id);
+  file.close();
+  if (written != peer.id.length() || !commitStoredFile(SD_MMC, path, temporary)) return false;
+  owner = peer.id;
+  return true;
+}
+#endif
 
 static String lastOrganizationError;
 
@@ -544,7 +603,14 @@ bool understandNote(int noteNum) {
   String payload;
   serializeJson(request, payload);
   String response;
-  if (!openAiJsonPost("/v1/responses", payload, response, kMemoryTimeoutMs, &lastOrganizationError)) return false;
+  String bridgeId;
+#if PALA_BRIDGE_DISCOVERY
+  if (!organizationBridge(noteNum, bridgeId)) {
+    lastOrganizationError = "organization: no verified Bridge for this recording";
+    return false;
+  }
+#endif
+  if (!openAiJsonPost("/v1/responses", payload, response, kMemoryTimeoutMs, &lastOrganizationError, bridgeId)) return false;
   JsonDocument envelope;
   if (deserializeJson(envelope, response)) {
     lastOrganizationError = "organization: invalid response JSON";
@@ -564,7 +630,7 @@ bool understandNote(int noteNum) {
     decision["accept"] = result == 1;
     String serialized, ack;
     serializeJson(decision, serialized);
-    if (!openAiJsonPost("/pala/event", serialized, ack)) {
+    if (!openAiJsonPost("/pala/event", serialized, ack, 0, nullptr, bridgeId)) {
       lastOrganizationError = "calendar confirmation: retry";
       return false;
     }
@@ -1164,9 +1230,9 @@ bool playBrainSpeech(const String& text, const char* fallbackPath, int sourceCou
     request["response_format"] = "pcm";
     String payload; serializeJson(request, payload);
     ProviderClient client; secureClient(client); client.setTimeout(5000);
-    if (client.connect(PALA_HOST, PALA_PORT, 8000)) {
-      const String headers = String("POST /v1/audio/speech HTTP/1.1\r\nHost: " PALA_AUTHORITY "\r\n") +
-        "Authorization: Bearer " + providerCredential() + "\r\nContent-Type: application/json\r\n" +
+    if (connectProvider(client, 8000)) {
+      const String headers = (String("POST /v1/audio/speech HTTP/1.1\r\nHost: ") + providerAuthority(client) + "\r\n") +
+        "Authorization: Bearer " + providerCredential(client) + "\r\nContent-Type: application/json\r\n" +
         "Accept-Encoding: identity\r\nConnection: close\r\nContent-Length: " + payload.length() + "\r\n\r\n";
       auto send = [&](const String& bytes) {
         size_t offset = 0;
@@ -1242,8 +1308,10 @@ bool synthesizeBrainSpeech(const String& text, const char* outputPath, bool fast
   Serial.printf("[TTS] start characters=%u heap=%u largest=%u\n", text.length(),
                 heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
                 heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-  String apiKey = providerCredential();
-  if (apiKey.length() < 10 || WiFi.status() != WL_CONNECTED) return false;
+  if (WiFi.status() != WL_CONNECTED) return false;
+  ProviderClient client;
+  const String apiKey = providerCredential(client);
+  if (apiKey.length() < 10) return false;
   for (int attempt = 0; attempt < 2; attempt++) {
     // The configured modern voices are supported by gpt-4o-mini-tts. Trying
     // tts-1 first returned HTTP 400 on every request and delayed playback by
@@ -1261,17 +1329,16 @@ bool synthesizeBrainSpeech(const String& text, const char* outputPath, bool fast
     String payload;
     serializeJson(request, payload);
 
-    ProviderClient client;
     secureClient(client);
     client.setTimeout(5000);
-    if (!client.connect(PALA_HOST, PALA_PORT, 8000)) {
+    if (!connectProvider(client, 8000)) {
       char error[160] = {};
       const int code = client.lastError(error, sizeof(error));
       Serial.printf("[TTS] TLS connection failed code=%d detail=%s elapsed=%lu ms\n",
                     code, error, (unsigned long)(millis() - speechStartedAt));
       break;
     }
-    const String headers = String("POST /v1/audio/speech HTTP/1.1\r\nHost: " PALA_AUTHORITY "\r\n") +
+    const String headers = (String("POST /v1/audio/speech HTTP/1.1\r\nHost: ") + providerAuthority(client) + "\r\n") +
       "Authorization: Bearer " + apiKey + "\r\nContent-Type: application/json\r\n" +
       "Accept-Encoding: identity\r\nConnection: close\r\nContent-Length: " +
       String(payload.length()) + "\r\n\r\n";
@@ -1459,9 +1526,9 @@ static String portalCss() {
     ":root{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,Helvetica,sans-serif;color:#22211f;background:#f6f4ef;font-synthesis:none;--ink:#22211f;--muted:#77736c;--line:#d9d4c9;--paper:#f6f4ef;--surface:#fffdfa;--accent:#ef573f;--lilac:#ddd7e9;--sand:#f1e7cc;--soft:#ebe9e3;}"
     "*{box-sizing:border-box}body{margin:0;padding:0 24px 64px;background:var(--paper);color:var(--ink);}button,input,select{font-family:inherit}"
     ".wrap{max-width:1080px;margin:0 auto;}"
-    ".nav{position:sticky;top:12px;z-index:20;min-height:68px;display:flex;align-items:center;justify-content:space-between;margin:12px 0 52px;padding:8px 10px 8px 20px;border:1px solid rgba(31,31,28,.06);border-radius:28px;background:rgba(232,230,223,.94);backdrop-filter:blur(18px);box-shadow:0 16px 36px rgba(31,31,28,.08)}.brand{font-weight:900;letter-spacing:-.055em;font-size:24px}.navlinks{display:flex;gap:5px}.navlink{display:flex;align-items:center;gap:7px;color:#5f5d57;text-decoration:none;border-radius:18px;padding:11px 14px;font-size:13px;font-weight:760}.navlink.active{background:var(--accent);color:#fff}.navicon{width:18px;height:18px;display:grid;place-items:center;line-height:1}.navicon svg{display:block;width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}"
+    ".nav{position:sticky;top:12px;z-index:20;min-height:68px;display:flex;align-items:center;justify-content:space-between;margin:12px 0 52px;padding:8px 10px 8px 20px;border:1px solid rgba(31,31,28,.06);border-radius:28px;background:rgba(232,230,223,.94);backdrop-filter:blur(18px);box-shadow:0 16px 36px rgba(31,31,28,.08)}.brand{font-weight:900;letter-spacing:-.055em;font-size:24px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.navlinks{display:flex;gap:5px}.navlink{display:flex;align-items:center;gap:7px;color:#5f5d57;text-decoration:none;border-radius:18px;padding:11px 14px;font-size:13px;font-weight:760}.navlink.active{background:var(--accent);color:#fff}.navicon{width:18px;height:18px;display:grid;place-items:center;line-height:1}.navicon svg{display:block;width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}"
     ".top{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin:0 0 28px;padding-top:18px;}"
-    "h1{font-size:clamp(56px,8vw,92px);letter-spacing:-.048em;line-height:.95;margin:0;font-weight:820;}"
+    "h1{font-size:clamp(56px,8vw,92px);letter-spacing:-.048em;line-height:.95;margin:0;font-weight:820;overflow-wrap:anywhere;}"
     ".sub{font-size:12px;text-transform:uppercase;letter-spacing:.14em;color:var(--muted);margin:0 0 14px;font-weight:750;}"
     ".pill{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;padding:8px 12px;font-size:12px;background:rgba(255,255,255,.7);white-space:nowrap;}"
     ".stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:0 0 24px}.stat{background:var(--soft);border:0;border-radius:22px;padding:17px}.stat b{display:block;font-size:26px;font-weight:780;letter-spacing:-.025em}.stat span{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:750}"
@@ -1491,8 +1558,21 @@ static String portalCss() {
     ".settingsgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start}.settingsgrid>.wide{grid-column:1/-1}.settingintro{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:18px}.settingintro .title{margin-bottom:4px}.networkrow{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:13px 0;border-bottom:1px solid var(--line)}.networkrow:last-of-type{border-bottom:0}.helper{font-size:13px;line-height:1.5;color:var(--muted);margin:10px 0 0}.savebar{display:flex;align-items:center;justify-content:flex-end;margin-top:18px}.savebar .moment{padding:12px 20px}"
     "audio{width:100%;margin-top:8px;height:38px}.hidden{display:none!important}"
     "@media(max-width:760px){body{padding:0 14px 108px}.nav{position:fixed;top:auto;bottom:14px;left:50%;transform:translateX(-50%);width:calc(100% - 28px);max-width:560px;margin:0;padding:7px 9px 7px 14px;min-height:66px}.brand{font-size:20px}.navlinks{flex:1;justify-content:flex-end}.navlink{padding:10px 11px}.navlabel{display:none}.top{display:block;margin-top:34px;padding-top:0}.top>.pill,.top>.monthnav{margin-top:18px}.stats{grid-template-columns:repeat(2,1fr)}.grid,.todaygrid,.settingsgrid{grid-template-columns:1fr}.settingsgrid>.wide{grid-column:auto}.toolbar{flex-wrap:wrap}.toolbar .search{flex-basis:100%}.card{border-radius:22px}.title{font-size:21px}.taskrow{grid-template-columns:auto 1fr}.taskrow>.badge{display:none}.agendarow{grid-template-columns:72px 1fr}.agendarow>.badge{display:none}.calday{min-height:54px;padding:7px 6px}.sectionhead h2{font-size:26px}.monthnav .pill{min-width:132px}}"
+    "@media(max-width:420px){.ask{flex-wrap:wrap}.ask input{flex-basis:100%}.ask button{margin-left:auto}}"
     "</style>"
   );
+}
+
+static String viewerNamedText(const char* de, const char* en) {
+  String text(viewerText(de, en));
+  text.replace("{name}", palaNoteName());
+  return text;
+}
+
+static String portalPageStart(const String& title) {
+  return "<!doctype html><html><head><meta charset='utf-8'>"
+         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+         "<title>" + htmlEscape(title) + "</title>" + portalCss() + "</head><body><div class='wrap'>";
 }
 
 static String portalNav(const String& active) {
@@ -1507,7 +1587,8 @@ static String portalNav(const String& active) {
   const String tasksIcon = "<svg viewBox='0 0 24 24' aria-hidden='true'><path d='m4 12 4 4L20 5'/></svg>";
   const String calendarIcon = "<svg viewBox='0 0 24 24' aria-hidden='true'><rect x='3' y='5' width='18' height='16' rx='3'/><path d='M7 3v4M17 3v4M3 10h18'/><path d='M7 14h2M11 14h2M15 14h2M7 17h2M11 17h2M15 17h2'/></svg>";
   const String settingsIcon = "<svg viewBox='0 0 24 24' aria-hidden='true'><circle cx='12' cy='12' r='3'/><path d='M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1A8 8 0 0 0 15 6l-.4-2.6h-4L10 6a8 8 0 0 0-1.5 1L6 6 4 9.4 6.1 11a7 7 0 0 0 0 2L4 14.6 6 18l2.5-1a8 8 0 0 0 1.5 1l.5 2.6h4L15 18a8 8 0 0 0 1.5-1l2.5 1 2-3.4-2.1-1.6a7 7 0 0 0 .1-1Z'/></svg>";
-  return "<nav class='nav'><div class='brand'>pala</div><div class='navlinks'>" +
+  const String name = htmlEscape(palaNoteName());
+  return "<nav class='nav'><div class='brand' title='" + name + "'>" + name + "</div><div class='navlinks'>" +
          link("today", "/", homeIcon, "Heute", "Today") +
          link("memories", "/#memories", memoriesIcon, "Gedanken", "Memories") +
          link("tasks", "/tasks", tasksIcon, "Aufgaben", "Tasks") +
@@ -1546,9 +1627,7 @@ static void handlePortalRoot() {
   const int firstVisible = (page - 1) * kPageSize;
   const int lastVisible = min(static_cast<int>(noteIndex.size()), firstVisible + kPageSize);
 
-  String html = "<!doctype html><html><head><meta charset='utf-8'>"
-                "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-                "<title>Pala Brain</title>" + portalCss() + "</head><body><div class='wrap'>";
+  String html = portalPageStart(palaNoteName() + " · " + viewerText("Heute", "Today"));
 
   html += portalNav("today");
   html += "<div class='top'><div><div class='sub'>" +
@@ -1612,10 +1691,10 @@ static void handlePortalRoot() {
           "</b><span>" + String(viewerText("In Arbeit", "Processing")) + "</span></div></div>";
   html += "<form class='card ask' action='/ask' method='post'>"
           "<input name='question' maxlength='240' placeholder='" + String(viewerText("Frag deine Gedanken…", "Ask your second brain…")) + "' required>"
-          "<button type='submit'>" + String(viewerText("Pala fragen", "Ask Pala")) + "</button></form>";
+          "<button type='submit'>" + htmlEscape(viewerNamedText("{name} fragen", "Ask {name}")) + "</button></form>";
 
   html += "<div class='sectionhead' id='memories'><div><h2>" + String(viewerText("Gedanken", "Memories")) + "</h2><p>" +
-          String(viewerText("Alles, was du Pala anvertraut hast.", "Everything you have trusted Pala to remember.")) + "</p></div>"
+          htmlEscape(viewerNamedText("Gespeicherte Gedanken auf {name}.", "Saved memories on {name}.")) + "</p></div>"
           "<a class='btn' href='/export.txt'>" + String(viewerText("Exportieren", "Export")) + "</a></div>"
           "<div class='toolbar'><input id='memory-search' class='search' type='search' placeholder='" +
           String(viewerText("Gedanken durchsuchen…", "Search memories…")) + "' aria-label='Search memories'></div>";
@@ -1715,10 +1794,10 @@ static void handlePortalRoot() {
       if (SD_MMC.exists(wavPath))
         html += "<a class='btn' href='/wav?num=" + String(num) + "'>" + String(viewerText("WAV herunterladen", "Download WAV")) + "</a>";
       html += "<form method='post' action='/note/delete' style='margin-left:auto' data-confirm='" +
-              htmlEscape(viewerText("Diesen Gedanken vergessen? Das kann nicht rückgängig gemacht werden.", "Forget this memory? This cannot be undone.")) +
+              htmlEscape(viewerText("Diesen Gedanken in den Papierkorb verschieben?", "Move this memory to Trash?")) +
               "' onsubmit='return confirm(this.dataset.confirm)'><input type='hidden' name='num' value='" + String(num) +
               "'><button type='submit' class='btn destructive'>" +
-              String(viewerText("Vergessen", "Forget")) + "</button></form>";
+              String(viewerText("In den Papierkorb", "Move to Trash")) + "</button></form>";
       html += "</div></article>";
     }
     html += "</div>";
@@ -1799,7 +1878,7 @@ static void handleExportTxt() {
   String filter = "All";
   if (transferServer.hasArg("tag")) filter = transferServer.arg("tag");
 
-  String exportText = "Pala Note Export\nFilter: " + filter + "\n------------------------------\n\n";
+  String exportText = palaNoteName() + " · Note export\nFilter: " + filter + "\n------------------------------\n\n";
 
   for (int v = 0; v < (int)noteIndex.size(); v++) {
     int i = (int)noteIndex.size() - 1 - v;
@@ -1824,7 +1903,9 @@ static void handleExportTxt() {
     }
   }
 
-  String filename = "pala_notes_export";
+  String filename = palaNoteName();
+  filename.replace(" ", "_");
+  filename += "_notes_export";
   if (filter != "All") filename += "_" + filter;
   filename += ".txt";
   transferServer.sendHeader("Content-Disposition", "attachment; filename=\"" + filename + "\"");
@@ -1835,6 +1916,9 @@ static void sendFileByNum(const char* ext, const char* mime, bool attachment) {
   if (!transferServer.hasArg("num")) { transferServer.send(400, "text/plain", "Missing num"); return; }
   int num = transferServer.arg("num").toInt();
   if (num <= 0) { transferServer.send(400, "text/plain", "Invalid num"); return; }
+  const bool live = std::any_of(noteIndex.begin(), noteIndex.end(),
+      [num](const NoteEntry& note) { return note.num == num; });
+  if (!live || noteIsTrashed(num)) { transferServer.send(404, "text/plain", "File not found"); return; }
   char path[64]; snprintf(path, sizeof(path), "%s/note_%03d.%s", NOTES_DIR, num, ext);
   File f = SD_MMC.open(path);
   if (!f) { transferServer.send(404, "text/plain", "File not found"); return; }
@@ -1846,14 +1930,25 @@ static void sendFileByNum(const char* ext, const char* mime, bool attachment) {
   f.close();
 }
 
+static bool positiveFormValue(const char* name, int& value) {
+  const String entry = transferServer.arg(name);
+  value = 0;
+  for (size_t i = 0; i < entry.length(); i++) {
+    const char digit = entry[i];
+    if (digit < '0' || digit > '9' || value > (INT_MAX - (digit - '0')) / 10) return false;
+    value = value * 10 + digit - '0';
+  }
+  return value > 0;
+}
+
 static void handleNoteDelete() {
-  if (!transferServer.hasArg("num")) { transferServer.send(400, "text/plain", "Missing num"); return; }
-  int num = transferServer.arg("num").toInt();
-  if (num <= 0) { transferServer.send(400, "text/plain", "Invalid num"); return; }
+  int num = 0;
+  if (!positiveFormValue("num", num)) { transferServer.send(400, "text/plain", "Invalid memory number"); return; }
   if (!deleteNote(num)) {
-    transferServer.send(500, "text/plain", "Storage error: deletion incomplete. Please check the SD card.");
+    transferServer.send(500, "text/plain", "The memory could not be moved to Trash. Check the SD card.");
     return;
   }
+  if (lastRecNum == num) lastRecNum = -1;
   transferServer.sendHeader("Location", "/");
   transferServer.send(303);
 }
@@ -1864,9 +1959,7 @@ static void handleTasksPage() {
   std::vector<BrainTaskRecord> tasks = loadBrainTasks();
   tasks.erase(std::remove_if(tasks.begin(), tasks.end(),
     [](const BrainTaskRecord& task) { return task.type == "event"; }), tasks.end());
-  String html = "<!doctype html><html><head><meta charset='utf-8'>"
-                "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-                "<title>Pala Tasks</title>" + portalCss() + "</head><body><div class='wrap'>";
+  String html = portalPageStart(palaNoteName() + " · " + viewerText("Aufgaben", "Tasks"));
   html += portalNav("tasks");
   html += "<div class='top'><div><div class='sub'>" + String(viewerText("OFFENE UND ERLEDIGTE AUFGABEN", "OPEN AND COMPLETED TASKS")) +
           "</div><h1>" + String(viewerText("Aufgaben.", "Tasks.")) + "</h1></div></div>";
@@ -1911,8 +2004,7 @@ static void handleCalendarPage() {
     if (!b.dueUtc.length()) return true;
     return a.dueUtc < b.dueUtc;
   });
-  String html = "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-                "<title>Pala Calendar</title>" + portalCss() + "</head><body><div class='wrap'>";
+  String html = portalPageStart(palaNoteName() + " · " + viewerText("Kalender", "Calendar"));
   html += portalNav("calendar");
   html += "<div class='top'><div><div class='sub'>" + String(viewerText("TERMINE UND DATIERTE AUFGABEN", "APPOINTMENTS AND DATED TASKS")) +
           "</div><h1>" + String(viewerText("Kalender.", "Calendar.")) + "</h1></div>"
@@ -2013,8 +2105,7 @@ static void handleRecap() {
     }
   }
 
-  String html = "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-                "<title>Pala Recap</title>" + portalCss() + "</head><body><div class='wrap'>";
+  String html = portalPageStart(palaNoteName() + " · " + viewerText("Rückblick", "Recap"));
   const String recapTitle = period == "month"
     ? String(viewerText("dieser Monat.", "this month."))
     : String(viewerText("heute erinnert.", "today, recalled."));
@@ -2028,19 +2119,63 @@ static void handleRecap() {
 static void handleDeleteAllNotes() {
   String confirmation = transferServer.arg("confirmation");
   confirmation.trim();
-  if (confirmation != "DELETE ALL") {
-    transferServer.send(400, "text/plain", "Confirmation did not match. Nothing was deleted.");
+  if (confirmation != "MOVE ALL" && confirmation != "DELETE ALL") {
+    transferServer.send(400, "text/plain", "Confirmation did not match. Enter MOVE ALL.");
     return;
   }
   if (!deleteAllNotes()) {
-    loadIndex();
-    transferServer.send(500, "text/plain", "Could not remove every memory. Please try again.");
+    transferServer.send(500, "text/plain", "Could not move every memory. Review Trash before retrying.");
     return;
   }
   lastRecNum = -1;
-  transferServer.sendHeader("Location", "/");
+  transferServer.sendHeader("Location", "/settings#trash");
   transferServer.send(303);
 }
+
+#if !PALA_BRIDGE_DISCOVERY
+static void redirectToTrash() {
+  transferServer.sendHeader("Location", "/settings#trash");
+  transferServer.send(303);
+}
+
+static void handleTrashRestore() {
+  int num = 0;
+  if (!positiveFormValue("num", num)) {
+    transferServer.send(400, "text/plain", "Invalid memory number.");
+  } else if (!restoreTrashedNote(num)) {
+    transferServer.send(500, "text/plain", "Could not restore this memory. Check the SD card.");
+  } else {
+    redirectToTrash();
+  }
+}
+
+static void handleTrashRetention() {
+  int days = 0;
+  if (!positiveFormValue("days", days) || days > 3650) {
+    transferServer.send(400, "text/plain", "Enter a retention between 1 and 3650 days.");
+  } else if (!setTrashRetentionDays(days)) {
+    transferServer.send(500, "text/plain", "Could not save Trash retention.");
+  } else {
+    redirectToTrash();
+  }
+}
+
+static void handleTrashEmpty() {
+  if (transferServer.arg("confirmation") != "EMPTY TRASH") {
+    transferServer.send(400, "text/plain", "Confirmation did not match. Enter EMPTY TRASH.");
+    return;
+  }
+  bool more = false;
+  do {
+    if (!emptyTrash(more)) {
+      transferServer.send(500, "text/plain", "Trash could not be fully emptied. Check the SD card.");
+      return;
+    }
+    if (more) delay(1);
+  } while (more);
+  redirectToTrash();
+}
+#endif
 
 static void handleBrainAsk() {
   String question = transferServer.arg("question");
@@ -2052,31 +2187,29 @@ static void handleBrainAsk() {
   String answer;
   std::vector<int> sources;
   bool ok = WiFi.status() == WL_CONNECTED && answerFromBrain(question, answer, sources);
-  String html = "<!doctype html><html><head><meta charset='utf-8'>"
-                "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-                "<title>Ask Pala</title>" + portalCss() + "</head><body><div class='wrap'>";
-  html += "<div class='top'><div><h1>ask<br>pala</h1><div class='sub'>" + String(viewerText("FRAGEN AN DEINE GESPEICHERTEN GEDANKEN", "ASK QUESTIONS ABOUT YOUR SAVED MEMORIES")) + "</div></div>"
+  const String title = viewerNamedText("{name} fragen", "Ask {name}");
+  String html = portalPageStart(title);
+  html += "<div class='top'><div><h1>" + htmlEscape(title) + "</h1><div class='sub'>" + String(viewerText("FRAGEN AN DEINE GESPEICHERTEN GEDANKEN", "ASK QUESTIONS ABOUT YOUR SAVED MEMORIES")) + "</div></div>"
           "<a class='btn' href='/'>" + String(viewerText("Zurück", "Back")) + "</a></div>";
   html += "<div class='card'><div class='num'>" + String(viewerText("Deine Frage", "Your question")) + "</div><h2 class='title'>" + htmlEscape(question) + "</h2>";
   if (ok) {
-    html += "<div class='eyebrow'>" + String(viewerText("Pala erinnert sich", "Pala remembers")) + "</div><p class='text'>" + htmlEscape(answer) + "</p>";
+    html += "<div class='eyebrow'>" + htmlEscape(viewerNamedText("{name} erinnert sich", "{name} remembers")) + "</div><p class='text'>" + htmlEscape(answer) + "</p>";
     html += "<div class='eyebrow'>" + String(viewerText("Quellen", "Memory sources")) + "</div><div class='actions'>";
     for (int noteNum : sources) html += "<span class='pill'>#" + String(noteNum) + "</span>";
     html += "</div>";
   } else {
-    html += "<p class='text'>" + String(viewerText("Pala konnte nicht antworten. Verbinde das Gerät mit WLAN, hinterlege einen API-Key und synchronisiere zuerst mindestens einen verstandenen Gedanken.", "Pala could not answer. Connect the device to Wi-Fi, add an API key, and sync at least one Smart Memory first.")) + "</p>";
+    html += "<p class='text'>" + htmlEscape(viewerNamedText("{name} konnte nicht antworten. Verbinde das Gerät mit WLAN, hinterlege einen API-Key und synchronisiere zuerst mindestens einen verstandenen Gedanken.", "{name} could not answer. Connect the device to Wi-Fi, add an API key, and sync at least one Smart Memory first.")) + "</p>";
   }
   html += "</div></div></body></html>";
   transferServer.send(ok ? 200 : 503, "text/html", html);
 }
 
+#if !PALA_BRIDGE_DISCOVERY
 void handleSettingsPage() {
   const bool de = palaUiLanguage() == "de";
   String speechVoice = palaSpeechVoice();
   String uiLanguage = palaUiLanguage();
-  String html = "<!doctype html><html><head><meta charset='utf-8'>"
-                "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-                "<title>Pala Settings</title>" + portalCss() + "</head><body><div class='wrap'>";
+  String html = portalPageStart(palaNoteName() + " · " + viewerText("Setup", "Setup"));
   html += portalNav("settings");
   html += "<div class='top'><div><div class='sub'>" + String(viewerText("WLAN, SPRACHE UND KI EINSTELLEN", "MANAGE WI-FI, LANGUAGE AND AI")) +
           "</div><h1>" + String(viewerText("Setup.", "Setup")) + "</h1></div></div>";
@@ -2095,14 +2228,14 @@ void handleSettingsPage() {
     html += "<div class='networkrow'><div><b>" + htmlEscape(profile.ssid) +
             "</b>" + String(profile.ssid == connectedSsid ? " <span class='pill ok'>" + String(viewerText("Verbunden", "Connected")) + "</span>" : "") +
             "</div><form action='/settings/wifi/remove' method='post' "
-            "onsubmit=\"return confirm(this.dataset.confirm)\" data-confirm='" + htmlEscape(viewerText("Dieses WLAN von Pala entfernen?", "Remove this Wi-Fi from Pala?")) + "'>"
+            "onsubmit=\"return confirm(this.dataset.confirm)\" data-confirm='" + htmlEscape(viewerNamedText("Dieses WLAN von {name} entfernen?", "Remove this Wi-Fi from {name}?")) + "'>"
             "<input type='hidden' name='ssid' value='" + htmlEscape(profile.ssid) + "'>"
             "<button class='moment' type='submit'>" + String(viewerText("Entfernen", "Remove")) + "</button></form></div>";
   }
   if (!palaWifiProfileCount()) html += "<p class='text'>" + String(viewerText("Noch kein WLAN gespeichert.", "No Wi-Fi saved yet.")) + "</p>";
-  html += "<p class='helper'>" + String(viewerText("Pala nutzt automatisch das stärkste erreichbare Netzwerk. Bis zu fünf WLANs können gespeichert werden.", "Pala automatically uses the strongest available network. Up to five networks can be stored.")) + "</p></section>";
+  html += "<p class='helper'>" + htmlEscape(viewerNamedText("{name} nutzt automatisch das stärkste erreichbare Netzwerk. Bis zu fünf WLANs können gespeichert werden.", "{name} automatically uses the strongest available network. Up to five networks can be stored.")) + "</p></section>";
   html += "<form class='card' action='/settings/language' method='post'><div class='settingintro'><div><div class='num'>" +
-          String(viewerText("SPRACHE", "LANGUAGE")) + "</div><h2 class='title'>" + String(viewerText("So spricht Pala.", "How Pala speaks.")) + "</h2></div></div>"
+          String(viewerText("SPRACHE", "LANGUAGE")) + "</div><h2 class='title'>" + htmlEscape(viewerNamedText("So spricht {name}.", "How {name} speaks.")) + "</h2></div></div>"
           "<div class='field'><label>" + String(viewerText("Gerätesprache", "Interface language")) + "</label><select name='uiLanguage'>"
           "<option value='en'" + String(uiLanguage == "en" ? " selected" : "") + ">English</option>"
           "<option value='de'" + String(uiLanguage == "de" ? " selected" : "") + ">Deutsch</option>"
@@ -2139,33 +2272,54 @@ void handleSettingsPage() {
     html += "<form action='/settings/key/clear' method='post' class='actions'>"
             "<button class='moment' type='submit' onclick=\"return confirm('" + String(viewerText("API-Key vom Gerät entfernen?", "Remove the API key from this device?")) + "')\">" + String(viewerText("API-Key entfernen", "Remove API key")) + "</button></form>";
   }
-#if PALA_BRIDGE_DISCOVERY
-  const bool sk = palaUiLanguage() == "sk";
-  html += "<form class='card wide' action='/settings/bridge' method='post'>"
-          "<h2 class='title'>Pala Bridge</h2><div class='field'><label for='bridgeIp'>" +
-          String(sk ? "Záložná IPv4 adresa" : viewerText("IPv4-Ersatzadresse", "Fallback IPv4 address")) +
-          "</label><input id='bridgeIp' name='bridgeIp' maxlength='15' autocomplete='off' "
-          "placeholder='192.168.1.31' value='" + htmlEscape(palaBridgeAddress()) + "'></div>"
-          "<p class='helper'>" +
-          String(sk ? "Pala najprv vyhľadá spárovaný Bridge. Ak ho nenájde, skúsi túto adresu. "
-                      "Prázdne pole používa iba automatické vyhľadanie."
-                    : viewerText("Pala sucht zuerst den gekoppelten Bridge. Ist er nicht erreichbar, versucht Pala diese Adresse. "
-                                 "Ein leeres Feld verwendet nur die automatische Suche.",
-                                 "Pala looks for its paired Bridge first. If it cannot connect, it tries this address. "
-                                 "Leave blank for automatic discovery only.")) +
-          "</p><div class='savebar'><button class='moment' type='submit'>" +
-          String(sk ? "Uložiť adresu" : viewerText("Adresse speichern", "Save address")) + "</button></div></form>";
-#endif
-  html += "<form class='card danger' action='/memories/delete-all' method='post' "
-          "onsubmit=\"return confirm(this.dataset.confirm)\" data-confirm='" + htmlEscape(viewerText("Wirklich alle Aufnahmen und Gedanken dauerhaft löschen?", "Permanently delete every recording and memory?")) + "'>"
-          "<div class='num'>" + String(viewerText("GEFAHRENBEREICH", "DANGER ZONE")) + "</div><h2 class='title'>" + String(viewerText("Alle Gedanken löschen", "Erase this brain")) + "</h2>"
-          "<p class='text'>" + String(viewerText("Löscht Aufnahmen, Transkripte und Erinnerungen von der SD-Karte. WLAN und API-Key bleiben erhalten.", "Deletes recordings, transcripts and memories. Wi-Fi and API settings stay saved.")) + "</p>"
-          "<div class='field'><label>" + String(viewerText("Zur Bestätigung DELETE ALL eingeben", "Type DELETE ALL to confirm")) + "</label>"
-          "<input name='confirmation' autocomplete='off' required pattern='DELETE ALL'></div>"
-          "<button type='submit'>" + String(viewerText("Alle Gedanken löschen", "Delete every memory")) + "</button></form>";
+  html += "<section class='card wide' id='trash'><h2 class='title'>Trash</h2>"
+          "<form action='/trash/retention' method='post'><div class='field'><label for='trash-days'>Keep items in Trash (days)</label>"
+          "<input id='trash-days' name='days' type='number' min='1' max='3650' required value='" +
+          String(trashRetentionDays()) + "'></div><button type='submit' class='btn'>Save retention</button></form>";
+  std::vector<TrashedNote> entries;
+  if (!listTrashedNotes(entries)) {
+    html += "<p class='text'>Could not read Trash.</p>";
+  } else if (entries.empty()) {
+    html += "<p class='text'>Trash is empty.</p>";
+  } else {
+    constexpr int pageSize = 12;
+    const int count = static_cast<int>(entries.size());
+    const int pages = (count + pageSize - 1) / pageSize;
+    int requested = 1;
+    positiveFormValue("trashPage", requested);
+    const int page = constrain(requested, 1, pages);
+    const int begin = (page - 1) * pageSize;
+    for (int i = begin; i < min(count, begin + pageSize); ++i) {
+      const TrashedNote& item = entries[i];
+      String date = item.capturedUtc.isEmpty() ? String() : utcToLocalDeviceLabel(item.capturedUtc);
+      html += "<div class='networkrow'><div><strong>Memory #" + String(item.num) + "</strong> " +
+              htmlEscape(item.tag) + (date.isEmpty() ? String() : String(" · ") + htmlEscape(date)) +
+              "</div><form action='/trash/restore' method='post'><input type='hidden' name='num' value='" +
+              String(item.num) + "'><button class='btn' type='submit'>Restore</button></form></div>";
+    }
+    if (pages > 1) {
+      html += "<div class='actions'>";
+      if (page > 1) html += "<a class='btn' href='/settings?trashPage=" + String(page - 1) + "#trash'>Previous</a>";
+      html += "<span>" + String(page) + " / " + String(pages) + "</span>";
+      if (page < pages) html += "<a class='btn' href='/settings?trashPage=" + String(page + 1) + "#trash'>Next</a>";
+      html += "</div>";
+    }
+    html += "<form action='/trash/empty' method='post' class='card danger' "
+            "onsubmit=\"return confirm('Permanently empty Trash?')\"><div class='field'>"
+            "<label for='trash-confirm'>Type EMPTY TRASH to permanently remove items in Trash</label>"
+            "<input id='trash-confirm' name='confirmation' autocomplete='off' required pattern='EMPTY TRASH'></div>"
+            "<button class='btn destructive' type='submit'>Empty Trash</button></form>";
+  }
+  html += "<form action='/memories/delete-all' method='post' class='card' "
+          "onsubmit=\"return confirm('Move all memories to Trash?')\"><div class='field'>"
+          "<label for='move-confirm'>Type MOVE ALL to move all memories to Trash</label>"
+          "<input id='move-confirm' name='confirmation' autocomplete='off' required pattern='MOVE ALL'></div>"
+          "<button class='btn' type='submit'>Move all memories to Trash</button></form></section>";
   html += "</div></div></body></html>";
   transferServer.send(200, "text/html", html);
 }
+
+#endif
 
 void handleLanguageSave() {
   String language = transferServer.arg("uiLanguage");
@@ -2244,15 +2398,35 @@ void handleKeyClear() {
 }
 
 void setupTransferServer() {
+#if PALA_BRIDGE_DISCOVERY
+  noteSettingsBegin();
+#endif
   static bool activityMiddlewareInstalled = false;
   if (!activityMiddlewareInstalled) {
-    const char* collected[] = {"Origin", "Referer", "Sec-Fetch-Site"};
-    transferServer.collectHeaders(collected, 3);
+    const char* collected[] = {"Origin", "Referer", "Sec-Fetch-Site", "X-Pala-Settings", "X-Pala-CSRF"};
+    transferServer.collectHeaders(collected, sizeof(collected) / sizeof(collected[0]));
+#if PALA_BRIDGE_DISCOVERY
+    noteSettingsHttp(transferServer);
+#endif
     transferServer.addMiddleware([](WebServer& server, Middleware::Callback next) {
+#if PALA_BRIDGE_DISCOVERY
+      if (server.uri() == "/settings" || server.uri() == "/note-settings" ||
+          server.uri() == "/api/note-settings") {
+        const String host = server.hostHeader();
+        const String origin = server.header("Origin");
+        const bool correctHost = !transferUrl.isEmpty() &&
+                                 (host == transferUrl || host == transferUrl + ":80");
+        if (!correctHost || (server.method() == HTTP_POST && origin != "http://" + host)) {
+          server.send(403, "application/json",
+                      F("{\"ok\":false,\"error\":\"Open the address shown on the Note.\"}"));
+          return true;
+        }
+      }
+#endif
       if (server.method() == HTTP_POST && !viewerWriteAllowed(server.hostHeader().c_str(),
             server.header("Origin").c_str(), server.header("Referer").c_str(),
             server.header("Sec-Fetch-Site").c_str())) {
-        server.send(403, "text/plain", "Open the Pala Viewer directly to change settings or memories.");
+        server.send(403, "text/plain", "Open Web Companion directly to change settings or memories.");
         return true;
       }
       resetActivity();
@@ -2270,7 +2444,12 @@ void setupTransferServer() {
   transferServer.on("/recap", HTTP_GET, handleRecap);
   transferServer.on("/memories/delete-all", HTTP_POST, handleDeleteAllNotes);
   transferServer.on("/ask", HTTP_POST, handleBrainAsk);
+#if !PALA_BRIDGE_DISCOVERY
   transferServer.on("/settings", HTTP_GET, handleSettingsPage);
+  transferServer.on("/trash/restore", HTTP_POST, handleTrashRestore);
+  transferServer.on("/trash/retention", HTTP_POST, handleTrashRetention);
+  transferServer.on("/trash/empty", HTTP_POST, handleTrashEmpty);
+#endif
   transferServer.on("/settings/save", HTTP_POST, handleSettingsSave);
 #if PALA_BRIDGE_DISCOVERY
   transferServer.on("/settings/bridge", HTTP_POST, handleBridgeAddressSave);

@@ -2,6 +2,7 @@
 import argparse
 import contextlib
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import math
@@ -119,14 +120,31 @@ def _recording_actions(device_id, note, text):
     return kind, [(f"{digest}-{index}", body) for index, body in enumerate(entries)]
 
 
+def _delivery_target(bindings, kind):
+    target = bindings.get(kind)
+    if target is None and kind == "sorting":
+        target = bindings.get("general")
+    return target
+
+
 class DeliveryQueue:
     def __init__(self, directory):
         self.path = Path(directory) / "google-delivery.sqlite"
         with self.database() as db:
+            db.execute("BEGIN IMMEDIATE")
             db.execute("""CREATE TABLE IF NOT EXISTS google_actions (
                 id TEXT PRIMARY KEY, kind TEXT NOT NULL, captured TEXT, body TEXT NOT NULL,
-                status TEXT NOT NULL, target_id TEXT, provider_id TEXT
+                status TEXT NOT NULL, target_id TEXT, provider_id TEXT, device TEXT,
+                confirmed_at REAL, recording_id TEXT
             )""")
+            columns = {row[1] for row in db.execute("PRAGMA table_info(google_actions)")}
+            if "device" not in columns:
+                db.execute("ALTER TABLE google_actions ADD COLUMN device TEXT")
+            if "confirmed_at" not in columns:
+                db.execute("ALTER TABLE google_actions ADD COLUMN confirmed_at REAL")
+            if "recording_id" not in columns:
+                db.execute("ALTER TABLE google_actions ADD COLUMN recording_id TEXT")
+            db.execute("CREATE INDEX IF NOT EXISTS google_actions_device ON google_actions(device)")
 
     @contextlib.contextmanager
     def database(self):
@@ -135,6 +153,8 @@ class DeliveryQueue:
 
     def stage(self, device_id, note, captured, text, *, ready=True):
         kind, actions = _recording_actions(device_id, note, text)
+        recorded = recording_time(captured, timezone.utc)
+        recording_id = f"{note}:{recorded.isoformat()}" if recorded is not None else None
         status = {"work": "local", "calendar": "needs-confirmation",
                   "needs-target": "needs-target"}.get(kind, "pending")
         if not ready:
@@ -142,8 +162,13 @@ class DeliveryQueue:
         with self.database() as db:
             for key, body in actions:
                 db.execute("""INSERT OR IGNORE INTO google_actions
-                    (id, kind, captured, body, status) VALUES (?, ?, ?, ?, ?)""",
-                    (key, kind, captured, body, status))
+                    (id, kind, captured, body, status, device, recording_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (key, kind, captured, body, status, device_id.casefold(), recording_id))
+                db.execute("UPDATE google_actions SET device=COALESCE(device, ?), "
+                           "recording_id=COALESCE(recording_id, ?) "
+                           "WHERE id=? AND (device IS NULL OR (recording_id IS NULL AND ? IS NOT NULL))",
+                           (device_id.casefold(), recording_id, key, recording_id))
                 if captured:
                     db.execute("UPDATE google_actions SET captured=? WHERE id=? AND captured IS NULL",
                                (captured, key))
@@ -151,6 +176,29 @@ class DeliveryQueue:
                     db.execute("UPDATE google_actions SET status=? WHERE id=? AND status='awaiting-usb'",
                                (status, key))
         return [key for key, _ in actions]
+
+    def home_counts(self, device, bindings, *, now=None):
+        # The firmware clock uses the Central European time and DST rules.
+        zone = ZoneInfo("Europe/Bratislava")
+        today = (now or datetime.now(timezone.utc)).astimezone(zone).date()
+        start = datetime.combine(today, datetime.min.time(), zone).timestamp()
+        end = datetime.combine(today + timedelta(days=1), datetime.min.time(), zone).timestamp()
+        waiting = set()
+        confirmed = {}
+        with self.database() as db:
+            rows = db.execute("""SELECT COALESCE(recording_id, substr(id, 1, 64)) AS recording,
+                    kind, MIN(status = 'done'), MAX(confirmed_at)
+                FROM google_actions
+                WHERE device=? AND status IN ('done', 'pending', 'sending', 'uncertain')
+                GROUP BY recording, kind""", (device.casefold(),))
+            for recording, kind, complete, confirmation in rows:
+                if not complete and _delivery_target(bindings, kind) is not None:
+                    waiting.add(recording)
+                if complete and confirmation is not None:
+                    confirmed[recording] = max(confirmed.get(recording, 0), confirmation)
+        delivered = sum(start <= stamp < end for recording, stamp in confirmed.items()
+                        if recording not in waiting)
+        return today.isoformat(), delivered, len(waiting)
 
     def pending(self):
         with self.database() as db:
@@ -168,9 +216,7 @@ class DeliveryQueue:
             kind, captured, body, status, previous_target = row
             if status != "pending":
                 return "uncertain" if status == "sending" else status
-            target = bindings.get(kind)
-            if target is None and kind == "sorting":
-                target = bindings.get("general")
+            target = _delivery_target(bindings, kind)
             if (not isinstance(target, dict) or not all(
                     isinstance(target.get(field), str) and target[field].strip()
                     for field in ("id", "title"))
@@ -199,9 +245,7 @@ class DeliveryQueue:
         if row is None:
             raise ValueError("Unknown Pala delivery.")
         kind, status, target_id = row
-        target = bindings.get(kind)
-        if target is None and kind == "sorting":
-            target = bindings.get("general")
+        target = _delivery_target(bindings, kind)
         if status not in ("sending", "uncertain"):
             return status
         task_kind = kind in ("tasks", "shopping", "sorting", "general") or kind.startswith("list:")
@@ -213,15 +257,30 @@ class DeliveryQueue:
         if not provider_id:
             return "uncertain"
         with self.database() as db:
-            db.execute("UPDATE google_actions SET status='done', provider_id=? "
+            db.execute("UPDATE google_actions SET status='done', provider_id=?, confirmed_at=? "
                        "WHERE id=? AND target_id=? AND status IN ('sending', 'uncertain')",
-                       (provider_id, key, target_id))
+                       (provider_id, time.time(), key, target_id))
         return "done"
 
     def _finish(self, key, status, provider_id=None):
         with self.database() as db:
-            db.execute("UPDATE google_actions SET status=?, provider_id=? WHERE id=? AND status='sending'",
-                       (status, provider_id, key))
+            confirmed_at = time.time() if status == "done" else None
+            db.execute("UPDATE google_actions SET status=?, provider_id=?, confirmed_at=? "
+                       "WHERE id=? AND status='sending'", (status, provider_id, confirmed_at, key))
+
+
+def home_delivery_payload(state, config, device, *, queue=None):
+    if queue is None:
+        path = Path(state) / "google-delivery.sqlite"
+        if not path.is_file():
+            today = datetime.now(ZoneInfo("Europe/Bratislava")).date().isoformat()
+            return f"{today},0,0"
+        queue = DeliveryQueue(state)
+    bindings = config.get("google_routes", {})
+    if not isinstance(bindings, dict):
+        raise ValueError("Google destinations must be explicitly bound.")
+    day, delivered, waiting = queue.home_counts(device, bindings)
+    return f"{day},{delivered},{waiting}"
 
 
 def _api(state, service, version, scope, token):

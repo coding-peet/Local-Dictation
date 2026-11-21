@@ -4,6 +4,9 @@
 #include "../../bridge_pairing.h"
 #elif __has_include("bridge_pairing.h")
 #include "bridge_pairing.h"
+#elif defined(PALA_RUNTIME_PAIRING)
+#define PALA_MAC_BRIDGE 1
+#define PALA_BRIDGE_DISCOVERY 1
 #else
 #define PALA_MAC_BRIDGE 0
 #define PALA_HOST "api.openai.com"

@@ -18,6 +18,7 @@ import tempfile
 import threading
 import uuid
 import wave
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlsplit
 
@@ -26,6 +27,8 @@ from zoneinfo import ZoneInfo
 from appointment_dates import recording_time, resolve_yearless, valid_future_start
 from bridge_activity import BridgeActivity, activity_step
 from bridge_discovery import authorized_device, BridgeServer, serve
+from note_settings import EnrollmentStore
+from note_web import bridge_preferences
 from pair import STATE, WINDOWS_DICTATION_MODEL
 from weather import ForecastCache
 
@@ -66,6 +69,29 @@ def local_dictation_settings():
     if not isinstance(settings, dict):
         raise ValueError("Neplatné nastavenia Local Dictation.")
     return settings
+
+
+def local_dictation_weather_location():
+    return bridge_preferences(STATE, local_dictation_settings())["weatherLocation"]
+
+
+def paired_device(bridge, header):
+    if not header.isascii() or not 0 < len(header) <= 128:
+        return None
+    legacy = bridge.config.get("device_tokens", {})
+    for device, token in legacy.items():
+        if isinstance(token, str) and hmac.compare_digest(header, "Bearer " + token):
+            return device
+    try:
+        registered = EnrollmentStore(bridge.state, bridge.config).devices()
+    except (AttributeError, OSError, ValueError, RuntimeError):
+        return None
+    return next((serial for serial, entry in registered.items()
+                 if hmac.compare_digest(header, "Bearer " + entry["token"])), None)
+
+
+def authorize_bridge_device(bridge, header):
+    return authorized_device(bridge.config, header) or paired_device(bridge, header) is not None
 
 
 def valid_note_name(name):
@@ -208,7 +234,7 @@ class Bridge:
         self.encoder = None
         self.last_contact = None
         self.activity = BridgeActivity(state, "network")
-        self.weather = ForecastCache()
+        self.weather = ForecastCache(local_dictation_weather_location)
         with self.database() as db:
             db.execute("CREATE TABLE IF NOT EXISTS memories (id TEXT PRIMARY KEY, data TEXT)")
             db.execute("CREATE TABLE IF NOT EXISTS actions (id TEXT PRIMARY KEY, data TEXT, status TEXT)")
@@ -389,15 +415,23 @@ class Bridge:
                                timeout=240, check=True)
             return {"text": path.with_suffix(".wav.txt").read_text().strip()}
 
-    def local_transcription_ready(self):
+    def local_transcription_status(self):
         if os.name != "nt":
-            return False
+            return HTTPStatus.BAD_GATEWAY
         try:
             host, port = local_dictation_address()
             with contextlib.closing(http.client.HTTPConnection(host, port, timeout=2)) as connection:
-                return local_dictation_health(connection).get("busy", False) is False
+                busy = local_dictation_health(connection).get("busy", False)
         except (OSError, ValueError, http.client.HTTPException):
-            return False
+            return HTTPStatus.BAD_GATEWAY
+        if busy is True:
+            return HTTPStatus.SERVICE_UNAVAILABLE
+        if busy is False:
+            return HTTPStatus.OK
+        return HTTPStatus.BAD_GATEWAY
+
+    def local_transcription_ready(self):
+        return self.local_transcription_status() == HTTPStatus.OK
 
     def transcribe_local(self, audio):
         boundary = "pala-" + uuid.uuid4().hex
@@ -484,8 +518,23 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         bridge = self.server.bridge
+        if self.path == "/pala/delivery":
+            from pala_google import home_delivery_payload
+
+            header = self.headers.get("Authorization", "")
+            device = paired_device(bridge, header)
+            if device is None:
+                self.send_error(401)
+                return
+            try:
+                payload = home_delivery_payload(bridge.state, bridge.config, device)
+            except (OSError, sqlite3.Error, ValueError):
+                self.send_error(503)
+                return
+            self.send_json(200, {"counts": payload})
+            return
         if self.path in ("/pala/ready", "/pala/weather", "/pala/name"):
-            if not authorized_device(bridge.config, self.headers.get("Authorization", "")):
+            if not authorize_bridge_device(bridge, self.headers.get("Authorization", "")):
                 self.send_error(401)
                 return
             bridge.last_contact = dt.datetime.now(dt.timezone.utc).isoformat()
@@ -501,8 +550,9 @@ class Handler(BaseHTTPRequestHandler):
                     forecast = bridge.weather.get()
                 self.send_json(200 if forecast is not None else 503, forecast or {})
             else:
-                ready = bridge.local_transcription_ready()
-                self.send_json(200 if ready else 503, {"ready": ready})
+                # The Note waits on a busy API and tries another link if the API is unavailable.
+                status = bridge.local_transcription_status()
+                self.send_json(status, {"ready": status == HTTPStatus.OK})
             return
 
         path = bridge.state / "phone-token"
@@ -521,7 +571,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         bridge = self.server.bridge
-        if not authorized_device(bridge.config, self.headers.get("Authorization", "")):
+        if not authorize_bridge_device(bridge, self.headers.get("Authorization", "")):
             self.send_error(401)
             return
         bridge.last_contact = dt.datetime.now(dt.timezone.utc).isoformat()

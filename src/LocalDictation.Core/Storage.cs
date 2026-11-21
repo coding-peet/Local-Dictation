@@ -119,6 +119,7 @@ public sealed class Settings
     public string? VerificationModel { get; set; }
     public const string DefaultPalaNoteName = "Kubo";
     public string PalaBridgeName { get; set; } = DefaultPalaNoteName;
+    public string PalaWeatherLocation { get; set; } = "";
     public bool PalaIntegrationEnabled { get; set; } = true;
     public bool PalaBridgeAutoStart { get; set; }
     // Null preserves the Bridge profile. An empty string follows the main Dictation model.
@@ -156,8 +157,25 @@ public sealed class Settings
         var file = Path.Combine(directory ?? AppPaths.Data, "settings.json");
         var settings = File.Exists(file) ? JsonSerializer.Deserialize<Settings>(File.ReadAllText(file)) ?? new() : new();
         if (!IsPalaNoteName(settings.PalaBridgeName)) settings.PalaBridgeName = DefaultPalaNoteName;
+        try { settings.PalaWeatherLocation = NormalizePalaWeatherLocation(settings.PalaWeatherLocation); }
+        catch (ArgumentException) { settings.PalaWeatherLocation = ""; }
         return settings;
     }
+
+    public static string NormalizePalaWeatherLocation(string? location)
+    {
+        var value = location?.Trim() ?? "";
+        if (value.Length == 0) return "";
+        var parts = value.Split(',', StringSplitOptions.TrimEntries);
+        if (value.Any(char.IsControl) || parts[0].Length < 2 || parts.Length > 2 ||
+            (parts.Length == 2 && (parts[1].Length != 2 || !parts[1].All(char.IsAsciiLetter))))
+            throw new ArgumentException("Enter a town, optionally followed by a two-letter country code, such as Bratislava, SK.");
+        var normalized = parts.Length == 1 ? parts[0] : $"{parts[0]}, {parts[1].ToUpperInvariant()}";
+        if (normalized.Length > 100)
+            throw new ArgumentException("Enter a weather location of 100 characters or fewer.");
+        return normalized;
+    }
+
     public static bool IsPalaNoteName(string? name) =>
         name is { Length: >= 1 and <= 10 } &&
         char.IsAsciiLetterOrDigit(name[0]) && name[^1] != ' ' &&
@@ -174,6 +192,7 @@ public sealed class Settings
     {
         ServerUri();
         ValidatePalaBridgeName(PalaBridgeName);
+        PalaWeatherLocation = NormalizePalaWeatherLocation(PalaWeatherLocation);
         if (PalaBridgeModel is { Length: > 0 } model &&
             (model.Length > 256 || model.Any(char.IsWhiteSpace) || model.Any(char.IsControl)))
             throw new ArgumentException("Choose a valid Bridge model.");

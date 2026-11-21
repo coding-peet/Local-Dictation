@@ -452,13 +452,26 @@
         <p>Open <strong>Pala Note Configuration</strong> and turn on <strong>Enable Pala sync</strong>.
           Some versions call this switch <strong>Enable Pala integration</strong>.
           Keep Local Dictation running and wake the Note with the lower button.</p>
+        <p>Choose <strong>Open Note settings</strong> to open the shared settings page in
+          your local browser. Edit the Note, saved Wi-Fi networks, Bridge name and
+          forecast town on that page. Open-Meteo uses the weather town and optional
+          country code to find the forecast location. Leave the town blank to turn
+          off the forecast.</p>
+        <p>Use the paired USB connection or open the Note’s Bluetooth settings window
+          for desktop settings. To pair a new Bridge, start pairing on the Note,
+          choose USB or Bluetooth on the page, and confirm on the Note. For Bluetooth,
+          compare the six digits shown on the Note and in the browser before confirming
+          on both. The Note’s Web Companion offers the same settings page over Wi-Fi.</p>
         <ul>
           <li><strong>USB</strong> takes priority when the Note is connected with a data cable.</li>
           <li><strong>Wi-Fi</strong> requires the Note and PC to be on the same approved network. Select
             <strong>Start Bridge</strong> to enable the paired HTTPS connection.</li>
           <li><strong>Bluetooth</strong> is the fallback for a paired Note when USB is unavailable and
-            the Note cannot reach Bridge over Wi-Fi.</li>
+            no Wi-Fi Bridge has a usable transcription service. If a Wi-Fi Bridge confirms
+            that the service is busy, the recording stays queued for a retry.</li>
         </ul>
+        <p>If the USB cable is removed during a transfer, the Note checks the remaining
+          queue again and can continue on a paired connection.</p>
         <p><strong>Start with Local Dictation</strong> starts the network Bridge on the next app launch.
           A Bridge started from Local Dictation keeps running when Settings closes. Choose
           <strong>Exit</strong> in the Windows tray to stop it along with the app.</p>

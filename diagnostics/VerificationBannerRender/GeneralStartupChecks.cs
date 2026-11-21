@@ -84,8 +84,12 @@ public static class GeneralStartupChecks
             var syncToggle = Get<ToggleButton>(window,"palaIntegration");
             Require(AutomationProperties.GetName(syncToggle)=="Enable Pala sync" &&
                 AutomationProperties.GetHelpText(syncToggle).Contains("Wi-Fi"),"Pala sync must explain Wi-Fi.");
-            Search(window,shell,"pala-bridge-name","Note display name","Connections");
             Search(window,shell,"pala-bridge-model","Pala transcription model","Connections");
+            Search(window,shell,"pala-note-settings","weather location","Connections");
+            var settingsButton = Get<Button>(window,"palaOpenSettings");
+            Require(AutomationProperties.GetName(settingsButton)=="Open Note settings" && settingsButton.Focusable &&
+                AutomationProperties.GetHelpText(settingsButton).Contains("local browser"),
+                "The accessible Note settings action must open the common local browser page.");
             Require(shell.Navigation.SelectedIndex==(int)MainSection.Connections,
                 "Bridge settings search did not open Connections.");
             var activityDirectory = Path.Combine(output, "bridge-activity-fixture");

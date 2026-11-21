@@ -51,6 +51,7 @@ bool ensureBrainSearchIndex();
 bool ensureBrainVectorIndex();
 void removeBrainSearchIndexEntry(int noteNum);
 void removeBrainVectorIndexEntry(int noteNum);
+void refreshRestoredNoteBrainIndexes(int noteNum);
 int pendingBrainMemoryCount();
 BrainStats readBrainStats();
 std::vector<BrainMemory> retrieveBrainMemories(

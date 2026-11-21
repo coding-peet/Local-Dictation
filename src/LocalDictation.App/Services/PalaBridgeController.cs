@@ -13,7 +13,6 @@ internal sealed class PalaBridgeController : IDisposable
     internal sealed record Status(string Summary, string? Error, DateTimeOffset? LastContact,
         bool CanStart, bool CanStop);
 
-    readonly ProcessStartInfo? start = PalaBridgeInstallation.ManagedStart("bridge.py");
     Process? process;
     string? owner;
     string? lastError;
@@ -53,7 +52,8 @@ internal sealed class PalaBridgeController : IDisposable
         if (PortInUse()) return new("Port 8443 is in use. Check the standalone Bridge.",
             lastError, null, false, false);
         if (!HasProfile) return new("No Bridge pairing profile found.", lastError, null, false, false);
-        if (start == null) return new("The Bridge runtime or source files are missing.", lastError, null, false, false);
+        if (PalaBridgeInstallation.ManagedStart("bridge.py") == null)
+            return new("The Bridge runtime or source files are missing.", lastError, null, false, false);
         return new("No managed Bridge running.", lastError, null, true, false);
     }
 
@@ -65,7 +65,9 @@ internal sealed class PalaBridgeController : IDisposable
 
     public void Start()
     {
-        if (disposed || start == null || !ReadStatus().CanStart) return;
+        if (disposed || !ReadStatus().CanStart) return;
+        var start = PalaBridgeInstallation.ManagedStart("bridge.py");
+        if (start == null) return;
         lastError = null;
         owner = Guid.NewGuid().ToString("N");
         start.Environment["PALA_BRIDGE_MANAGED_OWNER"] = owner;

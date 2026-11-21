@@ -58,6 +58,25 @@ git rev-parse HEAD
 If Git requests authentication, use the normal configured credential helper.
 Do not paste credentials into project files, agent prompts, or command examples.
 
+## Local project folders
+
+Use C:\Git\Local-Dictation as the project root on this PC. Keep source and
+runnable output in sibling folders.
+
+| Folder | Contents |
+| --- | --- |
+| repo | Source, tests and documentation |
+| app | Installed Local Dictation application |
+| candidate-* | Separate Windows or firmware candidates and their build records |
+| build\windows | .NET build intermediates and the default client-candidate |
+| build\verification | Verification evidence worth keeping |
+| archive | Older firmware images and build evidence that still support recovery |
+
+Before cleanup, check that a retained candidate or rollback copy is complete.
+Keep the installed client and verified rollback material. Project data,
+service runtimes, and the paired device flash backups have their own existing
+locations and should be left with their owning application.
+
 ## 3. Build and test without the old output
 
 Install/provide a .NET 10 SDK on Windows x64. An installed SDK path can be found
@@ -66,7 +85,7 @@ with `Get-Command dotnet`. On the configured PC use the existing portable SDK:
 ~~~powershell
 .\scripts\Build.ps1 `
     -DotnetPath C:\AI\tools\dotnet-10.0.403\dotnet.exe `
-    -BuildRoot C:\AI\build\Local-Dictation-restore `
+    -BuildRoot C:\Git\Local-Dictation\build\restore `
     -AppDirectory C:\Git\Local-Dictation\candidate-restore
 ~~~
 
@@ -75,8 +94,10 @@ Release output into the separate app folder. It can use already cached packages;
 otherwise configured package feeds must be reachable. It does not start the
 client/API, capture audio, or replace the existing installed application.
 
-Without -AppDirectory, output is client-candidate beneath the selected BuildRoot
-(default C:\AI\build\Local-Dictation\client-candidate). Build is not deployment.
+With no -BuildRoot, the script uses C:\Git\Local-Dictation\build\windows
+on this PC. With no -AppDirectory, it publishes to client-candidate beneath
+that build root. Use a separate -BuildRoot and -AppDirectory for parallel
+candidates. Deployment is a separate step.
 Both build and publish output must be separate from the installed app, checkout,
 configured-PC data/backend locations, and running client directories. Junction
 and symbolic-link aliases are rejected. Client paths are checked before tests

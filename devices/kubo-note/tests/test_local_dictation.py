@@ -109,18 +109,19 @@ class ReadinessTests(unittest.TestCase):
     @patch("bridge.os.name", "nt")
     @patch("bridge.local_dictation_address", return_value=("localhost", 49125))
     @patch("bridge.http.client.HTTPConnection")
-    def test_unusable_local_endpoint_is_reported_unready(self, connect, _address):
+    def test_only_a_verified_busy_endpoint_defers_transport_fallback(self, connect, _address):
         cases = (
-            b'{"service":"local-dictation","ready":false}',
-            b'{"service":"local-dictation","ready":true,"busy":true}',
-            b'{"service":"typewhisper","ready":true}',
-            b'[]',
-            b'{',
-            TimeoutError(),
-            http.client.RemoteDisconnected(),
+            (503, b'{"service":"local-dictation","ready":true,"busy":true}'),
+            (502, b'{"service":"local-dictation","ready":false}'),
+            (502, b'{"service":"local-dictation","ready":true,"busy":"true"}'),
+            (502, b'{"service":"typewhisper","ready":true}'),
+            (502, b'[]'),
+            (502, b'{'),
+            (502, TimeoutError()),
+            (502, http.client.RemoteDisconnected()),
         )
         connection = connect.return_value
-        for health in cases:
+        for expected_status, health in cases:
             with self.subTest(health=health):
                 self.handler.wfile = io.BytesIO()
                 self.handler.send_response.reset_mock()
@@ -132,7 +133,7 @@ class ReadinessTests(unittest.TestCase):
 
                 self.handler.do_GET()
 
-                self.handler.send_response.assert_called_once_with(503)
+                self.handler.send_response.assert_called_once_with(expected_status)
                 self.assertEqual(json.loads(self.handler.wfile.getvalue()), {"ready": False})
                 connection.close.assert_called_once()
 

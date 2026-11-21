@@ -6,7 +6,8 @@ typedef enum {
   STATE_RECORDING,
   STATE_TRANSFER,
   STATE_ASKING,
-  STATE_AGENDA
+  STATE_AGENDA,
+  STATE_AQUARIUM
 } AppState;
 
 struct NoteEntry {

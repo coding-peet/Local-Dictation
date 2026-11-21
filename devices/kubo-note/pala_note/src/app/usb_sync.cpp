@@ -1,5 +1,6 @@
 #include "usb_sync.h"
 #include "provider.h"
+#include "usb_data_frame.h"
 
 namespace {
 constexpr const char* kPrefix = "KUBO_USB_V1 ";
@@ -12,17 +13,26 @@ BluetoothSyncReply sendReply = sendSerial;
 
 void reply(const String& message) {
   // A leading delimiter lets the host recover from a previously truncated frame.
-  sendReply(String("\n") + kPrefix + message + "\n");
+  const String frame = String("\n") + kPrefix + message + "\n";
+  if (sendReply == sendSerial && message.startsWith("DATA ")) {
+    writeUsbDataFrame(Serial, reinterpret_cast<const uint8_t*>(frame.c_str()), frame.length());
+  } else {
+    sendReply(frame);
+  }
 }
 }
 
-#if PALA_BRIDGE_DISCOVERY && defined(PALA_BRIDGE_TOKEN)
+#if PALA_BRIDGE_DISCOVERY
+#include "note_config.h"
+#include "note_peers.h"
 #include "../../config.h"
 #include "../../globals.h"
 #include "../../types.h"
 #include "notes.h"
 #include "date_validation.h"
 #include "home_weather.h"
+#include "home_delivery.h"
+#include "home_bridge_status.h"
 #include "rtc.h"
 #include "settings.h"
 #include "storage_commit.h"
@@ -42,6 +52,8 @@ constexpr size_t kMaximumWrite = 256;
 
 String hostNonce;
 String deviceNonce;
+String sessionPeer;
+String sessionToken;
 uint32_t activityAt = 0;
 enum class Link { Usb, Bluetooth };
 Link owner = Link::Usb;
@@ -83,6 +95,8 @@ void resetSession() {
   resetTransfer();
   hostNonce = "";
   deviceNonce = "";
+  sessionPeer = "";
+  sessionToken = "";
   authenticated = false;
 }
 
@@ -137,9 +151,9 @@ bool sameDigest(const String& expected, const String& received) {
 String proof(const String& role) {
   const String message = String(kPrefix) + role + " " + hostNonce + " " + deviceNonce;
   const auto* algorithm = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-  const auto* token = reinterpret_cast<const unsigned char*>(PALA_BRIDGE_TOKEN);
+  const auto* token = reinterpret_cast<const unsigned char*>(sessionToken.c_str());
   uint8_t digest[32];
-  if (!algorithm || mbedtls_md_hmac(algorithm, token, strlen(PALA_BRIDGE_TOKEN),
+  if (!algorithm || sessionToken.isEmpty() || mbedtls_md_hmac(algorithm, token, sessionToken.length(),
         reinterpret_cast<const unsigned char*>(message.c_str()), message.length(), digest) != 0) return "";
   return hex(digest, sizeof(digest));
 }
@@ -183,18 +197,9 @@ String captureTimestamp(int note) {
   return "-";
 }
 
-bool hasSavedTranscript(int note) {
-  const String path = notePath(note, "txt");
-  if (!recoverStoredFile(SD_MMC, path)) return false;
-  File saved = SD_MMC.open(path.c_str(), FILE_READ);
-  const bool present = saved && saved.size() > 0;
-  if (saved) saved.close();
-  return present;
-}
-
 bool selectNote(const NoteEntry& note) {
   // Detect text committed before an interrupted index update.
-  if (note.hasText || hasSavedTranscript(note.num)) return false;
+  if (note.hasText || noteHasCommittedTranscript(note.num)) return false;
   const String path = notePath(note.num, "wav");
   download = SD_MMC.open(path.c_str(), FILE_READ);
   if (!download) return false;
@@ -212,7 +217,7 @@ void selectRecording(bool next, const String& value) {
   resetTransfer();
   if (next) {
     for (auto note = noteIndex.rbegin(); note != noteIndex.rend(); ++note) {
-      if (!note->hasText && noteQueueState(note->num) != "blocked" && selectNote(*note)) return;
+      if (notePendingTranscription(*note) && selectNote(*note)) return;
     }
     if (owner == Link::Bluetooth) {
       bluetoothDrained = true;
@@ -316,7 +321,7 @@ void commitTranscript() {
   const int note = selectedNote;
   // Persist the route before the text so background Wi-Fi processing can
   // recognize an explicitly USB-only transcript after a reboot.
-  if (hasSavedTranscript(note) || !writeNoteQueueState(note, "usb-local", nullptr, false, true) ||
+  if (noteHasCommittedTranscript(note) || !writeNoteQueueState(note, "usb-local", nullptr, false, true) ||
       !saveNoteTranscript(note, transcript)) {
     reply("ERROR SAVE");
     resetTransfer();
@@ -364,6 +369,7 @@ void readWeather() {
 }
 
 void storeNoteName(const String& encoded, const String& signature) {
+  if (palaNoteNameLocallyManaged()) { reply("ERROR COMMAND"); return; }
   if (encoded.length() < 2 || encoded.length() > 2 * kPalaNoteNameMax || encoded.length() % 2 ||
       !validHex(encoded, encoded.length()) || !sameDigest(proof(String("name ") + encoded), signature)) {
     reply("ERROR NAME");
@@ -382,10 +388,27 @@ void storeNoteName(const String& encoded, const String& signature) {
   reply(String("NAME-SAVED ") + encoded + " " + proof(String("name-saved ") + encoded));
 }
 
+void storeDeliveryCounts(const String& payload, const String& signature) {
+  bool changed = false;
+  if (payload.length() > 30 || !sameDigest(proof(String("delivery ") + payload), signature) ||
+      !storeHomeDelivery(payload, changed)) {
+    reply("ERROR DELIVERY");
+    return;
+  }
+  homeChanged |= changed;
+  reply(String("DELIVERY-SAVED ") + payload + " " + proof(String("delivery-saved ") + payload));
+}
+
+void expireSession() {
+  if (!hostNonce.isEmpty() &&
+      ((authenticated && millis() - activityAt >= kSessionMs) ||
+       notePeerById(sessionPeer).token != sessionToken)) resetSession();
+}
+
 void handleCommand(const String& command, const String& first, const String& second,
-                   bool idle, Link link) {
+                   bool idle, Link link, const String& peer) {
   if (!idle) { reply("ERROR BUSY"); return; }
-  if (authenticated && millis() - activityAt >= kSessionMs) resetSession();
+  expireSession();
   if (hostNonce.length() && owner != link) {
     if (!authenticated && (millis() - activityAt >= kChallengeMs ||
                            (link == Link::Usb && command == "HELLO"))) resetSession();
@@ -394,11 +417,22 @@ void handleCommand(const String& command, const String& first, const String& sec
   if (command == "HELLO") {
     if (authenticated) { reply("ERROR BUSY"); return; }
     resetSession();
-    if (!validHex(first, 32) || second.length()) { reply("ERROR AUTH"); return; }
+    const String id = second.isEmpty() ? peer : second;
+    const NotePeer selected = notePeerById(id);
+    if (!validHex(first, 32) || selected.token.isEmpty() || (link == Link::Bluetooth && id != peer)) {
+      reply("ERROR AUTH");
+      return;
+    }
+    sessionPeer = selected.id;
+    sessionToken = selected.token;
     hostNonce = first;
     owner = link;
     uint8_t nonce[16];
-    esp_fill_random(nonce, sizeof(nonce));
+    if (!noteConfigRandom(nonce, sizeof(nonce))) {
+      resetSession();
+      reply("ERROR AUTH");
+      return;
+    }
     deviceNonce = hex(nonce, sizeof(nonce));
     const String digest = proof("device");
     if (deviceNonce.length() != 32 || digest.length() != 64) {
@@ -414,6 +448,7 @@ void handleCommand(const String& command, const String& first, const String& sec
     if (hostNonce.length() && millis() - activityAt < kChallengeMs && !second.length() &&
         validHex(first, 64) && sameDigest(proof("host"), first)) {
       authenticated = true;
+      homeBridgeStatus.verified(link == Link::Usb ? HomeBridgeLink::Usb : HomeBridgeLink::Bluetooth);
       activityAt = millis();
       reply("OK");
     } else {
@@ -437,6 +472,7 @@ void handleCommand(const String& command, const String& first, const String& sec
   else if (command == "PUT") appendTranscript(first, second);
   else if (command == "COMMIT" && !first.length()) commitTranscript();
   else if (command == "NAME") storeNoteName(first, second);
+  else if (command == "DELIVERY") storeDeliveryCounts(first, second);
   else if (command == "WEATHER") beginPayload(first, second, true);
   else if (command == "WEATHER-COMMIT" && !first.length()) commitWeather();
   else if (command == "WEATHER-READ" && !first.length()) readWeather();
@@ -447,7 +483,7 @@ void handleCommand(const String& command, const String& first, const String& sec
 }
 
 bool syncActive(Link link) {
-  if (authenticated && millis() - activityAt >= kSessionMs) resetSession();
+  expireSession();
   return authenticated && owner == link;
 }
 
@@ -468,7 +504,22 @@ bool takeSyncHomeChanged() {
   return changed;
 }
 
-static bool handleLine(const String& line, bool idle, Link link, BluetoothSyncReply send) {
+static bool handleLine(const String& line, bool idle, Link link, const String& peer, BluetoothSyncReply send) {
+  if (line.startsWith(kNoteConfigPrefix)) {
+    const bool authorized = syncActive(link) && (link == Link::Usb || sessionPeer == peer);
+    const String oldName = palaNoteName();
+    const String oldLanguage = palaUiLanguage();
+    const String response = idle
+        ? noteConfigRequest(line.substring(sizeof(kNoteConfigPrefix) - 1),
+             link == Link::Usb ? NoteConfigTransport::Usb : NoteConfigTransport::Bluetooth, authorized,
+             link == Link::Usb ? noteUsbAttachment() : 0)
+        : String(F("{\"ok\":false,\"error\":\"Note is busy.\"}"));
+    // Separate the config response from unrelated serial diagnostics.
+    send(String("\n") + kNoteConfigPrefix + response + "\n");
+    if (authorized) activityAt = millis();
+    homeChanged |= oldName != palaNoteName() || oldLanguage != palaUiLanguage();
+    return true;
+  }
   if (!line.startsWith(kPrefix)) return false;
   sendReply = send;
   const String message = line.substring(strlen(kPrefix));
@@ -478,17 +529,17 @@ static bool handleLine(const String& line, bool idle, Link link, BluetoothSyncRe
   const int argumentSeparator = arguments.indexOf(' ');
   const String first = argumentSeparator < 0 ? arguments : arguments.substring(0, argumentSeparator);
   const String second = argumentSeparator < 0 ? "" : arguments.substring(argumentSeparator + 1);
-  handleCommand(command, first, second, idle, link);
+  handleCommand(command, first, second, idle, link, peer);
   sendReply = sendSerial;
   return true;
 }
 
 bool handleUsbSyncLine(const String& line, bool idle) {
-  return handleLine(line, idle, Link::Usb, sendSerial);
+  return handleLine(line, idle, Link::Usb, "legacy", sendSerial);
 }
 
-bool handleBluetoothSyncLine(const String& line, BluetoothSyncReply send) {
-  return handleLine(line, true, Link::Bluetooth, send);
+bool handleBluetoothSyncLine(const String& line, const String& peer, BluetoothSyncReply send) {
+  return handleLine(line, true, Link::Bluetooth, peer, send);
 }
 #else
 bool usbSyncActive() { return false; }
@@ -498,7 +549,7 @@ void cancelUsbSync() {}
 bool takeSyncHomeChanged() { return false; }
 bool bluetoothSyncActive() { return false; }
 void cancelBluetoothSync() {}
-bool handleBluetoothSyncLine(const String&, BluetoothSyncReply) { return false; }
+bool handleBluetoothSyncLine(const String&, const String&, BluetoothSyncReply) { return false; }
 bool handleUsbSyncLine(const String& line, bool) {
   if (!line.startsWith(kPrefix)) return false;
   reply("ERROR AUTH");

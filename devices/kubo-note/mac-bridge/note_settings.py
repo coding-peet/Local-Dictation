@@ -1,0 +1,358 @@
+"""Note configuration protocol and private enrollment storage."""
+from dataclasses import dataclass, field
+import json
+import re
+import secrets
+import threading
+import time
+
+from note_web import SettingsError, atomic_write, bridge_preferences, read_object, save_bridge_preferences
+
+PREFIX = b"PALA_CONFIG_V1 "
+PEER_ID = r"[A-Za-z0-9_-]{1,32}"
+SERIAL = r"[0-9a-f]{12}"
+TOKEN = r"[A-Za-z0-9_-]{16,128}"
+PAIRINGS = "note-bridge-pairing.json"
+MAX_LINE = 4096
+NOTE_LANGUAGES = frozenset(("en", "de", "sk", "cs", "fr", "es", "it", "pl", "nl", "pt", "ru", "uk"))
+NOTE_NUMBER_MAX = 2_147_483_647
+TRASH_DAYS_MAX = 3650
+CAPTURED_UTC = r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"
+
+
+def encode_request(data):
+    return PREFIX + json.dumps(data, ensure_ascii=True, separators=(",", ":")).encode("ascii") + b"\n"
+
+
+def decode_response(line):
+    try:
+        if not line.startswith(PREFIX) or not line.endswith(b"\n") or len(line) > MAX_LINE:
+            raise ValueError
+        result = json.loads(line[len(PREFIX):])
+        if not isinstance(result, dict) or type(result.get("ok")) is not bool:
+            raise ValueError
+        return result
+    except (ValueError, RecursionError) as error:
+        raise SettingsError("The Note returned an invalid settings reply.") from error
+
+
+def valid(value, pattern):
+    return isinstance(value, str) and re.fullmatch(pattern, value) is not None
+
+
+def text(value, limit, *, empty=False):
+    if (not isinstance(value, str) or (not value and not empty) or
+            any(not char.isprintable() for char in value) or len(value.encode("utf-8")) > limit):
+        raise SettingsError("A Note settings field has an invalid value.")
+    return value
+
+
+def bounded_integer(value, minimum, maximum):
+    return type(value) is int and minimum <= value <= maximum
+
+
+def note_request(data):
+    op = data["op"]
+    if op in ("get", "trash.status"):
+        return {"op": op}
+    if op == "trash.entry" and bounded_integer(data.get("index"), 0, NOTE_NUMBER_MAX):
+        return {"op": op, "index": data["index"]}
+    if op == "trash.restore" and bounded_integer(data.get("num"), 1, NOTE_NUMBER_MAX):
+        return {"op": op, "num": data["num"]}
+    if op == "trash.retention" and bounded_integer(data.get("days"), 1, TRASH_DAYS_MAX):
+        return {"op": op, "days": data["days"]}
+    if op == "trash.empty" and data.get("confirmation") == "EMPTY TRASH":
+        return {"op": op, "confirmation": "EMPTY TRASH"}
+    if op in ("wifi.save", "wifi.remove"):
+        result = {"op": op, "ssid": text(data.get("ssid"), 32)}
+        if op == "wifi.save":
+            result["password"] = text(data.get("password"), 63, empty=True)
+        return result
+    if op == "peers.remove" and valid(data.get("id"), PEER_ID):
+        return {"op": op, "id": data["id"]}
+    if op == "bridge.address":
+        return {"op": op, "address": text(data.get("address"), 15, empty=True)}
+    if op == "bridge.order":
+        ids = data.get("ids")
+        if (isinstance(ids, list) and len(ids) <= 8 and all(valid(value, PEER_ID) for value in ids)
+                and len(set(ids)) == len(ids)):
+            return {"op": op, "ids": ids}
+    if (op == "settings.save" and valid(data.get("name"), r"[A-Za-z0-9][A-Za-z0-9 -]{0,9}")
+            and isinstance(data.get("language"), str) and data["language"] in NOTE_LANGUAGES):
+        return {"op": op, "name": data["name"].rstrip(), "language": data["language"]}
+    raise SettingsError("The requested Note setting is invalid or unsupported.")
+
+
+def trash_response(reply, op):
+    if op == "trash.status":
+        days, count = reply.get("days"), reply.get("count")
+        if bounded_integer(days, 1, TRASH_DAYS_MAX) and bounded_integer(count, 0, NOTE_NUMBER_MAX):
+            return {"days": days, "count": count}
+    elif op == "trash.entry":
+        entry = reply.get("entry")
+        if isinstance(entry, dict):
+            num, trashed_at = entry.get("num"), entry.get("trashedAt")
+            captured = entry.get("capturedUtc")
+            if (bounded_integer(num, 1, NOTE_NUMBER_MAX)
+                    and bounded_integer(trashed_at, 0, 253_402_300_799)
+                    and (captured == "" or valid(captured, CAPTURED_UTC))):
+                return {"entry": {"num": num, "tag": text(entry.get("tag"), 15, empty=True),
+                                  "trashedAt": trashed_at, "capturedUtc": captured}}
+    elif op == "trash.empty" and type(reply.get("more")) is bool:
+        return {"more": reply["more"]}
+    elif op in ("trash.restore", "trash.retention"):
+        return {}
+    raise SettingsError("The Note returned an invalid Trash reply.")
+
+
+def note_response(reply, transport, op="get"):
+    if not reply["ok"]:
+        return {"ok": False, "error": "The Note rejected the settings request.", "transport": transport}
+    result = {"ok": True, "transport": transport}
+    if op.startswith("trash."):
+        return {**result, **trash_response(reply, op)}
+    if "device" not in reply:
+        return result
+    device, wifi, peers = reply["device"], reply.get("wifi", []), reply.get("peers", [])
+    if not isinstance(device, dict) or not isinstance(wifi, list) or not isinstance(peers, list):
+        raise SettingsError("The Note returned an invalid settings reply.")
+    result["device"] = {"name": text(device.get("name"), 24), "language": text(device.get("language"), 8)}
+    if type(device.get("memoryTrash")) is bool:
+        result["device"]["memoryTrash"] = device["memoryTrash"]
+    if device.get("keepsWifiPassword") is True:
+        result["device"]["keepsWifiPassword"] = True
+    if "bridgeAddress" in device:
+        result["device"]["bridgeAddress"] = text(device["bridgeAddress"], 15, empty=True)
+    result["wifi"] = [{"ssid": text(item["ssid"], 32)}
+                      for item in wifi if isinstance(item, dict) and "ssid" in item]
+    result["peers"] = [{"id": item["id"], "name": text(item["name"], 32), "primary": item.get("primary") is True}
+                       for item in peers if isinstance(item, dict) and valid(item.get("id"), PEER_ID) and "name" in item]
+    result["bridgeOrder"] = [peer["id"] for peer in result["peers"]]
+    result["capabilities"] = {"pair": True, "peers": True, "bridgeOrder": True}
+    return result
+
+
+class EnrollmentStore:
+    def __init__(self, state, config):
+        self.path, self.config = state / PAIRINGS, config
+        self.lock = threading.Lock()
+
+    def bridge_id(self):
+        with self.lock:
+            data = read_object(self.path)
+            if "bridgeId" not in data:
+                discovery = self.config.get("discovery_id")
+                data["bridgeId"] = discovery if valid(discovery, PEER_ID) else "bridge-" + secrets.token_hex(10)
+                atomic_write(self.path, data)
+            if not valid(data["bridgeId"], PEER_ID):
+                raise SettingsError("The local Bridge identity file is invalid.")
+            return data["bridgeId"]
+
+    def devices(self):
+        source = read_object(self.path).get("devices", {})
+        if not isinstance(source, dict):
+            raise SettingsError("The local Bridge pairing file is invalid.")
+        return {serial: record for serial, record in source.items()
+                if valid(serial, SERIAL) and isinstance(record, dict) and valid(record.get("token"), TOKEN)
+                and valid(record.get("advertiser"), SERIAL) and valid(record.get("id"), PEER_ID)}
+
+    def remember(self, reply, bridge_id, *, attached_serial=None):
+        serial, token, advertiser = (reply.get(key) for key in ("serial", "token", "advertiser"))
+        if (reply.get("id") != bridge_id or not valid(serial, SERIAL) or not valid(token, TOKEN)
+                or not valid(advertiser, SERIAL) or (attached_serial and serial != attached_serial.casefold())):
+            raise SettingsError("The Note returned an invalid pairing receipt.")
+        with self.lock:
+            data = read_object(self.path)
+            data.setdefault("devices", {})[serial] = {"token": token, "advertiser": advertiser, "id": bridge_id}
+            atomic_write(self.path, data)
+        return serial
+
+    def tokens(self):
+        legacy = self.config.get("device_tokens", {})
+        tokens = dict(legacy) if isinstance(legacy, dict) else {}
+        tokens.update({serial: record["token"] for serial, record in self.devices().items()})
+        return tokens
+
+
+@dataclass
+class PairJob:
+    transport: str
+    ticket: str = field(default_factory=lambda: secrets.token_urlsafe(24))
+    deadline: float = field(default_factory=lambda: time.monotonic() + 90)
+    stage: str = "pending"
+    code: str = ""
+    error: str = ""
+    decision: threading.Event = field(default_factory=threading.Event)
+    accepted: bool = False
+    claimed: bool = False
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def pending(self):
+        with self.lock:
+            return self.stage in ("pending", "confirm") and time.monotonic() < self.deadline
+
+    def snapshot(self):
+        with self.lock:
+            if self.stage in ("pending", "confirm") and time.monotonic() >= self.deadline:
+                self.stage, self.error = "failed", "Pairing timed out. Open pairing on the Note again."
+                self.decision.set()
+            data = {"ok": True, "ticket": self.ticket, "state": self.stage, "transport": self.transport}
+            if self.stage == "confirm":
+                data["code"] = self.code
+            if self.error:
+                data["error"] = self.error
+            return data
+
+    def confirm(self, accepted):
+        with self.lock:
+            if self.stage in ("pending", "confirm"):
+                if not accepted:
+                    self.stage = "cancelled"
+                    self.decision.set()
+                elif self.stage == "confirm":
+                    self.accepted = True
+                    self.stage, self.code = "pending", ""
+                    self.decision.set()
+                else:
+                    raise SettingsError("Wait for the Bluetooth code before confirming its match.")
+
+    def show_code(self, code):
+        with self.lock:
+            if self.stage != "pending" or time.monotonic() >= self.deadline:
+                return False
+            self.stage, self.code = "confirm", code
+            return True
+
+    def finish(self, error=None):
+        with self.lock:
+            if self.stage in ("pending", "confirm"):
+                self.stage = "failed" if error else "paired"
+                self.error = error or ""
+            self.code = ""
+            self.decision.set()
+
+
+class PairingBroker:
+    def __init__(self, usb_pair, ble_available):
+        self.usb_pair, self.ble_available = usb_pair, ble_available
+        self.job = None
+        self.lock = threading.Lock()
+
+    def route(self, data):
+        with self.lock:
+            job = self.job
+            if data["op"] == "pair.start":
+                transport = data.get("transport")
+                if transport not in ("usb", "ble"):
+                    raise SettingsError("Choose USB or Bluetooth for pairing.")
+                if transport == "ble" and not self.ble_available:
+                    raise SettingsError("Bluetooth pairing requires the Windows Bridge Bluetooth runtime.")
+                if job is not None and job.pending():
+                    raise SettingsError("Finish the current Note pairing before starting another.")
+                job = self.job = PairJob(transport)
+                if transport == "usb":
+                    threading.Thread(target=self.run, args=(job, self.usb_pair),
+                                     name="pala-usb-pair", daemon=True).start()
+            elif not isinstance(data.get("ticket"), str) or job is None or data["ticket"] != job.ticket:
+                raise SettingsError("This pairing request has expired.")
+            elif data["op"] == "pair.confirm":
+                if type(data.get("accepted")) is not bool:
+                    raise SettingsError("Confirm or cancel the code.")
+                job.confirm(data["accepted"])
+            return job.snapshot()
+
+    def claim_ble(self):
+        with self.lock:
+            job = self.job
+            if job is not None and job.transport == "ble" and not job.claimed and job.pending():
+                job.claimed = True
+                return job
+        return None
+
+    def stop(self):
+        with self.lock:
+            if self.job is not None:
+                self.job.confirm(False)
+
+    @staticmethod
+    def run(job, exchange):
+        try:
+            exchange(job)
+        except SettingsError as error:
+            job.finish(str(error))
+        except (OSError, ValueError, RuntimeError):
+            job.finish("Pairing could not finish. Reopen pairing on the Note and try again.")
+        else:
+            job.finish()
+
+
+def complete_pairing(job, exchange, store, name, certificate=None, address=None, attached_serial=None):
+    bridge_id = store.bridge_id()
+    request = {"op": "pair.start", "id": bridge_id, "name": name}
+    if certificate is not None and address is not None:
+        request.update(host=address, port=8443)
+    status = exchange(request)
+    ticket = status.get("ticket")
+    while job.pending():
+        if not status["ok"]:
+            raise SettingsError("The Note rejected pairing. Open its pairing menu and try again.")
+        stage = status.get("state")
+        if stage == "paired":
+            try:
+                return store.remember(status, bridge_id, attached_serial=attached_serial)
+            except OSError as error:
+                raise SettingsError("Windows could not save the pairing. Remove this Bridge on the Note and retry.") from error
+        if not valid(ticket, r"[A-Za-z0-9_-]{8,128}"):
+            raise SettingsError("The Note returned an invalid pairing ticket.")
+        if stage == "approved" and certificate is not None:
+            for offset in range(0, len(certificate), 240):
+                if not job.pending():
+                    raise SettingsError("Pairing cancelled or expired.")
+                chunk = certificate[offset:offset + 240]
+                saved = exchange({"op": "pair.certificate", "ticket": ticket, "offset": offset,
+                                  "chunk": chunk, "final": offset + len(chunk) == len(certificate)})
+                if not saved["ok"]:
+                    raise SettingsError("The Note rejected the Bridge HTTPS certificate.")
+            certificate = None
+        elif stage == "cancelled":
+            job.confirm(False)
+            return None
+        elif stage not in ("pending", "approved"):
+            raise SettingsError("The Note did not finish pairing.")
+        time.sleep(.35)
+        status = exchange({"op": "pair.status", "ticket": ticket})
+    raise SettingsError("Pairing cancelled or expired.")
+
+
+class SettingsRoute:
+    def __init__(self, state, legacy, transport, pairing):
+        self.state, self.legacy, self.transport, self.pairing = state, legacy, transport, pairing
+
+    def __call__(self, data):
+        op = data["op"]
+        if op in ("pair.start", "pair.status", "pair.confirm"):
+            return self.pairing.route(data)
+        if op == "bridge.save":
+            try:
+                saved = save_bridge_preferences(self.state, data.get("name"), data.get("weatherLocation"))
+            except ValueError as error:
+                raise SettingsError(str(error)) from error
+            return {"ok": True, "bridge": saved}
+        request = note_request(data)
+        if op != "get" and "_target" in data:
+            request["_target"] = data["_target"]
+        try:
+            reply, link = self.transport(request)
+            result = note_response(reply, link, op)
+            if op == "get" and result["ok"]:
+                result["_selectedDevice"] = reply.get("_selectedDevice")
+        except SettingsError as error:
+            result = {"ok": False, "error": str(error), "transport": ""}
+        except (OSError, ValueError, RuntimeError):
+            result = {"ok": False, "error": "The paired Note could not be reached or authenticated.", "transport": ""}
+        if op == "get":
+            capabilities = result.setdefault("capabilities", {"pair": True, "peers": False, "bridgeOrder": False})
+            if self.pairing is not None:
+                capabilities["pairBle"] = self.pairing.ble_available
+            result["bridge"] = bridge_preferences(self.state, self.legacy())
+        return result

@@ -1,6 +1,8 @@
 import hashlib
 import hmac
 import io
+from itertools import count
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -154,6 +156,117 @@ class UsbSyncTests(unittest.TestCase):
         usb_sync.watch_paired(lambda: [paired], {"abc": TOKEN}, lambda: True, check, stop, self.fail)
         self.assertEqual(synced, [("COM24", TOKEN, cycle) for cycle in range(3)])
 
+    def test_watcher_retries_transient_handshake_failures_without_replugging(self):
+        paired = SimpleNamespace(vid=0x303A, pid=0x1001, serial_number="ABC", device="COM24")
+        attempts = []
+        errors = []
+
+        class Stop:
+            seconds = 0
+
+            def is_set(self):
+                return self.seconds == 40
+
+            def wait(self, seconds):
+                self.seconds += seconds
+
+        stop = Stop()
+
+        def synchronize(port, token):
+            self.assertEqual((port, token), ("COM24", TOKEN))
+            attempts.append(stop.seconds)
+            if stop.seconds < 20:
+                raise usb_sync.UsbReplyTimeout("No complete USB sync reply.")
+            # Old firmware's completed attachment must still stay settled.
+            return False
+
+        with patch("usb_sync.time.monotonic", side_effect=lambda: stop.seconds):
+            usb_sync.watch_paired(lambda: [paired], {"abc": TOKEN}, lambda: True,
+                                  synchronize, stop, errors.append)
+        self.assertEqual(attempts, [0, 2, 4, 20])
+        self.assertEqual([type(error) for error in errors], [usb_sync.UsbReplyTimeout] * 3)
+
+    def test_usb_failure_report_identifies_failed_block_without_serial_payload(self):
+        class FailedSecondBlock(FakePala):
+            def write(self, frame):
+                if frame.startswith(PREFIX + b"READ 96 "):
+                    self.outbox = io.BytesIO(
+                        b"unrelated private data: " + TOKEN.encode() +
+                        b"\r\n" + PREFIX + b"ERROR READ\r\n")
+                    return len(frame)
+                return super().write(frame)
+
+        port = FailedSecondBlock()
+        with self.assertRaisesRegex(UsbSyncError, "Pala reported READ") as failed:
+            sync_one(port, (TOKEN,), self.fail)
+
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder)
+            with patch("sys.stderr", io.StringIO()) as log:
+                usb_sync.report_usb_failure(state, failed.exception)
+            payload = (state / "usb-sync-last-error.json").read_text(encoding="utf-8")
+            diagnostic = json.loads(payload)
+            self.assertEqual(diagnostic["Phase"], "receiving")
+            self.assertEqual(diagnostic["Category"], "firmware")
+            self.assertEqual(diagnostic["Command"], "READ")
+            self.assertEqual(diagnostic["FirmwareCode"], "READ")
+            self.assertEqual(diagnostic["Offset"], 96)
+            self.assertEqual(diagnostic["Length"], 96)
+            self.assertEqual(diagnostic["Attempt"], 1)
+            for text in (payload, log.getvalue()):
+                self.assertNotIn(TOKEN, text)
+                self.assertNotIn("unrelated private data", text)
+                self.assertNotIn(port.audio[:16].hex(), text)
+
+    def test_usb_failure_report_never_logs_a_generic_exception_message(self):
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder)
+            with patch("sys.stderr", io.StringIO()) as log:
+                usb_sync.report_usb_failure(state, OSError(5, TOKEN))
+            payload = (state / "usb-sync-last-error.json").read_text(encoding="utf-8")
+            diagnostic = json.loads(payload)
+            self.assertEqual(diagnostic["Category"], "io")
+            self.assertEqual(diagnostic["Errno"], 5)
+            self.assertNotIn(TOKEN, payload)
+            self.assertNotIn(TOKEN, log.getvalue())
+
+    def test_usb_failure_report_distinguishes_unmatched_data_from_no_reply(self):
+        class UnmatchedBlock(FakePala):
+            def write(self, frame):
+                if frame.startswith(PREFIX + b"READ 96 "):
+                    self.reply("DATA 192 " + "5a" * 96)
+                    return len(frame)
+                return super().write(frame)
+
+        ticks = count()
+        with patch("usb_sync.time.monotonic", side_effect=lambda: next(ticks) / 10):
+            with self.assertRaisesRegex(UsbSyncError, "data at byte 96") as failed:
+                sync_one(UnmatchedBlock(), (TOKEN,), self.fail)
+        found = failed.exception.diagnostic
+        self.assertEqual((found.Phase, found.Category, found.Command), ("receiving", "timeout", "READ"))
+        self.assertEqual((found.Offset, found.Length, found.Attempt), (96, 96, 3))
+        self.assertEqual((found.Observation, found.ObservedOffset, found.ObservedHexLength),
+                         ("unmatched-data", 192, 192))
+
+    def test_usb_failure_report_counts_partial_frame_bytes_without_logging_them(self):
+        partial = PREFIX + b"DATA 96 " + b"5a" * 10
+
+        class PartialFrame(FakePala):
+            def write(self, frame):
+                if frame.startswith(PREFIX + b"READ 96 "):
+                    self.outbox = io.BytesIO(b"\r\n" + partial)
+                    return len(frame)
+                return super().write(frame)
+
+        ticks = count()
+        with patch("usb_sync.time.monotonic", side_effect=lambda: next(ticks) / 10):
+            with self.assertRaisesRegex(UsbSyncError, "data at byte 96") as failed:
+                sync_one(PartialFrame(), (TOKEN,), self.fail)
+        details = failed.exception.diagnostic
+        self.assertEqual((details.Category, details.Observation, details.ObservedBytes),
+                         ("timeout", "partial-frame", len(partial)))
+        self.assertNotIn(partial.decode("ascii"), repr(details))
+
     def test_serial_buffer_retains_second_frame_from_same_transfer(self):
         class Link:
             def __init__(self):
@@ -238,6 +351,49 @@ class UsbSyncTests(unittest.TestCase):
             sync_one(device, [TOKEN], lambda _audio: {"text": "Úloha, upozorniť"},
                      stage_transcript=stage)
         self.assertEqual(trace, [(42, device.captured, "Úloha, upozorniť", "READ")])
+
+    def test_lost_saved_receipt_promotes_delivery_only_after_exact_readback(self):
+        class LostReceipt(FakePala):
+            def __init__(self, mismatch):
+                super().__init__()
+                self.mismatch = mismatch
+
+            def write(self, raw):
+                size = super().write(raw)
+                command = self.calls[-1][0]
+                if command == "COMMIT":
+                    self.saved_text = bytes(self.text)
+                    self.outbox = io.BytesIO(b"")
+                elif command == "EXPORT":
+                    if self.mismatch == "wrong-note":
+                        self.reply(f"TRANSCRIPT 43 {len(self.saved_text)} {self.captured}")
+                    elif self.mismatch == "wrong-time":
+                        self.reply(f"TRANSCRIPT 42 {len(self.saved_text)} 2026-11-20T00:00:00Z")
+                    elif self.mismatch == "wrong-text":
+                        self.saved_text = b"Different text"
+                        self.reply(f"TRANSCRIPT 42 {len(self.saved_text)} {self.captured}")
+                    elif self.mismatch == "legacy":
+                        self.reply("ERROR COMMAND")
+                return size
+
+        for mismatch in (None, "wrong-note", "wrong-time", "wrong-text", "legacy", "no-route"):
+            with self.subTest(mismatch=mismatch):
+                device = LostReceipt(mismatch)
+                acknowledged = []
+                stager = None if mismatch == "no-route" else lambda *_: lambda: acknowledged.append(True)
+                ticks = iter(step / 10 for step in range(10000))
+                with patch("usb_sync.time.monotonic", side_effect=ticks.__next__):
+                    if mismatch is None:
+                        result = sync_one(device, [TOKEN], lambda _: {"text": "Exact text"}, stage_transcript=stager)
+                        self.assertEqual(result.note, 42)
+                    else:
+                        with self.assertRaises(usb_sync.UsbReplyTimeout):
+                            sync_one(device, [TOKEN], lambda _: {"text": "Exact text"}, stage_transcript=stager)
+                self.assertEqual(acknowledged, [] if mismatch else [True])
+                self.assertEqual(sum(command == "COMMIT" for command, _ in device.calls), 1)
+                self.assertEqual(sum(command == "EXPORT" for command, _ in device.calls),
+                                 0 if mismatch == "no-route" else 1)
+                self.assertEqual(device.calls[-1][0], "CLOSE")
 
     def test_retries_the_same_final_block_after_a_truncated_reply(self):
         device = FakePala(drop_last_read=True)

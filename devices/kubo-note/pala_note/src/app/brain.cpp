@@ -396,6 +396,7 @@ std::vector<std::pair<int,float>> vectorSimilarities(const std::vector<float>& q
     int32_t noteNum=0;
     if(file.read((uint8_t*)&noteNum,sizeof(noteNum))!=sizeof(noteNum)) break;
     if(file.read((uint8_t*)value.data(),bytes)!=bytes) break;
+    if (noteIsTrashed(noteNum)) continue;
     scores.push_back({(int)noteNum,cosineSimilarity(query,value)});
   }
   if(file) file.close();
@@ -577,6 +578,7 @@ bool saveBrainMemoryJson(int noteNum, const String& json) {
 BrainMemory loadBrainMemory(int noteNum) {
   BrainMemory memory;
   memory.noteNum = noteNum;
+  if (noteIsTrashed(noteNum)) return memory;
   recoverStoredFile(SD_MMC, brainMemoryPath(noteNum));
   File file = SD_MMC.open(brainMemoryPath(noteNum));
   if (!file) return memory;
@@ -658,6 +660,16 @@ void removeBrainSearchIndexEntry(int noteNum) { rewriteSearchIndex(noteNum, null
 
 void removeBrainVectorIndexEntry(int noteNum) { rewriteVectorIndex(noteNum, nullptr); }
 
+void refreshRestoredNoteBrainIndexes(int noteNum) {
+  const BrainMemory memory = loadBrainMemory(noteNum);
+  if (memory.valid) {
+    const String line = searchIndexLine(memory);
+    rewriteSearchIndex(noteNum, &line);
+  }
+  const auto embedding = loadEmbedding(noteNum);
+  if (embedding.size() == kEmbeddingDimensions) rewriteVectorIndex(noteNum, &embedding);
+}
+
 int pendingBrainMemoryCount() {
   int pending = 0;
   for (const NoteEntry& note : noteIndex) {
@@ -710,6 +722,9 @@ std::vector<BrainMemory> retrieveBrainMemories(
       int p1=line.indexOf('|'), p2=line.indexOf('|',p1+1), p3=line.indexOf('|',p2+1);
       if (p1<=0||p2<=p1||p3<=p2) continue;
       const int noteNum=line.substring(0,p1).toInt();
+      const auto live = std::lower_bound(noteIndex.begin(), noteIndex.end(), noteNum,
+          [](const NoteEntry& note, int id) { return note.num < id; });
+      if (noteIsTrashed(noteNum) || live == noteIndex.end() || live->num != noteNum) continue;
       float score=line.substring(p2+1,p3).toInt();
       const String text=line.substring(p3+1);
       int matched=0;

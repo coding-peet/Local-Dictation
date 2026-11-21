@@ -14,6 +14,7 @@ public sealed partial class AppController : IDisposable
     PalaBridgeController? palaBridge;
     PalaUsbWatcher? palaUsbWatcher;
     bool stoppingPalaWatcher;
+    bool palaIntegrationInitialized;
     internal PalaBridgeController PalaBridge => palaBridge ??= new();
     sealed class Run(Settings settings)
     {
@@ -400,7 +401,11 @@ public sealed partial class AppController : IDisposable
             banner.Refresh();
         };
         timer.Start();
-        reconnectTimer.Tick+=async(_,_)=>{if(!IsBusy&&!Connected)await RefreshConnection();};
+        reconnectTimer.Tick += async (_, _) =>
+        {
+            EnsurePalaWatcher();
+            if (!IsBusy && !Connected) await RefreshConnection();
+        };
         reconnectTimer.Start();
         historyRetentionTimer.Tick+=(_,_)=>ApplyHistoryRetention();
         historyRetentionTimer.Start();
@@ -866,8 +871,15 @@ public sealed partial class AppController : IDisposable
         Changed?.Invoke();
     }
 
+    internal bool OpenPalaNoteSettings()
+    {
+        EnsurePalaWatcher();
+        return palaUsbWatcher?.OpenSettings() == true;
+    }
+
     internal void InitializePalaIntegration()
     {
+        palaIntegrationInitialized = true;
         UpdatePalaIntegration();
         if (Settings.PalaIntegrationEnabled && Settings.PalaBridgeAutoStart) PalaBridge.Start();
     }
@@ -877,8 +889,20 @@ public sealed partial class AppController : IDisposable
         var enabled = Settings.PalaIntegrationEnabled;
         PalaBridge.SetEnabled(enabled);
         if (stoppingPalaWatcher) return;
-        if (enabled) palaUsbWatcher ??= PalaUsbWatcher.TryStart();
+        if (enabled) EnsurePalaWatcher();
         else if (palaUsbWatcher is { } watcher) _ = StopPalaWatcher(watcher);
+    }
+
+    void EnsurePalaWatcher()
+    {
+        if (!palaIntegrationInitialized || disposed || exiting || stoppingPalaWatcher ||
+            !Settings.PalaIntegrationEnabled) return;
+        if (palaUsbWatcher is { HasExited: true } exited)
+        {
+            exited.Dispose();
+            palaUsbWatcher = null;
+        }
+        palaUsbWatcher ??= PalaUsbWatcher.TryStart();
     }
 
     async Task StopPalaWatcher(PalaUsbWatcher watcher)

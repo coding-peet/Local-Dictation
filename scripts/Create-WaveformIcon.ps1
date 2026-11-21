@@ -3,6 +3,16 @@ param([string]$OutputDirectory=(Join-Path (Split-Path $PSScriptRoot -Parent) 'sr
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Drawing
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
+
+# Keep the same silhouette at every size. Values specify the full pill height.
+$waveHeights = @(3, 8, 15, 7, 12, 5, 3)
+$wavePeak = 15
+$waveHeight = .60
+$barStep = .125
+$barWidth = .0625
+$tileColor = '#172234'
+$barColor = '#FFA197'
+
 function RoundPath([float]$x,[float]$y,[float]$w,[float]$h,[float]$r) {
     $path=[System.Drawing.Drawing2D.GraphicsPath]::new();$d=2*$r
     $path.AddArc($x,$y,$d,$d,180,90);$path.AddArc(($x+$w-$d),$y,$d,$d,270,90)
@@ -10,19 +20,31 @@ function RoundPath([float]$x,[float]$y,[float]$w,[float]$h,[float]$r) {
     $path.CloseFigure();return ,$path
 }
 function Draw-Wave([int]$size) {
-    $bitmap=[System.Drawing.Bitmap]::new($size,$size)
-    $g=[System.Drawing.Graphics]::FromImage($bitmap);$g.SmoothingMode='AntiAlias';$g.PixelOffsetMode='HighQuality'
-    $bg=[System.Drawing.SolidBrush]::new([System.Drawing.ColorTranslator]::FromHtml('#202631'))
-    $tile=RoundPath ($size*.03) ($size*.03) ($size*.94) ($size*.94) ($size*.20);$g.FillPath($bg,$tile);$tile.Dispose();$bg.Dispose()
-    $heights=if($size -le 24){@(7,17,28,19,30,15,6)}elseif($size -le 48){@(6,16,28,17,25,32,18,28,16,10,5)}else{@(7,12,20,29,16,24,31,18,25,14,21,32,23,15,25,18,11,6)}
-    $width=$size*.80;$step=$width/$heights.Count;$thickness=[Math]::Max(1.05,$step*.58)
-    $pen=[System.Drawing.Pen]::new([System.Drawing.ColorTranslator]::FromHtml('#FF858D'),[float]$thickness);$pen.StartCap='Round';$pen.EndCap='Round'
-    for($i=0;$i -lt $heights.Count;$i++) {
-        $height=$size*.40*$heights[$i]/32
-        $x=$size*.10+$step*($i+.5)
-        $g.DrawLine($pen,[float]$x,[float]($size/2-$height/2),[float]$x,[float]($size/2+$height/2))
+    $bitmap = [System.Drawing.Bitmap]::new($size, $size)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    $graphics.SmoothingMode = 'AntiAlias'
+    $graphics.PixelOffsetMode = 'Half'
+
+    $background = [System.Drawing.SolidBrush]::new([System.Drawing.ColorTranslator]::FromHtml($tileColor))
+    $tile = RoundPath ($size * .03) ($size * .03) ($size * .94) ($size * .94) ($size * .20)
+    $graphics.FillPath($background, $tile)
+    $tile.Dispose()
+    $background.Dispose()
+
+    $brush = [System.Drawing.SolidBrush]::new([System.Drawing.ColorTranslator]::FromHtml($barColor))
+    $thickness = $size * $barWidth
+    for ($i = 0; $i -lt $waveHeights.Count; $i++) {
+        $x = $size * (.5 + ($i - 3) * $barStep)
+        # At 16 px put each one-pixel bar on a single pixel column with a full gap.
+        if ($size -eq 16) { $x = [Math]::Floor($x) + .5 }
+        $height = $size * $waveHeight * $waveHeights[$i] / $wavePeak
+        $pill = RoundPath ($x - $thickness / 2) (($size - $height) / 2) $thickness $height ($thickness / 2)
+        $graphics.FillPath($brush, $pill)
+        $pill.Dispose()
     }
-    $pen.Dispose();$g.Dispose();return ,$bitmap
+    $brush.Dispose()
+    $graphics.Dispose()
+    return ,$bitmap
 }
 $sizes=@(16,24,32,48,64,128,256)
 $images=[System.Collections.Generic.List[byte[]]]::new()
@@ -40,15 +62,24 @@ for($i=0;$i -lt $sizes.Count;$i++) {
     $writer.Write([uint16]1);$writer.Write([uint16]32);$writer.Write([uint32]$images[$i].Length);$writer.Write([uint32]$offset);$offset+=$images[$i].Length
 }
 foreach($bytes in $images){$writer.Write($bytes)};$writer.Dispose()
-$svg='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><rect x="7.68" y="7.68" width="240.64" height="240.64" rx="51.2" fill="#202631"/><g stroke="#ff858d" stroke-width="6.6" stroke-linecap="round">'
-$heights=@(7,12,20,29,16,24,31,18,25,14,21,32,23,15,25,18,11,6)
-for($i=0;$i -lt $heights.Count;$i++) {
-    $x=(25.6+204.8/18*($i+.5)).ToString('0.##',[Globalization.CultureInfo]::InvariantCulture)
-    $y1=(128-102.4*$heights[$i]/64).ToString('0.##',[Globalization.CultureInfo]::InvariantCulture)
-    $y2=(128+102.4*$heights[$i]/64).ToString('0.##',[Globalization.CultureInfo]::InvariantCulture)
-    $svg+='<path d="M'+$x+' '+$y1+'V'+$y2+'"/>'
+function Format-SvgNumber([double]$value) {
+    $value.ToString('0.##', [Globalization.CultureInfo]::InvariantCulture)
 }
-[System.IO.File]::WriteAllText((Join-Path $OutputDirectory 'waveform.svg'),$svg+'</g></svg>')
+$svg = @(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">'
+    ('  <rect x="7.68" y="7.68" width="240.64" height="240.64" rx="51.2" fill="{0}"/>' -f $tileColor)
+    ('  <g fill="{0}">' -f $barColor)
+)
+for ($i = 0; $i -lt $waveHeights.Count; $i++) {
+    $x = 256 * (.5 + ($i - 3) * $barStep - $barWidth / 2)
+    $height = 256 * $waveHeight * $waveHeights[$i] / $wavePeak
+    $y = (256 - $height) / 2
+    $svg += '    <rect x="{0}" y="{1}" width="{2}" height="{3}" rx="{4}"/>' -f (
+        (Format-SvgNumber $x), (Format-SvgNumber $y), (Format-SvgNumber (256 * $barWidth)),
+        (Format-SvgNumber $height), (Format-SvgNumber (128 * $barWidth)))
+}
+$svg += '  </g>', '</svg>'
+[System.IO.File]::WriteAllText((Join-Path $OutputDirectory 'waveform.svg'), ($svg -join [Environment]::NewLine) + [Environment]::NewLine)
 $sheet=[System.Drawing.Bitmap]::new(760,320);$g=[System.Drawing.Graphics]::FromImage($sheet);$g.Clear([System.Drawing.ColorTranslator]::FromHtml('#F3F5F8'))
 $font=[System.Drawing.Font]::new('Segoe UI',13);$titleFont=[System.Drawing.Font]::new('Segoe UI Semibold',20)
 $g.DrawString('Local Dictation',$titleFont,[System.Drawing.Brushes]::Black,[float]270,[float]28)

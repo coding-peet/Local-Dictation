@@ -1,6 +1,8 @@
 from pathlib import Path
 import sys
-from contextlib import nullcontext, redirect_stdout
+from datetime import datetime, timezone
+import sqlite3
+from contextlib import closing, nullcontext, redirect_stdout
 from io import StringIO
 import tempfile
 import unittest
@@ -12,6 +14,68 @@ from pala_google import DeliveryQueue, classify_transcript
 
 
 class PalaGoogleTests(unittest.TestCase):
+    def test_home_counts_use_the_day_of_the_last_confirmed_action(self):
+        def at(hour, minute):
+            return datetime(2026, 11, 19, hour, minute, tzinfo=timezone.utc)
+
+        targets = {
+            "shopping": {"id": "shopping", "title": "Shopping"},
+            "general": {"id": "general", "title": "General"},
+            "docs": {"id": "docs", "title": "Notes"},
+        }
+        send = Mock(return_value="receipt")
+        with tempfile.TemporaryDirectory() as folder:
+            queue = DeliveryQueue(Path(folder))
+            shopping = ("PaLa", 1, None, "Nákup: mlieko a rožky.")
+            first, second = queue.stage(*shopping)
+            queue.stage("pala", 2, None, "Pracovná úloha poslať ponuku.")
+            queue.stage("pala", 3, None, "Termín: zajtra o deviatej.")
+            queue.stage("pala", 4, None, "Poznámka: krátky text", ready=False)
+            queue.stage("other", 1, None, "Iné zariadenie.")
+            queue.stage("pala", 5, None, "Do zoznamu neschválený: niečo.")
+            doc, = queue.stage("pala", 6, None, "Poznámka: osobný nápad")
+            with patch("pala_google.time.time", return_value=at(22, 59).timestamp()):
+                self.assertEqual(queue.deliver(first, targets, send), "done")
+            self.assertEqual(queue.home_counts("PALA", targets, now=at(22, 59)), ("2026-11-19", 0, 2))
+            with patch("pala_google.time.time", return_value=at(23, 0).timestamp()):
+                self.assertEqual(queue.deliver(second, targets, send), "done")
+                self.assertEqual(queue.deliver(doc, targets, send), "done")
+            self.assertEqual(queue.stage(*shopping), [first, second])
+            self.assertEqual(queue.home_counts("pala", targets, now=at(23, 1)), ("2026-11-20", 2, 0))
+
+    def test_home_counts_count_the_recording_once_if_its_transcript_changes(self):
+        targets = {"general": {"id": "general", "title": "General"},
+                   "tasks": {"id": "tasks", "title": "Tasks"}}
+        with tempfile.TemporaryDirectory() as folder:
+            queue = DeliveryQueue(Path(folder))
+            for captured, text in (("2026-11-20T08:10:00Z", "Modrý zápisník."),
+                                   ("2026-11-20T09:10:00+01:00", "Úloha: skontrolovať modrý zápisník."),
+                                   ("2026-11-20T09:11:00+01:00", "Nový diktát po zmazaní starého.")):
+                key, = queue.stage("pala", 1, captured, text)
+                now = datetime(2026, 11, 20, 12, tzinfo=timezone.utc)
+                with patch("pala_google.time.time", return_value=now.timestamp()):
+                    self.assertEqual(queue.deliver(key, targets, Mock(return_value="receipt")), "done")
+            self.assertEqual(queue.home_counts("pala", targets, now=now)[1:], (2, 0))
+
+    def test_home_counts_preserve_receipts_from_the_legacy_schema(self):
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder)
+            with closing(sqlite3.connect(directory / "google-delivery.sqlite")) as db, db:
+                db.execute("""CREATE TABLE google_actions (
+                    id TEXT PRIMARY KEY, kind TEXT NOT NULL, captured TEXT, body TEXT NOT NULL,
+                    status TEXT NOT NULL, target_id TEXT, provider_id TEXT
+                )""")
+            queue = DeliveryQueue(directory)
+            args = ("pala", 1, None, "Úloha: overiť počítadlo")
+            action, = queue.stage(*args)
+            with queue.database() as db:
+                db.execute("UPDATE google_actions SET status='done', provider_id='previous' WHERE id=?", (action,))
+            queue = DeliveryQueue(directory)
+            targets = {"tasks": {"id": "tasks", "title": "Tasks"}}
+            self.assertEqual(queue.stage(*args), [action])
+            self.assertEqual(queue.deliver(action, targets, self.fail), "done")
+            self.assertEqual(queue.home_counts("pala", targets)[1:], (0, 0))
+
     def test_routing_requires_an_explicit_personal_intent(self):
         self.assertEqual(classify_transcript("Úloha, skontrolovať modrý zápisník"),
                          ("tasks", ["skontrolovať modrý zápisník"]))

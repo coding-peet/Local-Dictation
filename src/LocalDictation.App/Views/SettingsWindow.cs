@@ -80,11 +80,8 @@ public sealed partial class SettingsWindow : Window
         foreach(var box in new[]{microphone,primary,verifier,language,theme,afterRecording,historyRetention})box.SelectionChanged+=(_,_)=>SelectionChanged(box);
         foreach(var check in new[]{live,verify,insert,shortcutEnabled})
         {check.Checked+=(_,_)=>SelectionChanged(check);check.Unchecked+=(_,_)=>SelectionChanged(check);}
-        foreach(var text in new[]{endpoint,palaBridgeName})
-        {
-            text.TextChanged+=(_,_)=>QueueTextEdit(text);
-            text.LostKeyboardFocus+=(_,_)=>CommitTextEdits(text);
-        }
+        endpoint.TextChanged+=(_,_)=>QueueTextEdit(endpoint);
+        endpoint.LostKeyboardFocus+=(_,_)=>CommitTextEdits(endpoint);
         saveDelay.Tick+=(_,_)=>CommitTextEdits();
         repository.TextChanged+=(_,_)=>{inspection=null;download.IsEnabled=false;};
         Refresh(true);RefreshStartup();UpdateSaveStatus();
@@ -438,9 +435,6 @@ public sealed partial class SettingsWindow : Window
             {
                 if(text==endpoint)
                 {var candidate=Snapshot();candidate.Endpoint=text.Text.Trim();candidate.ServerUri();value.Endpoint=candidate.Endpoint;}
-                if(text==palaBridgeName)
-                    value.PalaBridgeName=Settings.ValidatePalaBridgeName(text.Text.Trim());
-
                 textErrors.Remove(text);valid.Add(text);
             }
             catch(ArgumentException ex){textErrors[text]=ex.Message;pendingText.Remove(text);}

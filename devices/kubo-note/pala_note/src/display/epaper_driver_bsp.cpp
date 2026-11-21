@@ -148,8 +148,22 @@ void epaper_driver_display::read_busy()
             ESP_LOGE(TAG, "EPD busy timeout; continuing without panel acknowledgement");
             return;
         }
+        if (waitCallback) waitCallback();
         vTaskDelay(pdMS_TO_TICKS(5));   // LOW: idle, HIGH: busy
     }
+}
+
+void epaper_driver_display::waitForReset(unsigned milliseconds)
+{
+    if (!waitCallback) {
+        vTaskDelay(pdMS_TO_TICKS(milliseconds));
+        return;
+    }
+    const TickType_t start = xTaskGetTickCount();
+    do {
+        waitCallback();
+        vTaskDelay(pdMS_TO_TICKS(5));
+    } while (xTaskGetTickCount() - start < pdMS_TO_TICKS(milliseconds));
 }
 
 void epaper_driver_display::SPI_SendByte(uint8_t data)
@@ -275,11 +289,11 @@ void epaper_driver_display::EPD_Init()
 {
     busyTimedOut = false;
     set_rst_1();
-    vTaskDelay(pdMS_TO_TICKS(50));
+    waitForReset(50);
     set_rst_0();
-    vTaskDelay(pdMS_TO_TICKS(20));
+    waitForReset(20);
     set_rst_1();
-    vTaskDelay(pdMS_TO_TICKS(50));
+    waitForReset(50);
 
     read_busy();
     EPD_SendCommand(0x12);
@@ -342,11 +356,11 @@ void epaper_driver_display::EPD_DisplayPartBaseImage()
 void epaper_driver_display::EPD_Init_Partial()
 {
     set_rst_1();
-    vTaskDelay(pdMS_TO_TICKS(50));
+    waitForReset(50);
     set_rst_0();
-    vTaskDelay(pdMS_TO_TICKS(20));
+    waitForReset(20);
     set_rst_1();
-    vTaskDelay(pdMS_TO_TICKS(50));
+    waitForReset(50);
 
     read_busy();
 

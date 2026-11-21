@@ -151,24 +151,28 @@ void clearWhite() { display->EPD_Clear(); }
 // The first frame after power-up establishes both controller image planes.
 // Afterwards use the much faster partial waveform and periodically clean the
 // panel to prevent accumulated ghosting.
-void refresh() {
+void refresh(void (*serviceWhileWaiting)()) {
+  display->setWaitCallback(serviceWhileWaiting);
   if (!epaperBaseReady || epaperPartialRefreshes >= kPartialRefreshesBeforeClean) {
     refreshClean();
-    return;
+  } else {
+    display->EPD_DisplayPart();
+    epaperPartialRefreshes++;
   }
-  display->EPD_DisplayPart();
-  epaperPartialRefreshes++;
+  display->setWaitCallback(nullptr);
 }
 
 // Use only when the layout and background stay identical (for example the
 // Moment counter while a recording screen is already visible).
-void refreshFast() {
+void refreshFast(void (*serviceWhileWaiting)()) {
+  display->setWaitCallback(serviceWhileWaiting);
   if (!epaperBaseReady) {
     refreshClean();
-    return;
+  } else {
+    display->EPD_DisplayPart();
+    if (epaperPartialRefreshes < UINT8_MAX) ++epaperPartialRefreshes;
   }
-  display->EPD_DisplayPart();
-  epaperPartialRefreshes++;
+  display->setWaitCallback(nullptr);
 }
 
 // Rebuild both controller image planes with the full waveform. Use this only

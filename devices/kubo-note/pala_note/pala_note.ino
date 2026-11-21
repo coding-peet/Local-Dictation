@@ -18,11 +18,14 @@ extern "C" {
 #include "sounds.h"
 #include "src/power/board_power_bsp.h"
 #include "src/display/epaper_driver_bsp.h"
+#include "src/app/aquarium_view.h"
 #include "src/app/brain.h"
 #include "src/app/provider.h"
 #include "src/app/battery.h"
+#include "src/app/companion_controls.h"
 #include "src/app/network.h"
 #include "src/app/notes.h"
+#include "src/app/note_config.h"
 #include "src/app/record.h"
 #include "src/app/rtc.h"
 #include "src/app/settings.h"
@@ -33,6 +36,8 @@ extern "C" {
 #include "src/app/bridge_client.h"
 #include "src/app/bluetooth_sync.h"
 #include "src/app/home_weather.h"
+#include "src/app/home_delivery.h"
+#include "src/app/home_bridge_status.h"
 #if PALA_BRIDGE_DISCOVERY
 #include <driver/usb_serial_jtag.h>
 #endif
@@ -42,6 +47,7 @@ epaper_driver_display* display = nullptr;
 std::vector<NoteEntry> noteIndex;
 
 AppState state = STATE_IDLE;
+HomeBridgeStatus homeBridgeStatus;
 int lastRecNum = -1;
 uint32_t lastActivityMs = 0;
 
@@ -59,30 +65,49 @@ enum class PressResult { Released, LongSingle, Chord };
 
 namespace {
 
-bool companionExitArmed = false;
 bool idleInputArmed = true;
+enum class PairingView { None, BluetoothWait, BluetoothCode, UsbWait, UsbPrompt };
+PairingView pairingView = PairingView::None;
+bool pairingButtonsArmed = false;
+uint32_t pairingDisplayedCode = 0;
 uint32_t companionGestureStartedAt = 0;
 uint32_t nextBackgroundAttemptAt = 0;
 uint32_t backlogRequestedAt = 0;
 bool backlogRequested = false;
-bool bluetoothWindowShown = false;
+struct BacklogScreen {
+  BacklogLink link = BacklogLink::Deferred;
+  int completed = 0;
+  int total = 0;
+  bool authenticated = false;
+} backlogScreen;
 #if PALA_BRIDGE_DISCOVERY
 bool usbDataConnected = false;
+bool usbQueueChecked = false;
 RTC_DATA_ATTR int64_t retryHomeWeatherAfter = 0;
 uint32_t nextHomeWeatherCheckAt = 0;
 #endif
 bool backlogSyncActive = false;
 int backlogSyncTotal = 0;
 uint32_t nextHomeClockCheckAt = 0;
-uint32_t lastUpperTapAt = 0;
-uint32_t lastLowerTapAt = 0;
+struct UpperEdge { uint32_t at; bool down; };
+constexpr uint8_t kUpperEdgeCapacity = 32;
+volatile UpperEdge upperEdges[kUpperEdgeCapacity];
+volatile uint8_t upperEdgeRead = 0;
+volatile uint8_t upperEdgeWrite = 0;
+volatile bool upperEdgeOverflow = false;
 volatile bool upperPressLatched = false;
 volatile bool lowerPressLatched = false;
-bool companionUpperWasDown = false;
-bool companionLowerWasDown = false;
-uint32_t companionVolumeShownAt = 0;
-uint32_t companionSingleStartedAt = 0;
-int companionSinglePin = -1;
+UpperGesture upperGesture;
+AquariumState aquarium;
+bool aquariumChord = false;
+bool aquariumLowerDown = false;
+uint32_t aquariumLowerAt = 0;
+int lastAquariumFrame = -1;
+uint32_t lastAquariumPaintAt = 0;
+CompanionControls companionControls;
+bool companionUsesHotspot = false;
+uint32_t nextCompanionNetworkCheckAt = 0;
+String companionNetworkName;
 String companionApPassword;
 String displayedHomeDay;
 bool agendaShowsEvents = false;
@@ -173,6 +198,10 @@ void replyUsbSetup(const char* status, const char* detail = nullptr) {
 
 void applyUsbSetupLine(const String& line) {
   if (!line.startsWith("PALA_SETUP_V1 ")) return;
+#if PALA_BRIDGE_DISCOVERY
+  replyUsbSetup("ERROR", "USE_NOTE_PAIRING");
+  return;
+#endif
   if (line.length() > 700) { replyUsbSetup("ERROR", "TOO_LONG"); return; }
 
   JsonDocument doc;
@@ -232,12 +261,55 @@ bool bothButtonsUp() {
   return digitalRead(BTN_REC) == HIGH && digitalRead(BTN_PWR) == HIGH;
 }
 
-void latchUpperPress() { upperPressLatched = true; }
+void ARDUINO_ISR_ATTR latchUpperEdge() {
+  const bool down = digitalRead(BTN_REC) == LOW;
+  if (down) upperPressLatched = true;
+  const uint8_t next = (upperEdgeWrite + 1) % kUpperEdgeCapacity;
+  if (next == upperEdgeRead) {
+    upperEdgeOverflow = true;
+    return;
+  }
+  upperEdges[upperEdgeWrite].at = millis();
+  upperEdges[upperEdgeWrite].down = down;
+  upperEdgeWrite = next;
+}
+
 void latchLowerPress() { lowerPressLatched = true; }
+
+// Call with GPIO interrupts disabled. Other screens still use the old down latch.
+void clearUpperEdges() {
+  upperPressLatched = false;
+  upperEdgeRead = upperEdgeWrite;
+  upperEdgeOverflow = false;
+  upperGesture.reset();
+}
+
+UpperAction pollUpperGesture(uint8_t completeAt) {
+  for (;;) {
+    noInterrupts();
+    if (upperEdgeOverflow) {
+      // A saturated ring cannot prove a complete gesture.
+      clearUpperEdges();
+      interrupts();
+      return UpperAction::None;
+    }
+    if (upperEdgeRead == upperEdgeWrite) {
+      upperPressLatched = false;
+      const uint32_t now = millis();
+      interrupts();
+      return upperGesture.poll(now, completeAt);
+    }
+    const UpperEdge edge{upperEdges[upperEdgeRead].at, upperEdges[upperEdgeRead].down};
+    upperEdgeRead = (upperEdgeRead + 1) % kUpperEdgeCapacity;
+    interrupts();
+    const UpperAction action = upperGesture.edge(edge.down, edge.at, completeAt);
+    if (action != UpperAction::None) return action;
+  }
+}
 
 void clearLatchedPresses() {
   noInterrupts();
-  upperPressLatched = false;
+  clearUpperEdges();
   lowerPressLatched = false;
   interrupts();
 }
@@ -245,7 +317,7 @@ void clearLatchedPresses() {
 bool takeLatchedPress(bool upper) {
   noInterrupts();
   const bool latched = upper ? upperPressLatched : lowerPressLatched;
-  if (upper) upperPressLatched = false;
+  if (upper) clearUpperEdges();
   else lowerPressLatched = false;
   interrupts();
   return latched;
@@ -272,7 +344,7 @@ String localDayKey() {
 
 bool hasQueuedAudio() {
   for (const auto& note : noteIndex) {
-    if (!note.hasText && noteQueueState(note.num) != "blocked") return true;
+    if (notePendingTranscription(note)) return true;
   }
   return false;
 }
@@ -281,9 +353,60 @@ void requestBacklogSync() {
   backlogRequestedAt = millis();
   backlogRequested = true;
   nextBackgroundAttemptAt = 0;
+#if PALA_BRIDGE_DISCOVERY
+  usbQueueChecked = false;
+#endif
+}
+
+void pollUsbBacklog() {
+#if PALA_BRIDGE_DISCOVERY
+  const bool dataCable = usb_serial_jtag_is_connected();
+  noteUsbLinkChanged(dataCable);
+  if (dataCable && !usbDataConnected && state == STATE_IDLE && !bluetoothSyncActive() &&
+      !bluetoothEnrollmentOpen()) {
+    stopBluetoothSync();
+    requestBacklogSync();
+  }
+  if (!dataCable && usbDataConnected) {
+    const bool wasProbing = backlogScreen.link == BacklogLink::Usb || backlogRequested;
+    const bool resumeBacklog = resumeBacklogAfterUsbDetach(state == STATE_IDLE, usbSyncActive(), wasProbing);
+    cancelUsbSync();
+    usbSetupLine = "";
+    discardUsbLine = false;
+    // Discard the preceding session's retry deadline when the cable goes away.
+    if (resumeBacklog) requestBacklogSync();
+  }
+  usbDataConnected = dataCable;
+#endif
+  handleUsbSetup();
+}
+
+void serviceConnectingLinks() {
+  // Only the transport pumps run during panel waits. They use the same loop
+  // context as usual and never draw, including during authentication.
+  pollUsbBacklog();
+  if (usbSyncActive()) stopBluetoothSync();
+  else pollBluetoothSync();
+}
+
+bool preferUsbForBacklog() {
+#if PALA_BRIDGE_DISCOVERY
+  return backlogLink(usbSyncActive(), usbDataConnected,
+                     backlogRequested && millis() - backlogRequestedAt < 3500,
+                     WifiBacklog::Unchecked) == BacklogLink::Usb;
+#else
+  return false;
+#endif
+}
+
+void showBacklogLink(BacklogLink link, int completed, int total, bool authenticated = false) {
+  backlogScreen = {link, completed, total, authenticated};
+  showBacklogProcessing(completed, total, authenticated ? "SYNCING" : "CONNECTING",
+                        link, serviceConnectingLinks);
 }
 
 void renderReadyHome() {
+  backlogScreen.link = BacklogLink::Deferred;
   const BatteryReading battery = readBattery();
   // The home screen only exposes recordings that are not transcribed yet.
   // Rebuilding structure/vector indexes is silent maintenance: the transcript
@@ -294,12 +417,10 @@ void renderReadyHome() {
 }
 
 void returnFromBackgroundSync() {
-  renderReadyHome();
-  // Presses during network/display work must not become agenda shortcuts.
+  // Drop the transfer's input, then capture fresh presses as Home appears.
   clearLatchedPresses();
   idleInputArmed = false;
-  lastUpperTapAt = 0;
-  lastLowerTapAt = 0;
+  renderReadyHome();
 }
 
 void returnToReady() {
@@ -468,30 +589,37 @@ int processPendingMemories(int preferredNote = -1, int maxNotes = 1) {
   return processed;
 }
 
+bool refreshCompanionConnection() {
+  const bool available = companionUsesHotspot ? (WiFi.getMode() & WIFI_AP) != 0
+                                              : WiFi.status() == WL_CONNECTED;
+  const IPAddress ip = !available ? IPAddress() : companionUsesHotspot ? WiFi.softAPIP() : WiFi.localIP();
+  const String address = ip == IPAddress() ? String() : ip.toString();
+  const String network = address.isEmpty() ? String() : companionUsesHotspot ? WiFi.softAPSSID() : WiFi.SSID();
+  const bool changed = transferUrl != address || companionNetworkName != network;
+  transferUrl = address;
+  companionNetworkName = network;
+  return changed;
+}
+
 void enterCompanion() {
   resetActivity();
   state = STATE_TRANSFER;
-  companionExitArmed = false;
+  companionControls.reset();
   companionGestureStartedAt = 0;
-  companionUpperWasDown = digitalRead(BTN_REC) == LOW;
-  companionLowerWasDown = digitalRead(BTN_PWR) == LOW;
-  companionVolumeShownAt = 0;
-  companionSingleStartedAt = 0;
-  companionSinglePin = -1;
   clearLatchedPresses();
   showTransferConnecting();
 
-  bool joinedSavedNetwork = connectConfiguredWifi(12);
-  String accessPointPassword;
-  if (!joinedSavedNetwork) {
+  companionUsesHotspot = !connectConfiguredWifi(12);
+  companionApPassword = "";
+  if (companionUsesHotspot) {
     stopWifi();
     WiFi.mode(WIFI_AP);
-    char password[16];
-    // Generate a fresh setup password instead of deriving a predictable one
-    // from the public device identity.
-    snprintf(password, sizeof(password), "Pala-%08lX", static_cast<unsigned long>(esp_random()));
-    accessPointPassword = password;
-    if (!WiFi.softAP("Pala Note 2.0", accessPointPassword.c_str())) {
+    const String accessPointName = palaNoteName() + "-Note";
+    char password[9];
+    // Generate a fresh setup password independent of the public device name.
+    snprintf(password, sizeof(password), "%08lX", static_cast<unsigned long>(esp_random()));
+    companionApPassword = password;
+    if (!WiFi.softAP(accessPointName.c_str(), companionApPassword.c_str())) {
       showError("WIFI ERROR");
       delay(1400);
       returnToReady();
@@ -504,21 +632,19 @@ void enterCompanion() {
   setupTransferServer();
   transferServer.begin();
   transferServerActive = true;
-  const IPAddress ip = joinedSavedNetwork ? WiFi.localIP() : WiFi.softAPIP();
-  transferUrl = ip.toString();
-  companionApPassword = joinedSavedNetwork ? "" : accessPointPassword;
-  showTransferMode(transferUrl.c_str(),
-                   joinedSavedNetwork ? nullptr : accessPointPassword.c_str());
+  refreshCompanionConnection();
+  nextCompanionNetworkCheckAt = millis() + 1000;
+  redrawCompanionHome();
 }
 
 void leaveCompanion() {
   setupRequired = (!palaHasWifi() && !PALA_BRIDGE_DISCOVERY) || !(PALA_MAC_BRIDGE || palaHasOpenAiKey());
   soundBack();
   stopTransferMode();
-  companionExitArmed = false;
+  companionControls.reset();
   companionGestureStartedAt = 0;
-  companionSingleStartedAt = 0;
-  companionSinglePin = -1;
+  companionApPassword = "";
+  companionNetworkName = "";
   state = STATE_IDLE;
   idleInputArmed = false;
   clearLatchedPresses();
@@ -577,8 +703,9 @@ bool processCapturedMemoryNow(int noteNum) {
 }
 
 void redrawCompanionHome() {
-  showTransferMode(transferUrl.c_str(),
-                   companionApPassword.length() ? companionApPassword.c_str() : nullptr);
+  const CompanionLink link = transferUrl.isEmpty() ? CompanionLink::Offline
+      : companionUsesHotspot ? CompanionLink::Hotspot : CompanionLink::Wifi;
+  showTransferMode(link, companionNetworkName, transferUrl, companionApPassword, palaPlaybackVolume());
 }
 
 void captureMemory() {
@@ -726,8 +853,6 @@ void askBrain() {
 }
 
 void playDailyBriefing() {
-  lastUpperTapAt = 0;
-  lastLowerTapAt = 0;
   if (!palaHasWifi() || !(PALA_MAC_BRIDGE || palaHasOpenAiKey())) {
     enterCompanion();
     return;
@@ -768,8 +893,6 @@ void playDailyBriefing() {
 }
 
 void playWeeklyBriefing() {
-  lastUpperTapAt = 0;
-  lastLowerTapAt = 0;
   if (!palaHasWifi() || !(PALA_MAC_BRIDGE || palaHasOpenAiKey())) {
     enterCompanion();
     return;
@@ -819,8 +942,6 @@ PressResult classifyPress(int pin) {
     // Capture/Ask before Companion could see both buttons.
     if (bothButtonsDown()) {
       companionGestureStartedAt = millis();
-      lastUpperTapAt = 0;
-      lastLowerTapAt = 0;
       return PressResult::Chord;
     }
     delay(4);
@@ -847,10 +968,77 @@ bool waitForSecondTap(int pin) {
   return false;
 }
 
+void openHomeAgenda(bool events) {
+  state = STATE_AGENDA;
+  agendaShowsEvents = events;
+  agendaPage = 0;
+  agendaShownAt = millis();
+  showTodayAgenda(events, agendaPage);
+}
+
+void enterAquarium() {
+  stopBluetoothSync();
+  stopWifi();
+  clearLatchedPresses();
+  state = STATE_AQUARIUM;
+  aquarium.open(millis());
+  aquariumChord = false;
+  aquariumLowerDown = false;
+  lastAquariumFrame = -1;
+}
+
+void handleAquarium() {
+  const uint32_t now = millis();
+  UpperAction upper = UpperAction::None;
+  bool lowerTap = false;
+  if (bothButtonsDown()) aquariumChord = true;
+  if (aquariumChord) {
+    clearLatchedPresses();
+    aquariumLowerDown = false;
+    if (bothButtonsUp()) aquariumChord = false;
+  } else {
+    upper = pollUpperGesture(2);
+    if (takeLatchedPress(false) && !aquariumLowerDown) {
+      aquariumLowerDown = digitalRead(BTN_PWR) == LOW;
+      aquariumLowerAt = now;
+      lowerTap = !aquariumLowerDown;
+    }
+    if (aquariumLowerDown && digitalRead(BTN_PWR) == HIGH) {
+      aquariumLowerDown = false;
+      lowerTap = now - aquariumLowerAt < REC_HOLD_MS;
+    }
+  }
+
+  if (upper != UpperAction::None && upper != UpperAction::Hold) {
+    aquarium.upper(upper, now);
+    resetActivity();
+  } else if (lowerTap && !upperGesture.pending()) {
+    aquarium.lower(now);
+    resetActivity();
+  }
+  aquarium.advance(now, upperGesture.pending());
+  if (aquarium.scene == AquariumScene::Closed) {
+    returnToReady();
+    return;
+  }
+
+  // The panel is the pacing limit. Skip late frames, never replay a backlog.
+  if (lastAquariumFrame >= 0 && now - lastAquariumPaintAt < 170) return;
+  const int frame = aquariumFrame(aquarium.scene, now - aquarium.since);
+  if (frame == lastAquariumFrame) return;
+  if (!showAquariumFrame(frame, pollUsbBacklog)) {
+    Serial.println("Aquarium frame unavailable");
+    returnToReady();
+    return;
+  }
+  lastAquariumFrame = frame;
+  lastAquariumPaintAt = now;
+  if (aquarium.scene == AquariumScene::Peek) aquarium.since = millis();
+}
+
 void handleIdle() {
   if (!idleInputArmed) {
-    // A fresh edge captured during the blocking e-paper refresh is safe to
-    // consume. The old Back/wake edge was cleared before that refresh.
+    // Fresh edges captured during a Home refresh belong to Home.
     if (upperPressLatched || lowerPressLatched) idleInputArmed = true;
     else {
       if (bothButtonsUp()) idleInputArmed = true;
@@ -860,8 +1048,6 @@ void handleIdle() {
 
   if (bothButtonsDown()) {
     clearLatchedPresses();
-    lastUpperTapAt = 0;
-    lastLowerTapAt = 0;
     if (companionGestureStartedAt == 0) companionGestureStartedAt = millis();
     if (millis() - companionGestureStartedAt >= COMPANION_HOLD_MS) {
       soundSelect();
@@ -869,82 +1055,57 @@ void handleIdle() {
     }
     return;
   }
-  companionGestureStartedAt = 0;
-
-  const bool upperLatched = upperPressLatched;
-  const bool lowerLatched = lowerPressLatched;
-  if (digitalRead(BTN_REC) == LOW || (upperLatched && !lowerLatched)) {
-    takeLatchedPress(true);
+  if (companionGestureStartedAt) {
+    if (!bothButtonsUp()) return;
+    companionGestureStartedAt = 0;
+    clearLatchedPresses();
     resetActivity();
-    // A released edge captured during refresh is necessarily a short press.
-    if (digitalRead(BTN_REC) == HIGH) {
-      lastLowerTapAt = 0;
-      state = STATE_AGENDA;
-      agendaShowsEvents = false;
-      agendaPage = 0;
-      agendaShownAt = millis();
-      showTodayAgenda(false, agendaPage);
-      lastUpperTapAt = 0;
-      return;
-    }
-    const PressResult press = classifyPress(BTN_REC);
-    if (press == PressResult::Chord) return;
-    if (press == PressResult::LongSingle) {
-      lastUpperTapAt = 0;
-      captureMemory();
-    }
-    else {
-      if (waitForSecondTap(BTN_REC)) {
-        playDailyBriefing();
-        return;
+    if (bluetoothEnrollmentAvailable()) {
+      stopBluetoothSync();
+      if (!startBluetoothEnrollment()) {
+        showError("BT UNAVAILABLE");
+        renderReadyHome();
       }
-      lastLowerTapAt = 0;
-      state = STATE_AGENDA;
-      agendaShowsEvents = false;
-      agendaPage = 0;
-      agendaShownAt = millis();
-      showTodayAgenda(false, agendaPage);
-      lastUpperTapAt = 0;
     }
     return;
   }
-  if (digitalRead(BTN_PWR) == LOW || lowerLatched) {
+
+  if (digitalRead(BTN_PWR) == LOW || (lowerPressLatched && digitalRead(BTN_REC) == HIGH)) {
     takeLatchedPress(false);
+    takeLatchedPress(true);
     resetActivity();
-    if (digitalRead(BTN_PWR) == HIGH) {
-#if PALA_BRIDGE_DISCOVERY
-      if (hasQueuedAudio()) { requestBacklogSync(); return; }
-#endif
-      lastUpperTapAt = 0;
-      state = STATE_AGENDA;
-      agendaShowsEvents = true;
-      agendaPage = 0;
-      agendaShownAt = millis();
-      showTodayAgenda(true, agendaPage);
-      lastLowerTapAt = 0;
-      return;
-    }
-    const PressResult press = classifyPress(BTN_PWR);
-    if (press == PressResult::Chord) return;
-    if (press == PressResult::LongSingle) {
-      lastLowerTapAt = 0;
-      askBrain();
-    } else {
+    const bool lowerDown = digitalRead(BTN_PWR) == LOW;
+    if (lowerDown) {
+      const PressResult press = classifyPress(BTN_PWR);
+      if (press == PressResult::Chord) return;
+      if (press == PressResult::LongSingle) {
+        askBrain();
+        return;
+      }
       if (waitForSecondTap(BTN_PWR)) {
         playWeeklyBriefing();
         return;
       }
-#if PALA_BRIDGE_DISCOVERY
-      if (hasQueuedAudio()) { requestBacklogSync(); return; }
-#endif
-      lastUpperTapAt = 0;
-      state = STATE_AGENDA;
-      agendaShowsEvents = true;
-      agendaPage = 0;
-      agendaShownAt = millis();
-      showTodayAgenda(true, agendaPage);
-      lastLowerTapAt = 0;
     }
+#if PALA_BRIDGE_DISCOVERY
+    if (hasQueuedAudio()) { requestBacklogSync(); return; }
+#endif
+    openHomeAgenda(true);
+    return;
+  }
+
+  if (upperPressLatched) resetActivity();
+  const UpperAction upper = pollUpperGesture(3);
+  switch (upper) {
+    case UpperAction::None: break;
+    case UpperAction::Single: openHomeAgenda(false); break;
+    case UpperAction::Double: playDailyBriefing(); break;
+    case UpperAction::Triple:
+      if (!backlogSyncActive && backlogScreen.link == BacklogLink::Deferred) enterAquarium();
+      break;
+    case UpperAction::Hold:
+      if (digitalRead(BTN_REC) == LOW) captureMemory();
+      break;
   }
 }
 
@@ -989,6 +1150,16 @@ void handleAgenda() {
   }
 }
 
+#if PALA_BRIDGE_DISCOVERY
+bool yieldBacklogToUsb() {
+  if (!preferUsbForBacklog()) return false;
+  stopWifi();
+  backlogSyncActive = false;
+  backlogSyncTotal = 0;
+  return true;
+}
+#endif
+
 void handleBackgroundBrain() {
   // Do not launch another network stage after the sleep budget has expired.
   // A stage already running is allowed to finish and save its result safely.
@@ -999,9 +1170,14 @@ void handleBackgroundBrain() {
   if (!bothButtonsUp()) return;
 #if PALA_BRIDGE_DISCOVERY
   // Give the Windows watcher a full poll interval plus time to authenticate.
-  if (backlogLink(usbSyncActive(), usbDataConnected,
-                  backlogRequested && millis() - backlogRequestedAt < 3500,
-                  WifiBacklog::Unchecked) == BacklogLink::Usb) return;
+  if (preferUsbForBacklog()) {
+    if (!usbQueueChecked) {
+      usbQueueChecked = true;
+      const int total = pendingTranscriptionCount();
+      if (total > 0) showBacklogLink(BacklogLink::Usb, 0, total);
+    }
+    return;
+  }
 #endif
   backlogRequested = false;
   // This scan touches per-note metadata, so never perform it in every 8 ms
@@ -1027,6 +1203,8 @@ void handleBackgroundBrain() {
       backlogSyncActive = false;
       backlogSyncTotal = 0;
       returnFromBackgroundSync();
+    } else if (backlogScreen.link != BacklogLink::Deferred) {
+      renderReadyHome();
     }
     nextBackgroundAttemptAt = millis() + BACKGROUND_RETRY_MS;
     return;
@@ -1036,7 +1214,7 @@ void handleBackgroundBrain() {
   // home screen. Pick the exact durable item this pass will work on and show
   // its real stage before a TLS request can temporarily occupy the device.
   int visibleNote = indexingNote;
-  const char* visiblePhase = indexingNote >= 0 ? "REMEMBERING" : "CONNECTING";
+  const char* visiblePhase = "REMEMBERING";
   // Rotate the selected item too: passing a preferred note bypasses the
   // network worker's own rotation. A bad newest note must not starve old ones.
   // Only one network stage runs per pass so buttons and the e-paper UI remain
@@ -1051,9 +1229,16 @@ void handleBackgroundBrain() {
     }
     if (visibleNote >= 0) { queueCursor = (index + 1) % noteIndex.size(); break; }
   }
-  if (visibleNote < 0) {
+#if PALA_BRIDGE_DISCOVERY
+  // Wi-Fi backoff can leave no runnable Wi-Fi stage. A paired Bridge can still
+  // fetch the same WAV over Bluetooth if the Wi-Fi Bridge is unavailable.
+  const bool waitingAudio = visibleNote < 0 && hasQueuedAudio();
+#else
+  constexpr bool waitingAudio = false;
+#endif
+  if (visibleNote < 0 && !waitingAudio) {
     stopWifi();
-    if (backlogSyncActive) {
+    if (backlogSyncActive || backlogScreen.link != BacklogLink::Deferred) {
       backlogSyncActive = false;
       backlogSyncTotal = 0;
       returnFromBackgroundSync();
@@ -1068,23 +1253,31 @@ void handleBackgroundBrain() {
     backlogSyncTotal = pendingBefore;
   }
   const int completedBefore = max(0, backlogSyncTotal - pendingBefore);
-  showBacklogProcessing(completedBefore, backlogSyncTotal, "CONNECTING");
-
   // Association and an authenticated Bridge readiness reply are separate.
 #if PALA_BRIDGE_DISCOVERY
-  const WifiBacklog wifi = connectConfiguredWifi(8, 4500) ? pairedWifiBacklog() : WifiBacklog::Unavailable;
+  WifiBacklog wifi = WifiBacklog::Unavailable;
+  if (palaHasWifi()) {
+    showBacklogLink(BacklogLink::Wifi, completedBefore, backlogSyncTotal);
+    if (yieldBacklogToUsb()) return;
+    if (connectConfiguredWifi(8, 4500)) wifi = pairedWifiBacklog();
+  }
+  pollUsbBacklog();
+  if (yieldBacklogToUsb()) return;
   if (wifi != WifiBacklog::Unavailable && homeNoteNameNeedsRefresh()) refreshHomeNoteName();
-  const BacklogLink link = backlogLink(false, false, false, wifi);
+  const bool audioForBluetooth = wifi == WifiBacklog::Unavailable && (waitingAudio || hasQueuedAudio());
+  const BacklogLink link = pairedBacklogAfterWifi(wifi, visibleNote >= 0, audioForBluetooth);
   if (link != BacklogLink::Wifi) {
     stopWifi();
-    if (link == BacklogLink::Bluetooth && hasQueuedAudio() && startBluetoothSync()) {
-      bluetoothWindowShown = true;
+    if (link == BacklogLink::Bluetooth && startBluetoothSync()) {
+      const int total = backlogSyncTotal;
       backlogSyncActive = false;
       backlogSyncTotal = 0;
       nextBackgroundAttemptAt = millis() + BACKGROUND_RETRY_MS;
+      showBacklogLink(BacklogLink::Bluetooth, completedBefore, total);
       return;
     }
 #else
+  showBacklogLink(BacklogLink::Wifi, completedBefore, backlogSyncTotal);
   if (!connectConfiguredWifi(8)) {
 #endif
     showBacklogProcessing(completedBefore, backlogSyncTotal, "QUEUED");
@@ -1095,6 +1288,7 @@ void handleBackgroundBrain() {
     returnFromBackgroundSync();
     return;
   }
+  backlogScreen.link = BacklogLink::Deferred;
   showBacklogProcessing(completedBefore, backlogSyncTotal, visiblePhase);
 
   // Wi-Fi and Arduino's TCP stack must stay on the normal loop context.
@@ -1152,13 +1346,15 @@ void refreshHomeWeatherWhenIdle() {
   const int64_t utc = time(nullptr);
   const bool weatherDue = homeForecastNeedsRefresh(localDayKey(), utc);
   const bool nameDue = homeNoteNameNeedsRefresh();
+  const bool deliveryDue = homeDeliveryNeedsRefresh(now);
   if ((utc < retryHomeWeatherAfter && retryHomeWeatherAfter - utc <= 300) ||
-      (!weatherDue && !nameDue) || hasQueuedAudio()) return;
+      (!weatherDue && !nameDue && !deliveryDue) || hasQueuedAudio()) return;
   retryHomeWeatherAfter = utc + 300;
   bool updated = false;
   if (connectConfiguredWifi(8, 4500)) {
     if (nameDue) updated = refreshHomeNoteName();
     if (weatherDue) updated = refreshHomeForecast() || updated;
+    if (deliveryDue) updated = refreshHomeDelivery() || updated;
   }
   stopWifi();
   if (updated && bothButtonsUp() && !upperPressLatched && !lowerPressLatched) renderReadyHome();
@@ -1170,61 +1366,35 @@ void handleCompanion() {
 
   const bool upperDown = digitalRead(BTN_REC) == LOW;
   const bool lowerDown = digitalRead(BTN_PWR) == LOW;
-
   if (upperDown || lowerDown) resetActivity();
-  if (millis() - lastActivityMs >= COMPANION_IDLE_SLEEP_MS) {
+  const uint32_t now = millis();
+  if (now - lastActivityMs >= COMPANION_IDLE_SLEEP_MS) {
     leaveCompanion();
     enterUltraSleep();
     return;
   }
 
-  if (!companionExitArmed) {
-    companionUpperWasDown = upperDown;
-    companionLowerWasDown = lowerDown;
-    if (!upperDown && !lowerDown) companionExitArmed = true;
+  const CompanionAction action = companionControls.poll(now, upperDown, lowerDown, COMPANION_HOLD_MS);
+  if (action == CompanionAction::Exit) {
+    leaveCompanion();
     return;
   }
 
-  if (upperDown && lowerDown) {
-    companionSingleStartedAt = 0;
-    companionSinglePin = -1;
-    if (companionGestureStartedAt == 0) companionGestureStartedAt = millis();
-    if (millis() - companionGestureStartedAt >= COMPANION_HOLD_MS) {
-      leaveCompanion();
-      return;
-    }
-    companionUpperWasDown = true;
-    companionLowerWasDown = true;
-    return;
+  bool volumeChanged = false;
+  int volume = 0;
+  if (action == CompanionAction::Louder || action == CompanionAction::Quieter) {
+    const int before = palaPlaybackVolume();
+    volume = constrain(before + (action == CompanionAction::Louder ? 20 : -20), 20, 100);
+    volumeChanged = volume != before && palaSetPlaybackVolume(volume);
   }
 
-  companionGestureStartedAt = 0;
-  if (upperDown && !companionUpperWasDown) {
-    companionSingleStartedAt = millis();
-    companionSinglePin = BTN_REC;
-  } else if (lowerDown && !companionLowerWasDown) {
-    companionSingleStartedAt = millis();
-    companionSinglePin = BTN_PWR;
+  bool connectionChanged = false;
+  if (!upperDown && !lowerDown && static_cast<int32_t>(now - nextCompanionNetworkCheckAt) >= 0) {
+    nextCompanionNetworkCheckAt = now + 1000;
+    connectionChanged = refreshCompanionConnection();
   }
-
-  if (companionSinglePin >= 0 && millis() - companionSingleStartedAt >= 140UL) {
-    if (!bothButtonsDown()) {
-      const int volume = companionSinglePin == BTN_REC
-        ? min(100, palaPlaybackVolume() + 20)
-        : max(20, palaPlaybackVolume() - 20);
-      palaSetPlaybackVolume(volume);
-      showVolumeSetting(volume);
-      companionVolumeShownAt = millis();
-    }
-    companionSingleStartedAt = 0;
-    companionSinglePin = -1;
-  } else if (companionVolumeShownAt && millis() - companionVolumeShownAt >= 1800UL) {
-    companionVolumeShownAt = 0;
-    redrawCompanionHome();
-  }
-
-  companionUpperWasDown = upperDown;
-  companionLowerWasDown = lowerDown;
+  if (connectionChanged) redrawCompanionHome();
+  else if (volumeChanged) showCompanionVolume(volume);
 }
 
 void initializeDisplay() {
@@ -1258,9 +1428,60 @@ void initializeStorage() {
   Serial.printf("[SD] %d memories\n", static_cast<int>(noteIndex.size()));
 }
 
+bool pollPairingOverlay() {
+  if (takeNoteBleEnableRequest() && state == STATE_TRANSFER && !usbSyncActive()) {
+    if (!bluetoothEnrollmentOpen()) stopBluetoothSync();
+    startBluetoothEnrollment();
+  }
+  const bool ble = bluetoothEnrollmentOpen() && pollBluetoothSync();
+  String peer;
+  uint32_t code = 0;
+  PairingView next = PairingView::None;
+  if (noteUsbPairingPrompt(peer)) next = PairingView::UsbPrompt;
+  else if (noteUsbPairingOpen()) next = PairingView::UsbWait;
+  else if (ble) next = bluetoothEnrollmentPrompt(code) ? PairingView::BluetoothCode : PairingView::BluetoothWait;
+
+  if (next != pairingView || (next == PairingView::BluetoothCode && code != pairingDisplayedCode)) {
+    clearLatchedPresses();
+    pairingButtonsArmed = false;
+    pairingDisplayedCode = code;
+    pairingView = next;
+    if (next == PairingView::UsbPrompt) showNoteUsbPairingPrompt(peer);
+    else if (next == PairingView::BluetoothCode) showNoteBluetoothPairingNumber(code);
+    else if (next == PairingView::BluetoothWait || next == PairingView::UsbWait) {
+      showNotePairingWait(next == PairingView::BluetoothWait);
+    } else if (state == STATE_TRANSFER) {
+      companionControls.reset();
+      refreshCompanionConnection();
+      redrawCompanionHome();
+    }
+    else if (setupRequired) showSetupRequired();
+    else renderReadyHome();
+    // Edges captured while e-paper was updating cannot approve a new prompt.
+    clearLatchedPresses();
+  }
+  if (next == PairingView::None) return false;
+  if (state == STATE_TRANSFER && transferServerActive) transferServer.handleClient();
+  resetActivity();
+  if (!pairingButtonsArmed) {
+    if (bothButtonsUp()) pairingButtonsArmed = true;
+    return true;
+  }
+  const bool upper = takeLatchedPress(true);
+  const bool lower = takeLatchedPress(false);
+  if (next == PairingView::UsbPrompt && (upper || lower)) noteUsbPairingConfirm(upper && !lower);
+  else if (next == PairingView::BluetoothCode && (upper || lower)) {
+    bluetoothEnrollmentConfirm(upper && !lower);
+    if (lower) stopBluetoothSync();
+  } else if (next == PairingView::UsbWait && lower) noteUsbPairingConfirm(false);
+  else if (next == PairingView::BluetoothWait && lower) stopBluetoothSync();
+  return true;
+}
+
 }  // namespace
 
 void setup() {
+  homeBridgeStatus.reset();
   Serial.begin(115200);
   delay(40);
   Serial.println("\n=== Pala Note " FIRMWARE_VERSION " ===");
@@ -1268,10 +1489,11 @@ void setup() {
   releasePeripheralPowerHolds();
   palaSettingsBegin();
   importFlashSetup();
+  noteConfigSeedEntropy();
   batteryBegin();
   pinMode(BTN_REC, INPUT_PULLUP);
   pinMode(BTN_PWR, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(BTN_REC), latchUpperPress, FALLING);
+  attachInterrupt(digitalPinToInterrupt(BTN_REC), latchUpperEdge, CHANGE);
   attachInterrupt(digitalPinToInterrupt(BTN_PWR), latchLowerPress, FALLING);
   board.VBAT_POWER_ON();
 
@@ -1329,17 +1551,22 @@ void setup() {
 }
 
 void loop() {
-#if PALA_BRIDGE_DISCOVERY
-  const bool dataCable = usb_serial_jtag_is_connected();
-  if (dataCable && !usbDataConnected && state == STATE_IDLE && !bluetoothSyncActive()) {
-    stopBluetoothSync();
-    requestBacklogSync();
+  pollUsbBacklog();
+  if (pollPairingOverlay()) {
+    if (state == STATE_AQUARIUM) {
+      aquarium = AquariumState{};
+      state = STATE_IDLE;
+      idleInputArmed = false;
+    }
+    delay(5);
+    return;
   }
-  usbDataConnected = dataCable;
-#endif
-  handleUsbSetup();
   if (usbSyncActive()) {
     stopBluetoothSync();
+    if (backlogScreen.link != BacklogLink::Deferred &&
+        (backlogScreen.link != BacklogLink::Usb || !backlogScreen.authenticated)) {
+      showBacklogLink(BacklogLink::Usb, backlogScreen.completed, backlogScreen.total, true);
+    }
     if (bothButtonsUp()) idleInputArmed = true;
     else if (idleInputArmed) cancelUsbSync();
     // Checking an empty cable leaves the normal idle-to-sleep deadline intact.
@@ -1347,8 +1574,16 @@ void loop() {
     delay(5);
     return;
   }
+  if (state == STATE_AQUARIUM) {
+    handleAquarium();
+    delay(8);
+    return;
+  }
   const bool bluetoothOpen = pollBluetoothSync();
   if (bluetoothOpen && bluetoothSyncActive()) {
+    if (backlogScreen.link == BacklogLink::Bluetooth && !backlogScreen.authenticated) {
+      showBacklogLink(BacklogLink::Bluetooth, backlogScreen.completed, backlogScreen.total, true);
+    }
     if (bothButtonsUp()) idleInputArmed = true;
     else if (idleInputArmed) stopBluetoothSync();
     resetActivity();
@@ -1356,12 +1591,14 @@ void loop() {
     return;
   }
   if (bluetoothOpen && (upperPressLatched || lowerPressLatched)) stopBluetoothSync();
-  if (!bluetoothOpen && bluetoothWindowShown) {
-    bluetoothWindowShown = false;
-    takeSyncHomeChanged();
-    if (state == STATE_IDLE && !setupRequired) returnFromBackgroundSync();
-  } else if (!bluetoothOpen && takeSyncHomeChanged() && state == STATE_IDLE && !setupRequired) {
-    renderReadyHome();
+  if (!bluetoothOpen && !preferUsbForBacklog()) {
+    if (backlogScreen.link == BacklogLink::Bluetooth) {
+      backlogScreen.link = BacklogLink::Deferred;
+      takeSyncHomeChanged();
+      if (state == STATE_IDLE && !setupRequired) returnFromBackgroundSync();
+    } else if (takeSyncHomeChanged() && state == STATE_IDLE && !setupRequired) {
+      renderReadyHome();
+    }
   }
 
   // Companion must also be serviced on a device that still needs setup.
@@ -1396,22 +1633,34 @@ void loop() {
 
   if (state == STATE_IDLE) {
     handleIdle();
+    if (state == STATE_AQUARIUM || upperGesture.pending()) {
+      delay(8);
+      return;
+    }
     if (state == STATE_IDLE && !bluetoothOpen) handleBackgroundBrain();
-    if (bluetoothOpen || bluetoothWindowShown) {
+    if (bluetoothOpen || backlogScreen.link == BacklogLink::Bluetooth) {
       delay(8);
       return;
     }
     if (state == STATE_IDLE) refreshHomeWeatherWhenIdle();
+    if (state == STATE_IDLE && !backlogRequested && !backlogSyncActive &&
+        bothButtonsUp() && !upperPressLatched && !lowerPressLatched && !preferUsbForBacklog()) {
+      maintainNoteTrash();
+    }
     if (state == STATE_IDLE &&
         static_cast<int32_t>(millis() - nextHomeClockCheckAt) >= 0) {
       nextHomeClockCheckAt = millis() + 60000UL;
       const String day = localDayKey();
       if (day != displayedHomeDay) renderReadyHome();
     }
+    // A verified link may have closed without changing any other Home data.
+    if (state == STATE_IDLE && backlogScreen.link == BacklogLink::Deferred &&
+        !backlogSyncActive && !preferUsbForBacklog() && bothButtonsUp() &&
+        !upperPressLatched && !lowerPressLatched && homeBridgeStatus.needsRedraw()) {
+      renderReadyHome();
+    }
     if (state == STATE_IDLE &&
-        idleInputArmed && bothButtonsUp() &&
-        (!lastUpperTapAt || millis() - lastUpperTapAt > ASK_DOUBLE_TAP_MS) &&
-        (!lastLowerTapAt || millis() - lastLowerTapAt > ASK_DOUBLE_TAP_MS)) {
+        idleInputArmed && bothButtonsUp() && !upperGesture.pending()) {
       const uint32_t idleFor = millis() - lastActivityMs;
       if (idleFor >= AUTO_SLEEP_IDLE_MS) {
         // Give queued memories time to finish, but never let a bad network or

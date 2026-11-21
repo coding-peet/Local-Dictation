@@ -60,7 +60,11 @@ Canonical checkout: C:\Git\Local-Dictation\repo.
 Published client: C:\Git\Local-Dictation\app.
 Client data: C:\AI\LocalDictation\data.
 Client logs: C:\AI\LocalDictation\logs.
-Build output: C:\AI\build\Local-Dictation.
+Windows build output: C:\Git\Local-Dictation\build\windows.
+Keep generated project build, candidate, and verification files under
+C:\Git\Local-Dictation, alongside but outside the repo and installed app.
+Use distinct candidate folders for simultaneous builds. For folder roles and
+cleanup guidance, see docs/development/rebuild-and-recovery.md.
 Existing backend runtime and models: C:\AI\PalaNote-ASR.
 
 Keep generated binaries and real user data outside the checkout. Never

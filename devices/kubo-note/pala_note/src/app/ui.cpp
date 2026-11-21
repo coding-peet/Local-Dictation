@@ -10,6 +10,8 @@
 #include "calendar_week.h"
 #include "home_almanac.h"
 #include "home_weather.h"
+#include "home_delivery.h"
+#include "home_bridge_status.h"
 
 #include <ctime>
 
@@ -23,15 +25,18 @@ constexpr int kBatteryBodyWidth = 23;
 constexpr int kBatteryContactWidth = 2;
 constexpr int kBatteryWidth = kBatteryBodyWidth + kBatteryContactWidth;
 constexpr int kHomeBatteryX = kRight - kBatteryWidth;
-constexpr int kSleepLockGap = 7;
-constexpr int kSleepLockWidth = 11;
-constexpr int kSleepLockX = kHomeBatteryX - kSleepLockGap - kSleepLockWidth;
-static_assert(kSleepLockX >= kInset && kHomeBatteryX + kBatteryWidth <= W);
+constexpr int kHomeStatusGap = 7;
+constexpr int kHomeStatusWidth = 11;
+constexpr int kHomeStatusHeight = 14;
+constexpr int kHomeStatusX = kHomeBatteryX - kHomeStatusGap - kHomeStatusWidth;
+static_assert(kHomeStatusX >= kInset && kHomeBatteryX + kBatteryWidth <= W);
 constexpr int kHeaderRuleY = 31;
-constexpr int kHomeAgendaRuleY = 156;
-constexpr int kHomeAgendaColumnGap = 4;
-constexpr int kHomeAgendaLabelY = kHomeAgendaRuleY + 7;
-constexpr int kHomeAgendaCountY = kHomeAgendaRuleY + 22;
+constexpr int kHomeWeatherHeight = 17;
+constexpr int kHomeDeliveryRuleY = 141;
+constexpr int kHomeDeliveryColumnGap = 4;
+constexpr int kHomeDeliveryLabelY = 146;
+constexpr int kHomeDeliverySecondLineY = 164;
+constexpr int kHomeDeliveryCountY = 182;
 constexpr int kContentTop = 43;
 constexpr int kFooterRuleY = 174;
 constexpr int kFooterTextY = 181;
@@ -107,6 +112,11 @@ const char* translatedUi(const char* english) {
       {"BRIEF FAILED", "CHYBA SUHRNU"},
       {"SD ERROR", "CHYBA SD"},
       {"COMPANION", "SPRIEVODCA"},
+      {"Wi-Fi network", "Siet Wi-Fi"},
+      {"Not connected", "Bez pripojenia"},
+      {"Key", "Heslo"},
+      {"Volume", "Hlasitost"},
+      {"Hold both to exit", "Podrz obe na navrat"},
     };
     for (const auto& pair : extra) if (!strcmp(english, pair[0])) return pair[1];
   }
@@ -274,6 +284,7 @@ int askStage(const char* action) {
 const char* memoryPhaseCopy(const char* phase) {
   if (!phase) return uiText("MOMENT...", "ONE MOMENT");
   if (!strcmp(phase, "CONNECTING")) return uiText("VERBINDE", "CONNECTING");
+  if (!strcmp(phase, "SYNCING")) return uiText("SYNCHRONISIERE", "SYNCING");
   if (!strcmp(phase, "DECODING")) return uiText("TRANSKRIBIERE", "TRANSCRIBING");
   if (!strcmp(phase, "UNDERSTANDING") || !strcmp(phase, "ORGANIZING")) return uiText("ORDNE EIN", "ORGANIZING");
   if (!strcmp(phase, "REMEMBERING")) return uiText("MERKE MIR", "REMEMBERING");
@@ -390,21 +401,21 @@ int agendaPages(const std::vector<BrainTaskRecord>& items) {
 }
 
 void drawSunGlyph(int x, int y, bool rays) {
-  strokeCircle(x, y, 3, 1, BLACK);
+  strokeCircle(x, y, 4, 1, BLACK);
   if (!rays) return;
-  hline(x - 7, y, 2, BLACK);
-  hline(x + 6, y, 2, BLACK);
-  vline(x, y - 7, 2, BLACK);
-  vline(x, y + 6, 2, BLACK);
+  hline(x - 8, y, 2, BLACK);
+  hline(x + 7, y, 2, BLACK);
+  vline(x, y - 8, 2, BLACK);
+  vline(x, y + 7, 2, BLACK);
   for (int dx : {-1, 1}) {
-    for (int dy : {-1, 1}) line(x + 4 * dx, y + 4 * dy, x + 5 * dx, y + 5 * dy, BLACK);
+    for (int dy : {-1, 1}) line(x + 5 * dx, y + 5 * dy, x + 6 * dx, y + 6 * dy, BLACK);
   }
 }
 
 void drawCloudGlyph(int x, int y) {
   static constexpr int outline[][2] = {
-    {-7, 3}, {-8, 1}, {-7, -1}, {-4, -1}, {-3, -4}, {0, -5},
-    {3, -4}, {4, -2}, {6, -2}, {8, 0}, {8, 2}, {6, 4}, {-6, 4}, {-7, 3},
+    {-8, 4}, {-9, 2}, {-8, -1}, {-5, -1}, {-3, -5}, {0, -6},
+    {3, -5}, {5, -2}, {7, -2}, {10, 1}, {10, 3}, {7, 6}, {-6, 6}, {-8, 4},
   };
   for (size_t i = 1; i < sizeof(outline) / sizeof(outline[0]); ++i) {
     line(x + outline[i - 1][0], y + outline[i - 1][1],
@@ -416,33 +427,33 @@ void drawWeatherGlyph(int x, int y, WeatherGlyph glyph) {
   switch (glyph) {
     case WeatherGlyph::Sun: drawSunGlyph(x, y, true); return;
     case WeatherGlyph::PartlyCloudy:
-      drawSunGlyph(x - 4, y - 4, false);
-      hline(x - 11, y - 4, 2, BLACK);
-      vline(x - 4, y - 9, 2, BLACK);
-      fillRect(x - 6, y - 4, 10, 5, WHITE);
+      drawSunGlyph(x - 5, y - 4, false);
+      hline(x - 13, y - 4, 2, BLACK);
+      line(x - 12, y - 8, x - 11, y - 7, BLACK);
+      fillRect(x - 8, y - 4, 12, 6, WHITE);
       drawCloudGlyph(x + 2, y + 2);
       return;
     case WeatherGlyph::Cloud: drawCloudGlyph(x, y); return;
     case WeatherGlyph::Fog:
-      hline(x - 7, y - 4, 14, BLACK);
-      hline(x - 5, y, 12, BLACK);
-      hline(x - 8, y + 4, 15, BLACK);
+      hline(x - 8, y - 5, 17, BLACK);
+      hline(x - 6, y, 14, BLACK);
+      hline(x - 9, y + 5, 17, BLACK);
       return;
     case WeatherGlyph::Rain:
     case WeatherGlyph::Snow:
     case WeatherGlyph::Thunder:
-      drawCloudGlyph(x, y - 3);
+      drawCloudGlyph(x, y - 2);
       if (glyph == WeatherGlyph::Rain) {
-        for (int dx : {-4, 0, 4}) line(x + dx, y + 4, x + dx - 1, y + 6, BLACK);
+        for (int dx : {-5, 0, 5}) line(x + dx, y + 6, x + dx - 1, y + 8, BLACK);
       } else if (glyph == WeatherGlyph::Snow) {
-        for (int dx : {-4, 0, 4}) {
-          px(x + dx, y + 4, BLACK);
-          px(x + dx + 1, y + 7, BLACK);
+        for (int dx : {-5, 0, 5}) {
+          px(x + dx, y + 6, BLACK);
+          px(x + dx + 1, y + 8, BLACK);
         }
       } else {
-        line(x + 1, y + 2, x - 2, y + 5, BLACK);
-        line(x - 2, y + 5, x + 2, y + 5, BLACK);
-        line(x + 2, y + 5, x, y + 7, BLACK);
+        line(x + 1, y + 5, x - 2, y + 6, BLACK);
+        line(x - 2, y + 6, x + 2, y + 6, BLACK);
+        line(x + 2, y + 6, x, y + 8, BLACK);
       }
       return;
     case WeatherGlyph::Unknown: return;
@@ -450,7 +461,7 @@ void drawWeatherGlyph(int x, int y, WeatherGlyph glyph) {
 }
 
 void drawMoonGlyph(int x, int y, MoonPhase phase) {
-  constexpr int radius = 6;
+  constexpr int radius = 8;
   if (phase == MoonPhase::Unknown) return;
   if (phase == MoonPhase::Full) {
     fillCircle(x, y, radius, BLACK);
@@ -470,42 +481,41 @@ void drawMoonGlyph(int x, int y, MoonPhase phase) {
   }
 }
 
-void drawHomeWeather(int y, const String& todayKey, int64_t utc) {
+void drawHomeWeather(int top, const String& todayKey, int64_t utc) {
+  const int centerY = top + kHomeWeatherHeight / 2;
   HomeForecast forecast{};
   if (homeForecastFor(todayKey, forecast)) {
-    drawWeatherGlyph(kInset + 19, y + 8, weatherGlyph(forecast.code));
+    drawWeatherGlyph(kInset + 19, centerY, weatherGlyph(forecast.code));
     char temperature[17];
     snprintf(temperature, sizeof(temperature), "%d / %d", forecast.minimum, forecast.maximum);
-    const int width = textW(temperature, 1);
+    int minX, minY, maxX, maxY, advance;
+    textBoundsFont(temperature, 1, &minX, &minY, &maxX, &maxY, &advance);
+    const int width = max(maxX - minX, advance);
     const int x = (W - width - 5) / 2;
-    drawStr(x, y + 2, temperature, 1, BLACK);
-    strokeCircle(x + width + 2, y + 4, 2, 1, BLACK);
+    const int textY = centerY - (maxY - minY - 1) / 2;
+    drawStr(x, textY, temperature, 1, BLACK);
+    strokeCircle(x + width + 2, textY + 2, 2, 1, BLACK);
   }
-  drawMoonGlyph(kRight - 19, y + 8, moonPhaseAt(utc));
+  drawMoonGlyph(kRight - 19, centerY, moonPhaseAt(utc));
 }
 
 void drawHomeWeek(const String& todayKey, int64_t utc) {
   constexpr int top = kHeaderRuleY + 1;
-  constexpr int bottom = kHomeAgendaRuleY;
-  constexpr int largeWeekdayScale = 3;
-  constexpr int compactWeekdayScale = 2;
+  constexpr int weekdayScale = 3;
   constexpr int labelScale = 1;
   constexpr int sideGap = 5;
-  constexpr int rowGap = 13;
   constexpr int highlightPaddingTop = 3;
   constexpr int highlightHeight = 18;
-  constexpr int weatherGap = 12;
-  constexpr int weatherHeight = 16;
-  const int weekdayHeight = uiFontHeight(largeWeekdayScale);
-  const int calendarHeight = weekdayHeight + rowGap + highlightHeight + weatherGap + weatherHeight;
-  const int headingY = top + (bottom - top - calendarHeight) / 2;
-  const int sideHeadingY = headingY + (weekdayHeight - uiFontHeight(labelScale)) / 2;
-  const int dateY = headingY + weekdayHeight + rowGap + highlightPaddingTop;
+  constexpr int dividerGap = 7;
+  constexpr int dateHighlightTop = kHomeDeliveryRuleY - dividerGap - highlightHeight;
+  constexpr int dateY = dateHighlightTop + highlightPaddingTop;
+  constexpr int weatherY = top + dividerGap;
+  constexpr int weatherBottom = weatherY + kHomeWeatherHeight;
   const int month = todayKey.substring(5, 7).toInt();
   const auto week = calendarWeek(todayKey.substring(0, 4).toInt(),
       month, todayKey.substring(8, 10).toInt());
   if (!week.number) {
-    drawStrC(W / 2, top + (bottom - top - uiFontHeight(1)) / 2,
+    drawStrC(W / 2, top + (kHomeDeliveryRuleY - top - uiFontHeight(1)) / 2,
         uiText("DATUM FEHLT", "DATE NOT SET"), 1, BLACK);
     return;
   }
@@ -519,15 +529,17 @@ void drawHomeWeek(const String& todayKey, int64_t utc) {
   snprintf(weekNumber, sizeof(weekNumber), "CW%02d", week.number);
   const char* monthLabel = months[month - 1];
   const char* weekdayLabel = weekdays[week.today];
-  const int desiredWidth = textW(weekdayLabel, largeWeekdayScale);
-  const auto fitsLargeWeekday = [&] {
-    const int centerHalfWidth = min(W / 2 - kInset - textW(monthLabel, labelScale),
-                                   kRight - textW(weekNumber, labelScale) - W / 2);
-    return desiredWidth <= 2 * (centerHalfWidth - sideGap);
-  };
-  if (!fitsLargeWeekday()) snprintf(weekNumber, sizeof(weekNumber), "W%02d", week.number);
-  const int weekdayScale = fitsLargeWeekday() ? largeWeekdayScale : compactWeekdayScale;
-  const int weekdayY = headingY + (weekdayHeight - uiFontHeight(weekdayScale)) / 2;
+  int minX, minY, maxX, maxY, advance;
+  textBoundsFont(weekdayLabel, weekdayScale, &minX, &minY, &maxX, &maxY, &advance);
+  const int weekdayWidth = max(maxX - minX, advance);
+  const int weekdayHeight = maxY - minY;
+  const int weekdayY = weatherBottom + (dateHighlightTop - weatherBottom - weekdayHeight) / 2;
+  const int sideHeadingY = weekdayY + (weekdayHeight - uiFontHeight(labelScale)) / 2;
+  const int weekdayRight = W / 2 - weekdayWidth / 2 + weekdayWidth;
+  if (weekdayRight + sideGap > kRight - textW(weekNumber, labelScale)) {
+    snprintf(weekNumber, sizeof(weekNumber), "W%02d", week.number);
+  }
+  drawHomeWeather(weatherY, todayKey, utc);
   labelLeft(sideHeadingY, monthLabel, labelScale, BLACK);
   drawStrC(W / 2, weekdayY, weekdayLabel, weekdayScale, BLACK);
   labelRight(sideHeadingY, weekNumber, labelScale, BLACK);
@@ -539,54 +551,93 @@ void drawHomeWeek(const String& todayKey, int64_t utc) {
   for (int i = 0; i < 7; i++) {
     const int x = weekX + i * cell + (i >= weekendStart ? weekendGap : 0);
     const bool today = i == week.today;
-    if (today) fillRect(x + 1, dateY - highlightPaddingTop, cell - 2, highlightHeight, BLACK);
+    if (today) fillRect(x + 1, dateHighlightTop, cell - 2, highlightHeight, BLACK);
     const String date = String(week.days[i]);
     drawStrC(x + cell / 2, dateY, date.c_str(), 1, today ? WHITE : BLACK);
   }
   vline(weekX + weekendStart * cell + weekendGap / 2, dateY - 2, highlightHeight - 2, BLACK);
-  drawHomeWeather(dateY - highlightPaddingTop + highlightHeight + weatherGap, todayKey, utc);
+}
+
+void drawHomeBridgeStatus(HomeBridgeLink link) {
+  constexpr uint16_t wifi[kHomeStatusHeight] = {
+      0b00000000000, 0b00000000000, 0b00011111000, 0b01100000110,
+      0b10000000001, 0b00000000000, 0b00011111000, 0b00100000100,
+      0b00000000000, 0b00001110000, 0b00000000000, 0b00000100000,
+      0b00000000000, 0b00000000000,
+  };
+  constexpr uint16_t usb[kHomeStatusHeight] = {
+      0b00000100000, 0b00001110000, 0b00011111000, 0b00000100000,
+      0b00000100111, 0b00000100111, 0b00000100010, 0b01100100010,
+      0b01100100100, 0b00100101000, 0b00010110000, 0b00001100000,
+      0b00000100000, 0b00001110000,
+  };
+  constexpr uint16_t bluetooth[kHomeStatusHeight] = {
+      0b00000100000, 0b00000110000, 0b00000101000, 0b00100100100,
+      0b00010101000, 0b00001110000, 0b00000100000, 0b00001110000,
+      0b00010101000, 0b00100100100, 0b00000101000, 0b00000110000,
+      0b00000100000, 0b00000000000,
+  };
+
+  const uint16_t* glyph;
+  switch (link) {
+    case HomeBridgeLink::Wifi: glyph = wifi; break;
+    case HomeBridgeLink::Usb: glyph = usb; break;
+    case HomeBridgeLink::Bluetooth: glyph = bluetooth; break;
+    case HomeBridgeLink::None: return;
+  }
+  for (int row = 0; row < kHomeStatusHeight; ++row) {
+    for (int column = 0; column < kHomeStatusWidth; ++column) {
+      if (glyph[row] & (1u << (kHomeStatusWidth - 1 - column))) {
+        px(kHomeStatusX + column, kHeaderY + row, BLACK);
+      }
+    }
+  }
 }
 
 int drawPendingRecordings(int count) {
   if (count <= 0) return W / 2;
-  constexpr int wave[] = {0, -2, -4, -5, -5, -4, -2, 0, 2, 4, 5, 5, 4, 2, 0};
-  constexpr int waveWidth = sizeof(wave) / sizeof(wave[0]);
+  constexpr int barHeights[] = {3, 8, 15, 7, 12, 5, 3};
+  constexpr int barCount = sizeof(barHeights) / sizeof(barHeights[0]);
+  constexpr int barWidth = 2;
+  constexpr int barGap = 1;
+  constexpr int waveWidth = barCount * (barWidth + barGap) - barGap;
   constexpr int waveY = kHeaderY + 6;
-  constexpr int gap = 6;
-  const String label = String(count);
-  const int x = (W - waveWidth - gap - textW(label.c_str(), 1)) / 2;
-  for (int i = 1; i < waveWidth; i++) {
-    line(x + i - 1, waveY + wave[i - 1], x + i, waveY + wave[i], BLACK);
-    line(x + i - 1, waveY + wave[i - 1] + 1, x + i, waveY + wave[i] + 1, BLACK);
+  constexpr int labelGap = 6;
+  constexpr int statusGap = 3;
+  constexpr int groupWidthLimit = 2 * (kHomeStatusX - W / 2 - statusGap);
+
+  String label(count);
+  if (waveWidth + labelGap + textW(label.c_str(), 1) > groupWidthLimit) {
+    label = "100k+";
   }
-  drawStr(x + waveWidth + gap, kHeaderY, label.c_str(), 1, BLACK);
+  const int x = (W - waveWidth - labelGap - textW(label.c_str(), 1)) / 2;
+  for (int i = 0; i < barCount; ++i) {
+    const int height = barHeights[i];
+    fillRect(x + i * (barWidth + barGap), waveY - height / 2, barWidth, height, BLACK);
+  }
+  drawStr(x + waveWidth + labelGap, kHeaderY, label.c_str(), 1, BLACK);
   return x;
 }
 
-const char* compactHomeAgendaLabel(const char* label) {
-  static constexpr struct { const char* full; const char* compact; } labels[] = {
-    {"AUFGABEN", "AUFG."},
-    {"ZAVDANNYA", "ZAVD."},
-    {"RENDEZ-VOUS", "RDV"},
-    {"SOBYTIYA", "SOBYT."},
-    {"AFSPRAKEN", "AFSPR."},
-  };
-  for (const auto& entry : labels) {
-    if (strcmp(label, entry.full) == 0) return entry.compact;
-  }
-  return label;
+void drawHomeDeliveryCount(int center, const char* first, const char* second, int count) {
+  drawStrC(center, kHomeDeliveryLabelY, first, 1, BLACK);
+  drawStrC(center, kHomeDeliverySecondLineY, second, 1, BLACK);
+  char value[8];
+  if (count < 0) strcpy(value, "-");
+  else if (count > 999999) strcpy(value, "999999+");
+  else snprintf(value, sizeof(value), "%d", count);
+  constexpr int width = (kContentWidth - kHomeDeliveryColumnGap) / 2;
+  drawStrC(center, kHomeDeliveryCountY, value, textW(value, 2) <= width ? 2 : 1, BLACK);
 }
 
-void drawHomeAgendaCount(int left, const char* label, int count) {
-  constexpr int width = (kContentWidth - kHomeAgendaColumnGap) / 2;
-  const int center = left + width / 2;
-  label = compactHomeAgendaLabel(label);
-  if (textW(label, 1) <= width) drawStrC(center, kHomeAgendaLabelY, label, 1, BLACK);
-  else drawStrFit(left, kHomeAgendaLabelY, width, label, 1, BLACK);
-
-  char value[8];
-  snprintf(value, sizeof(value), "%d", min(count, 999));
-  drawStrC(center, kHomeAgendaCountY, value, 2, BLACK);
+void drawDeliveryAccent(int x, int glyphTop, bool caron) {
+  const int y = glyphTop - 4;
+  if (caron) {
+    line(x - 2, y, x, y + 2, BLACK);
+    line(x, y + 2, x + 2, y, BLACK);
+  } else {
+    line(x - 1, y + 2, x + 2, y, BLACK);
+  }
 }
 }  // namespace
 
@@ -597,36 +648,31 @@ void showIdle(int pendingCount, int batteryPercent) {
   const int nameWidth = textW(name.c_str(), 1);
   const int nameLeft = max(kInset, W / 2 - kHomeSideSlotOffset - nameWidth / 2);
   drawStrFit(nameLeft, kHeaderY, nameRight - nameLeft, name.c_str(), 1, BLACK);
+  const HomeBridgeLink bridgeLink = homeBridgeStatus.latest();
+  drawHomeBridgeStatus(bridgeLink);
   drawBattery(batteryPercent);
   hline(kInset, kHeaderRuleY, kContentWidth, BLACK);
   const String nowUtc = currentUtcIso();
   const String localNow = utcToLocalDeviceLabel(nowUtc);
   const String todayKey = localNow.length() >= 10 && localNow != "time not set" ? localNow.substring(0, 10) : "";
-  const std::vector<BrainTaskRecord> tasks = loadBrainTasks();
-  int taskCount = 0, eventCount = 0;
-  for (const BrainTaskRecord& task : tasks) {
-    if (task.done) continue;
-    if (!task.dueUtc.length()) {
-      if (undatedTaskVisible(task.type == "event", task.done)) taskCount++;
-      continue;
-    }
-    if (!todayKey.length()) continue;
-    const String localDue = utcToLocalDeviceLabel(task.dueUtc);
-    if (localDue.length() < 10 || localDue == "time not set") continue;
-    const String dueDay = localDue.substring(0, 10);
-    if (task.type == "event") {
-      if (dueDay == todayKey && eventStillRelevant(dueDay.c_str(), todayKey.c_str(),
-          task.dueUtc.c_str(), nowUtc.c_str(), task.datePrecision == "day")) eventCount++;
-    }
-    else if (dueDay <= todayKey) taskCount++;
-  }
   drawHomeWeek(todayKey, time(nullptr));
-  hline(kInset, kHomeAgendaRuleY, kContentWidth, BLACK);
-  const int eventsLeft = W / 2 + kHomeAgendaColumnGap / 2;
-  vline(W / 2, kHomeAgendaLabelY, 31, BLACK);
-  drawHomeAgendaCount(kInset, uiText("AUFGABEN", "TASKS"), taskCount);
-  drawHomeAgendaCount(eventsLeft, uiText("TERMINE", "EVENTS"), eventCount);
+  hline(kInset, kHomeDeliveryRuleY, kContentWidth, BLACK);
+  vline(W / 2, kHomeDeliveryLabelY, 52, BLACK);
+  constexpr int halfColumn = (kContentWidth - kHomeDeliveryColumnGap) / 4;
+  constexpr int left = kInset + halfColumn, right = kRight - halfColumn;
+  const auto counts = homeDeliveryCounts(todayKey);
+  const bool sk = palaUiLanguage() == "sk";
+  drawHomeDeliveryCount(left, sk ? "Dorucene" : "Delivered", sk ? "dnes" : "today", counts.deliveredToday);
+  drawHomeDeliveryCount(right, sk ? "Caka na" : "Awaiting", "Google", counts.waiting);
+  if (sk) {
+    // The FreeSans bitmap font is ASCII-only. Add marks above č, é, Č and á.
+    drawDeliveryAccent(left + 4, kHomeDeliveryLabelY + 3, true);
+    drawDeliveryAccent(left + 33, kHomeDeliveryLabelY + 3, false);
+    drawDeliveryAccent(right - 28, kHomeDeliveryLabelY, true);
+    drawDeliveryAccent(right - 16, kHomeDeliveryLabelY + 3, false);
+  }
   refresh();
+  homeBridgeStatus.drawn(bridgeLink);
 }
 
 int todayAgendaPageCount(bool events) {
@@ -710,13 +756,15 @@ void showMemoryProcessing(int noteNumber, const char* phase) {
   snprintf(number, sizeof(number), "#%03d", noteNumber % 1000);
   drawHeader(number, BLACK);
   labelLeft(kContentTop, uiText("NOTIZ", "NOTE"), 1, BLACK);
+  if (phase && !strcmp(phase, "CONNECTING")) labelRight(kContentTop, "Wi-Fi", 1, BLACK);
   drawStatusHero(memoryPhaseCopy(phase), 78, BLACK);
   const int stage = memoryStage(phase);
   drawProgressSegments(stage, 3, 151, BLACK);
   refresh();
 }
 
-void showBacklogProcessing(int completed, int total, const char* phase) {
+void showBacklogProcessing(int completed, int total, const char* phase,
+                           BacklogLink link, void (*serviceConnection)()) {
   clearWhite();
   completed = constrain(completed, 0, max(total, 1));
   total = max(total, 1);
@@ -724,12 +772,13 @@ void showBacklogProcessing(int completed, int total, const char* phase) {
   char progress[20];
   snprintf(progress, sizeof(progress), "%d / %d", completed, total);
   labelLeft(kContentTop, progress, 1, BLACK);
+  if (const char* transport = backlogTransportLabel(link)) labelRight(kContentTop, transport, 1, BLACK);
   drawStatusHero(memoryPhaseCopy(phase), 78, BLACK);
   strokeRect(kInset, 149, kContentWidth, 12, 1, BLACK);
   const int innerWidth = kContentWidth - 4;
   const int filled = total > 0 ? (innerWidth * completed) / total : 0;
   if (filled > 0) fillRect(kInset + 2, 151, filled, 8, BLACK);
-  refresh();
+  refresh(serviceConnection);
 }
 
 void showAskListening() {
@@ -746,6 +795,7 @@ void showAskThinking() { showAskProgress("THINKING", translatedUi("WITH MEMORY")
 void showAskProgress(const char* action, const char* object) {
   clearWhite();
   drawHeader(uiText("FRAGE", "ASK"), BLACK);
+  if (action && !strcmp(action, "CONNECTING")) labelRight(kContentTop, "Wi-Fi", 1, BLACK);
   drawStatusHero(askPhaseCopy(action), 78, BLACK);
   const int stage = askStage(action);
   drawProgressSegments(stage, 3, 151, BLACK);
@@ -778,50 +828,109 @@ void showAskSpeakingPage(const String& answer, int sourceCount, int page) {
   refresh();
 }
 
+void showNotePairingWait(bool bluetooth) {
+  clearWhite();
+  drawHeader("PAIRING", BLACK);
+  labelLeft(kContentTop, bluetooth ? "Bluetooth" : "USB", 1, BLACK);
+  drawStatusHero(bluetooth ? "READY TO PAIR" : "APPROVED", 75, BLACK);
+  labelLeft(130, bluetooth ? "Open settings on PC" : "Finish on computer", 1, BLACK);
+  drawFooter("LOWER: CANCEL", nullptr, BLACK);
+  refresh();
+}
+
+void showNoteUsbPairingPrompt(const String& peer) {
+  clearWhite();
+  drawHeader("USB PAIRING", BLACK);
+  labelLeft(kContentTop, "Allow this Bridge?", 1, BLACK);
+  drawStrFit(kInset, 82, kContentWidth, normalizeForDisplay(peer).c_str(), 2, BLACK);
+  labelLeft(132, "UPPER: YES", 1, BLACK);
+  drawFooter("LOWER: CANCEL", nullptr, BLACK);
+  refresh();
+}
+
+void showNoteBluetoothPairingNumber(uint32_t code) {
+  clearWhite();
+  drawHeader("BT PAIRING", BLACK);
+  labelLeft(kContentTop, "Compare code on PC", 1, BLACK);
+  char digits[7];
+  snprintf(digits, sizeof(digits), "%06lu", static_cast<unsigned long>(code % 1000000U));
+  drawStrC(W / 2, 82, digits, 3, BLACK);
+  labelLeft(132, "UPPER: YES", 1, BLACK);
+  drawFooter("LOWER: CANCEL", nullptr, BLACK);
+  refresh();
+}
+
 void showTransferConnecting() {
   clearWhite();
   drawHeader(translatedUi("LOCAL"), BLACK);
   labelLeft(kContentTop, translatedUi("COMPANION"), 1, BLACK);
+  labelRight(kContentTop, "Wi-Fi", 1, BLACK);
   drawStatusHero(uiText("VERBINDE", "CONNECTING"), 67, BLACK);
   drawProgressSegments(1, 3, 143, BLACK);
-  drawFooter("1 / 3", translatedUi("WORKING"), BLACK);
+  drawFooterCentered(translatedUi("WORKING"), BLACK);
   refresh();
 }
 
-void showTransferMode(const char* ip, const char* apPassword) {
+namespace {
+constexpr int kCompanionNetworkY = 61;
+constexpr int kCompanionNetworkLineHeight = 17;
+constexpr int kCompanionAddressY = 101;
+constexpr int kCompanionAddressHeight = 28;
+constexpr int kCompanionPasswordY = 135;
+constexpr int kCompanionVolumeY = 155;
+constexpr int kCompanionVolumeHeight = 17;
+static_assert(kCompanionVolumeY + kCompanionVolumeHeight < kFooterRuleY);
+
+void drawCompanionNetworkName(const String& network) {
+  String name = normalizeForDisplay(network);
+  if (!name.length()) name = "SSID";
+  int edge = name.length();
+  while (edge > 0 && textW(name.substring(0, edge).c_str(), 1) > kContentWidth) --edge;
+  labelLeft(kCompanionNetworkY, name.substring(0, edge).c_str(), 1, BLACK);
+  if (edge < static_cast<int>(name.length())) {
+    labelLeft(kCompanionNetworkY + kCompanionNetworkLineHeight, name.substring(edge).c_str(), 1, BLACK);
+  }
+}
+
+void drawCompanionVolume(int percent) {
+  fillRect(kInset, kCompanionVolumeY, kContentWidth, kCompanionVolumeHeight, WHITE);
+  char value[24];
+  snprintf(value, sizeof(value), "%s %d/5", uiText("Lautstaerke", "Volume"),
+           (constrain(percent, 20, 100) + 19) / 20);
+  labelLeft(kCompanionVolumeY, value, 1, BLACK);
+}
+}  // namespace
+
+void showTransferMode(CompanionLink link, const String& network, const String& ip,
+                      const String& apPassword, int volume) {
   clearWhite();
-  drawHeader(translatedUi("COMPANION"), BLACK);
-  if (apPassword && strlen(apPassword) > 0) {
-    labelLeft(kContentTop, translatedUi("JOIN WI-FI"), 1, BLACK);
-    drawHero("PALA NOTE", 66, BLACK, 100);
-    labelLeft(112, translatedUi("PASSWORD"), 1, BLACK);
-    labelLeft(132, apPassword, 2, BLACK);
-    drawFooter(translatedUi("SETUP"), ip, BLACK);
+  drawHeader("WEB", BLACK);
+  if (link == CompanionLink::Offline) {
+    labelLeft(kContentTop, "Wi-Fi", 1, BLACK);
+    drawStatusHero(uiText("Nicht verbunden", "Not connected"), 66, BLACK);
   } else {
-    labelLeft(kContentTop, translatedUi("OPEN IN BROWSER"), 1, BLACK);
-    fillRect(kInset, 70, kContentWidth, 52, BLACK);
-    drawStrInBox(kInset, 70, kContentWidth, 52, ip, 2, WHITE);
-    labelLeft(140, translatedUi("SAME WI-FI"), 1, BLACK);
-    drawFooter(translatedUi("COMPANION"), translatedUi("READY"), BLACK);
+    const bool hotspot = link == CompanionLink::Hotspot;
+    labelLeft(kContentTop, hotspot ? "Hotspot" : uiText("WLAN-Netz", "Wi-Fi network"), 1, BLACK);
+    drawCompanionNetworkName(network);
+
+    const String address = String("http://") + ip;
+    const bool fitsUrl = textW(address.c_str(), 1) <= kContentWidth - 12;
+    const int addressScale = !fitsUrl && textW(ip.c_str(), 2) <= kContentWidth - 12 ? 2 : 1;
+    fillRect(kInset, kCompanionAddressY, kContentWidth, kCompanionAddressHeight, BLACK);
+    drawStrInBox(kInset, kCompanionAddressY, kContentWidth, kCompanionAddressHeight,
+                 fitsUrl ? address.c_str() : ip.c_str(), addressScale, WHITE);
+    if (hotspot) {
+      labelLeft(kCompanionPasswordY, uiText("WPA2", "Key"), 1, BLACK);
+      labelRight(kCompanionPasswordY, apPassword.c_str(), 1, BLACK);
+    }
   }
+  drawCompanionVolume(volume);
+  drawFooterCentered(uiText("Beide halten", "Hold both to exit"), BLACK);
   refresh();
 }
 
-void showVolumeSetting(int percent) {
-  clearWhite();
-  drawHeader(translatedUi("SETTINGS"), BLACK);
-  const int level = constrain(percent, 20, 100);
-  char value[18];
-  snprintf(value, sizeof(value), palaUiLanguage() == "sk" ? "HLASITOST %d" : "VOLUME %d", (level + 19) / 20);
-  labelLeft(kContentTop, translatedUi("SPEAKER"), 1, BLACK);
-  drawHero(value, 67, BLACK, 108);
-  const int bars = constrain((level + 19) / 20, 1, 5);
-  for (int i = 0; i < 5; i++) {
-    const int height = 8 + i * 7;
-    if (i < bars) fillRect(18 + i * 34, 157 - height, 20, height, BLACK);
-    else strokeRect(18 + i * 34, 157 - height, 20, height, 1, BLACK);
-  }
-  drawFooter(translatedUi("UPPER +"), translatedUi("LOWER -"), BLACK);
+void showCompanionVolume(int percent) {
+  drawCompanionVolume(percent);
   refresh();
 }
 
@@ -848,9 +957,10 @@ void showError(const char* message) {
 void showSleepLocked() {
   // Preserve the useful home screen and add only a compact persistent sleep
   // indicator beside the battery. E-paper keeps this visible without power.
-  constexpr int x = kSleepLockX;
+  constexpr int x = kHomeStatusX;
   constexpr int y = kHeaderY;
-  strokeRect(x, y + 5, kSleepLockWidth, 9, 1, BLACK);
+  fillRect(x, y, kHomeStatusWidth, kHomeStatusHeight, WHITE);
+  strokeRect(x, y + 5, kHomeStatusWidth, 9, 1, BLACK);
   // Lock shackle: two vertical shoulders joined by a short top line.
   vline(x + 2, y + 2, 4, BLACK);
   vline(x + 8, y + 2, 4, BLACK);

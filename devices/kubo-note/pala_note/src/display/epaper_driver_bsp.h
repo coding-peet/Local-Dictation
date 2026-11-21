@@ -30,10 +30,12 @@ private:
     spi_device_handle_t spi;
     uint8_t *buffer = NULL;
     bool busyTimedOut = false;
+    void (*waitCallback)() = nullptr;
 
     void spi_gpio_init();
     void spi_port_init();
     void read_busy();
+    void waitForReset(unsigned milliseconds);
 
     void set_cs_1(){gpio_set_level((gpio_num_t)lcd_spi_data.cs,1);}
     void set_cs_0(){gpio_set_level((gpio_num_t)lcd_spi_data.cs,0);}
@@ -67,6 +69,7 @@ public:
     void EPD_DisplayPart();
     void EPD_DrawColorPixel(uint16_t x, uint16_t y, uint8_t color);
 
+    void setWaitCallback(void (*callback)()) { waitCallback = callback; }
     uint8_t* getBuffer()  { return buffer; }
     int      getWidth()   { return Width; }
     int      getHeight()  { return Height; }

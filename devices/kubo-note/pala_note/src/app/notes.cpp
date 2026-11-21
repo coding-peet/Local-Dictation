@@ -3,6 +3,7 @@
 #include "../../globals.h"
 #include "../../types.h"
 #include "notes.h"
+#include "local_transcript_policy.h"
 #include "rtc.h"
 #include "draw.h"
 #include "brain.h"
@@ -11,6 +12,7 @@
 #include <map>
 #include "retry_policy.h"
 #include "storage_commit.h"
+#include "note_trash_policy.h"
 
 // ─── Index ────────────────────────────────────────────────────────────────
 
@@ -24,7 +26,9 @@ bool replaceNoteFileAtomically(const String& path, const String& temp) {
 }
 
 void loadIndex(bool recoverOrphans) {
+  if (recoverOrphans) discoverNoteTrash();
   noteIndex.clear();
+  bool repaired = false;
   // Recover the last complete catalog after an interrupted FAT rename.
   if (!SD_MMC.exists(INDEX_FILE)) {
     if (SD_MMC.exists(kIndexBackup)) SD_MMC.rename(kIndexBackup, INDEX_FILE);
@@ -40,6 +44,11 @@ void loadIndex(bool recoverOrphans) {
       NoteEntry e = {};
       e.num = ln.substring(0,c1).toInt();
       if (e.num <= 0) continue;
+      if (noteIsTrashed(e.num) ||
+          (e.num <= highestTrashedNoteNumber() && !noteHasLiveBundle(e.num))) {
+        repaired = true;
+        continue;
+      }
       strncpy(e.tag, ln.substring(c1+1,c2).c_str(), sizeof(e.tag)-1);
       e.tag[sizeof(e.tag)-1]='\0';
       e.hasText = (ln.substring(c2+1, c3 >= 0 ? c3 : ln.length()).toInt()==1);
@@ -49,9 +58,10 @@ void loadIndex(bool recoverOrphans) {
     f.close();
   }
 
+  if (recoverOrphans) recoverNoteTrash();
+
   // The WAV is the source of truth. Reinsert an orphaned recording if power
   // failed after audio close but before the small catalog was committed.
-  bool repaired = false;
   File directory;
   if (recoverOrphans) directory = SD_MMC.open(NOTES_DIR);
   if (directory && directory.isDirectory()) {
@@ -62,10 +72,10 @@ void loadIndex(bool recoverOrphans) {
       entry.close();
       const int slash = name.lastIndexOf('/');
       if (slash >= 0) name = name.substring(slash + 1);
-      if (!name.startsWith("note_") || !name.endsWith(".wav")) continue;
-      if (!usableAudio) continue;
-      const int num = name.substring(5, name.length() - 4).toInt();
-      if (num <= 0) continue;
+      if (!usableAudio || name.length() < 4 ||
+          !note_trash::equalsAscii(name.c_str() + name.length() - 4, ".wav")) continue;
+      const int num = note_trash::fileNumber(name.c_str());
+      if (num <= 0 || noteIsTrashed(num)) continue;
       bool known = false;
       for (const NoteEntry& item : noteIndex) if (item.num == num) { known = true; break; }
       if (known) continue;
@@ -152,6 +162,7 @@ bool updateIndexHasText(int num) {
 }
 
 bool saveNoteTranscript(int num, const String& text) {
+  if (noteIsTrashed(num)) return false;
   char path[64];
   snprintf(path, sizeof(path), "%s/note_%03d.txt", NOTES_DIR, num);
   const String temp = String(path) + ".tmp";
@@ -169,86 +180,13 @@ bool saveNoteTranscript(int num, const String& text) {
   return updateIndexHasText(num);
 }
 
-bool deleteNote(int num) {
-  const char* exts[] = {"txt", "meta", "queue", "moments", "brain.json", "brain.vec", "mac.vec", "wav", nullptr};
-  char path[64];
-  for (int e = 0; exts[e]; e++) {
-    snprintf(path, sizeof(path), "%s/note_%03d.%s", NOTES_DIR, num, exts[e]);
-    for (const char* suffix : {".tmp", ".bak", ""}) {
-      const String target = String(path) + suffix;
-      if (SD_MMC.exists(target.c_str()) && !SD_MMC.remove(target.c_str())) return false;
-    }
-  }
-  for (int i = 0; i < (int)noteIndex.size(); i++) {
-    if (noteIndex[i].num == num) {
-      noteIndex.erase(noteIndex.begin() + i);
-      break;
-    }
-  }
-  const bool saved = saveIndex();
-  removeBrainSearchIndexEntry(num);
-  removeBrainVectorIndexEntry(num);
-  return saved;
-}
-
-bool deleteAllNotes() {
-  bool success = true;
-  int removed = 0;
-
-  // Reopen the directory for every entry. Mutating an open FAT directory can
-  // otherwise skip the item that follows the deleted one.
-  while (removed < 10000) {
-    File directory = SD_MMC.open(NOTES_DIR);
-    if (!directory || !directory.isDirectory()) {
-      if (directory) directory.close();
-      success = false;
-      break;
-    }
-
-    File entry = directory.openNextFile();
-    if (!entry) {
-      directory.close();
-      break;
-    }
-
-    String path = entry.name();
-    const bool isDirectory = entry.isDirectory();
-    entry.close();
-    directory.close();
-    if (!path.startsWith("/")) path = String(NOTES_DIR) + "/" + path;
-
-    if (isDirectory || !SD_MMC.remove(path.c_str())) {
-      success = false;
-      break;
-    }
-    removed++;
-  }
-
-  if (removed >= 10000) success = false;
-  if (!success) {
-    // Preserve discoverability of surviving audio after partial deletion.
-    loadIndex(true);
-    noteIndex.erase(std::remove_if(noteIndex.begin(), noteIndex.end(), [](const NoteEntry& note) {
-      char path[64];
-      snprintf(path, sizeof(path), "%s/note_%03d.wav", NOTES_DIR, note.num);
-      return !SD_MMC.exists(path);
-    }), noteIndex.end());
-    saveIndex();
-    return false;
-  }
-  noteIndex.clear();
-  return saveIndex();
-}
-
 int nextNoteNumber() {
-  int maxNum = 0;
-  for (int i=0; i<(int)noteIndex.size(); i++) if (noteIndex[i].num > maxNum) maxNum = noteIndex[i].num;
-  char path[64];
+  int maxNum = highestTrashedNoteNumber();
+  for (const NoteEntry& note : noteIndex) maxNum = std::max(maxNum, note.num);
   do {
     if (maxNum == INT32_MAX) return -1;
     ++maxNum;
-    snprintf(path, sizeof(path), "%s/note_%03d.wav", NOTES_DIR, maxNum);
-  } while (SD_MMC.exists(path));
+  } while (noteHasLiveBundle(maxNum));
   return maxNum;
 }
 
@@ -326,15 +264,36 @@ static String readQueueValue(int num, const char* key) {
   return "";
 }
 
+bool noteHasCommittedTranscript(int num) {
+  char base[48];
+  snprintf(base, sizeof(base), "%s/note_%03d", NOTES_DIR, num);
+  return note_transcript::hasCommittedTranscript([&](const char* extension) {
+    const String path = String(base) + extension;
+    File text = SD_MMC.open(path.c_str(), FILE_READ);
+    return text && !text.isDirectory() && text.size() > 0;
+  });
+}
+
 String noteQueueState(int num) {
   const String state = readQueueValue(num, "state");
+  if (state == "usb-local") {
+    // A local-route marker intentionally reaches the card before the text.
+    // Without committed text the recording must remain eligible after a failure.
+    return note_transcript::localRouteState(noteHasCommittedTranscript(num));
+  }
   return state.length() ? state : "queued";
+}
+
+bool notePendingTranscription(const NoteEntry& note) {
+  if (note.hasText) return false;
+  const String state = noteQueueState(note.num);
+  return note_transcript::pendingRecording(note.hasText, state.c_str());
 }
 
 int pendingTranscriptionCount() {
   int count = 0;
   for (const NoteEntry& note : noteIndex) {
-    if (!note.hasText && noteQueueState(note.num) != "blocked") count++;
+    if (notePendingTranscription(note)) count++;
   }
   return count;
 }
