@@ -1,6 +1,7 @@
 #include "battery.h"
 
 #include "../../config.h"
+#include <Arduino.h>
 #include <algorithm>
 
 namespace {

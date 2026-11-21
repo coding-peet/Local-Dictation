@@ -18,7 +18,9 @@ confirming. The Note labels the upper button for confirmation and the
 lower button for cancellation.
 
 Hold both buttons on the Note for three seconds to open Web Companion.
-The display shows the current Wi-Fi network and browser address. When the
+The display shows **WEB** in the center, battery on the right, and the
+current Wi-Fi network and browser address below. Tap the upper or lower
+button to adjust speaker volume. Five bars appear briefly. When the
 Note opens its hotspot, the display shows the hotspot name, password and
 address. Open **Setup** for the same Note settings page in the phone
 browser. Web Companion and the shared settings show the saved Note name. Both entry points use
@@ -32,14 +34,48 @@ five pairings and shows the list in the page. When Bridge is unavailable,
 the Note searches the remaining eligible bridges in order after trying
 the last one that worked.
 
+## Configure display pages
+
+Open **Display pages** in the shared Note settings. Set each checkbox,
+use **Move up** or **Move down**, then choose **Save display pages**. The
+trial starts with **Tasks**, **Events**, **Current month**, and **Next month**
+in that order. **Month after next** is available independently and starts
+disabled. **Home** is fixed at the bottom of the settings list. Read upward
+from Home to see the order used by the upper button. A disabled page retains
+its position in the saved order.
+
+On the awake Home screen, tap the upper button to open the first enabled
+page. Tap it again to page through Tasks or Events and continue to the
+following enabled views. After the last view, the next upper tap returns Home.
+On any display page, the lower button returns Home and holding the upper
+button starts a recording. With every page disabled, a short upper tap on
+Home leaves Home visible.
+
+The month grids show Monday through Sunday and ISO week numbers. The
+current month highlights today's date. All three use the Note's local
+clock and can be viewed offline.
+
+## Sleep timeout
+
+In shared Note settings, set **Sleep timeout** from 1 to 99 minutes and
+choose **Save timeout**. This is the idle limit on Home and in Web
+Companion. In-flight processing can finish and save its result.
+
+Choose **Default** to restore the original behavior: 1 minute on Home,
+up to 3 minutes when work is queued, and 5 minutes in Web Companion.
+
 ## Trash
 
 Use **Move to Trash** in Web Companion to remove a memory from the active
 list. The Note keeps the recording, transcript, and related files on the
 SD card. Restoring returns the memory to its original place.
 
-Open **Trash** in Note settings to restore items or change retention. The
-default is 90 days. Change it to any value from 1 to 3650 days. Expiry is
+On Web Companion Home, choose **Trash** beside **Export** under **Memories**.
+Trash uses the same card layout and paging as Memories. Use **Restore**
+on an item to return it to the active list. Shared Note settings also
+supports restoring items and changing retention over USB or Bluetooth.
+
+The default retention is 90 days. Change it to any value from 1 to 3650 days. Expiry is
 checked while the Note is awake with a valid clock. **Empty Trash**
 permanently deletes the items in Trash and requires explicit confirmation.
 
@@ -57,6 +93,25 @@ The clownfish peeks out of the anemone and swims beside it.
 Each action finishes before feeding or current can start again. Opening
 the aquarium is independent of recording, transcription, and Internet
 access.
+
+## Bridge processing
+
+Open Note settings from Local Dictation and select **Bridge**. With **Kubo
+processing** off, Bridge runs local transcription and returns the text to
+Note. With it on, specify an existing default Google Tasks list and the ID
+of your personal calendar. Use `primary` for the personal primary calendar.
+
+Run `codex login` and check the sign-in from Bridge settings. Run the
+following in the Bridge Python environment to sign in to Google separately:
+
+~~~powershell
+py -B .\mac-bridge\bridge.py --tasks-login
+py -B .\mac-bridge\bridge.py --google-login
+~~~
+
+These commands save the corresponding authorization on the Bridge computer.
+They do not create tasks or appointments. An existing Google OAuth client
+configuration is required by these Google sign-in commands.
 
 ## Build and run checks
 
@@ -82,8 +137,18 @@ and Android SDK 35. Keep the APK and Gradle build output outside Git.
 ## Synchronize recordings after waking Pala
 
 Keep Local Dictation running on the paired Windows PC. Press the lower
-button to wake Pala. When Pala is already awake on Home, the lower button
-also starts a check if recordings are waiting.
+button to wake Pala. On the awake **Home** screen, the lower button has
+four actions.
+
+| Gesture | Action |
+| --- | --- |
+| One tap | Open Events if enabled in Display pages |
+| Two quick taps | Play the weekly briefing |
+| Three quick taps | Synchronize queued recordings |
+| Hold | Ask Kubo. Keep holding while you speak and release to finish the question. |
+
+The Note waits briefly after the first or second tap to distinguish the
+gestures. On a display page, the lower button returns to Home.
 
 1. When an active USB data connection is present, Pala first gives the
    paired Windows client time to authenticate over USB.

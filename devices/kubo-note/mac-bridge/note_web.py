@@ -17,6 +17,7 @@ from weather import _location_parts
 PAGE = Path(__file__).resolve().parents[1] / "pala_note" / "src" / "app" / "note_settings_page.inc"
 API = "/api/note-settings"
 PREFERENCES = "note-bridge-preferences.json"
+PROCESSING = "bridge-processing.json"
 DISCOVERY = "note-settings-runtime.json"
 MAX_BODY = 2_048
 NO_CACHE = "no-store"
@@ -43,6 +44,62 @@ def atomic_write(path, value):
     finally:
         if scratch is not None:
             scratch.unlink(missing_ok=True)
+
+
+def processing_config(state, config):
+    """Apply the per-user mode and routing preferences to the pairing profile."""
+    settings = read_object(state / PROCESSING)
+    legacy_mode = "kubo" if config.get("destination") in ("google", "apple") or config.get("google_routes") else "transcribe"
+    mode = settings.get("mode", config.get("processing_mode", legacy_mode))
+    if mode not in ("transcribe", "kubo"):
+        raise ValueError("Invalid Bridge processing mode.")
+    bindings = dict(config.get("google_routes", {}))
+    if "general" in settings:
+        general = settings["general"]
+        if general is None:
+            bindings.pop("general", None)
+        else:
+            bindings["general"] = general
+    configured_google = bool(settings.get("general") or settings.get("calendar"))
+    return {**config, "processing_mode": mode, "google_routes": bindings,
+            "destination": "google" if configured_google else config.get("destination"),
+            "personal_note_collection": settings.get("personalNoteCollection", config.get("personal_note_collection", False)),
+            "calendar": settings.get("calendar", config.get("calendar", ""))}
+
+
+def processing_preferences(state):
+    config = processing_config(state, read_object(state / "config.json"))
+    general = config["google_routes"].get("general", {})
+    return {"mode": config["processing_mode"], "taskList": general.get("title", ""),
+            "calendarId": config.get("calendar", ""),
+            "tasksLoginConfigured": (state / "google-tasks-token.json").is_file(),
+            "calendarLoginConfigured": (state / "google-token.json").is_file()}
+
+
+def save_processing_preferences(state, mode, task_list, calendar_id):
+    if mode not in ("transcribe", "kubo"):
+        raise ValueError("Select a Bridge processing mode.")
+    path = state / PROCESSING
+    settings = read_object(path)
+    if mode == "kubo":
+        if not isinstance(task_list, str) or len(task_list.strip()) > 120 or any(not c.isprintable() for c in task_list):
+            raise ValueError("Enter the exact name of an existing Google Tasks list.")
+        if not isinstance(calendar_id, str) or re.fullmatch(r"[^\s\x00-\x1f]{0,240}", calendar_id.strip()) is None:
+            raise ValueError("Enter a calendar ID or use primary for your personal calendar.")
+        before = processing_config(state, read_object(state / "config.json"))
+        target = before["google_routes"].get("general")
+        task_list = task_list.strip()
+        if task_list and (not target or target.get("title") != task_list):
+            from pala_google import bound_task_list
+
+            try:
+                target = bound_task_list(state, task_list)
+            except RuntimeError as error:
+                raise ValueError("Connect Google Tasks and enter one existing list name.") from error
+        settings.update(general=target if task_list else None, calendar=calendar_id.strip())
+    settings["mode"] = mode
+    atomic_write(path, settings)
+    return processing_preferences(state)
 
 
 def bridge_preferences(state, legacy):

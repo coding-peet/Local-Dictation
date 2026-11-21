@@ -37,10 +37,14 @@ TASK = re.compile(
     r"(?:\s*[:,–-]\s*|\s+)(.+)$", re.IGNORECASE | re.DOTALL,
 )
 DOC = re.compile(
-    r"^(?:poznamka|(?:uloz|zapis)(?:\s+mi)?\s+do\s+google\s+docs)"
+    r"^(?:uloz|zapis)(?:\s+mi)?\s+do\s+google\s+docs"
     r"(?:\s*[:,–-]\s*|\s+)(.+)$", re.IGNORECASE | re.DOTALL,
 )
-CALENDAR = re.compile(r"^(?:termin\b|pridaj(?:\s+mi)?\s+(?:osobny\s+)?termin\b)", re.IGNORECASE)
+CALENDAR = re.compile(
+    r"^(?:termin\b|pridaj(?:\s+mi)?\s+(?:osobny\s+)?termin\b"
+    r"|(?:(?:daj|pridaj|zapis|uloz)(?:\s+mi)?\s+)?do\s+(?:google\s+)?kalendara\b)",
+    re.IGNORECASE,
+)
 NAMED_TARGET = re.compile(
     r"^(?:(?:daj|pridaj|zapis|uloz)(?:\s+mi)?\s+)?do\s+(zoznamu|dokumentu)\b\s*(.*)$",
     re.IGNORECASE | re.DOTALL,
@@ -127,6 +131,13 @@ def _delivery_target(bindings, kind):
     return target
 
 
+def general_fallback_kinds(config):
+    routes = config.get("google_routes", {})
+    if not config.get("personal_note_collection") or "general" not in routes:
+        return frozenset()
+    return frozenset(("work", "tasks", "shopping", "sorting")) - routes.keys()
+
+
 class DeliveryQueue:
     def __init__(self, directory):
         self.path = Path(directory) / "google-delivery.sqlite"
@@ -151,8 +162,10 @@ class DeliveryQueue:
         with contextlib.closing(sqlite3.connect(self.path, timeout=5)) as db, db:
             yield db
 
-    def stage(self, device_id, note, captured, text, *, ready=True):
+    def stage(self, device_id, note, captured, text, *, ready=True, archive=False, general_fallback=()):
         kind, actions = _recording_actions(device_id, note, text)
+        if archive or kind in general_fallback:
+            kind, actions = "general", [(actions[0][0], canonical(text))]
         recorded = recording_time(captured, timezone.utc)
         recording_id = f"{note}:{recorded.isoformat()}" if recorded is not None else None
         status = {"work": "local", "calendar": "needs-confirmation",
@@ -270,13 +283,19 @@ class DeliveryQueue:
 
 
 def home_delivery_payload(state, config, device, *, queue=None):
+    if not device:
+        today = datetime.now(ZoneInfo("Europe/Bratislava")).date().isoformat()
+        return f"{today},0,0"
     if queue is None:
         path = Path(state) / "google-delivery.sqlite"
         if not path.is_file():
             today = datetime.now(ZoneInfo("Europe/Bratislava")).date().isoformat()
             return f"{today},0,0"
         queue = DeliveryQueue(state)
-    bindings = config.get("google_routes", {})
+    from note_web import processing_config
+
+    config = processing_config(state, config)
+    bindings = config["google_routes"] if config["processing_mode"] == "kubo" else {}
     if not isinstance(bindings, dict):
         raise ValueError("Google destinations must be explicitly bound.")
     day, delivered, waiting = queue.home_counts(device, bindings)
@@ -423,19 +442,29 @@ class UsbGoogleDelivery:
     def __init__(self, state, config):
         self.state = state
         self.queue = DeliveryQueue(state)
-        self.bindings = config["google_routes"]
-        if not isinstance(self.bindings, dict):
-            raise ValueError("Google destinations must be explicitly bound.")
+        self.config = config
         self.zone = ZoneInfo(config.get("timezone", "Europe/Bratislava"))
         self.next_flush = 0
         self.activity = BridgeActivity(state, "delivery")
 
+    def active_config(self):
+        from note_web import processing_config
+
+        config = processing_config(self.state, self.config)
+        return config if config["processing_mode"] == "kubo" else {}
+
     def stager(self, device, staged=None):
         def stage(note, captured, text):
-            self.queue.stage(device, note, captured, text, ready=False)
+            config = self.active_config()
+            if not config.get("google_routes"):
+                return None
+            fallback = general_fallback_kinds(config)
+            self.queue.stage(device, note, captured, text, ready=False, general_fallback=fallback)
 
             def acknowledge():
-                keys = self.queue.stage(device, note, captured, text)
+                if not self.active_config().get("google_routes"):
+                    return
+                keys = self.queue.stage(device, note, captured, text, general_fallback=fallback)
                 if staged is not None:
                     staged.extend(keys)
 
@@ -452,7 +481,10 @@ class UsbGoogleDelivery:
             keys = self.queue.pending()
         for key in keys:
             try:
-                outcome = self.queue.deliver(key, self.bindings, self._send)
+                bindings = self.active_config().get("google_routes")
+                if not bindings:
+                    return
+                outcome = self.queue.deliver(key, bindings, self._send)
                 if outcome == "done":
                     print("Pala Google delivery confirmed.", flush=True)
             except Exception as error:

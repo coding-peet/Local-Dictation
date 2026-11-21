@@ -1,8 +1,42 @@
 #pragma once
 
 #include <cstdint>
+#include "battery.h"
 
 enum class CompanionAction { None, Louder, Quieter, Exit };
+
+class CompanionDisplayState {
+ public:
+  constexpr int batteryPercent() const { return batteryPercent_; }
+  constexpr bool batterySampleDue(uint32_t now) const { return now - batterySampledAt_ >= 60000UL; }
+
+  constexpr bool updateBattery(uint32_t now, int percent) {
+    batterySampledAt_ = now;
+    // Keep the last valid reading and refresh only when the visible bars change.
+    if (percent < 0) return false;
+    const bool changed = batteryBarCount(percent) != batteryBarCount(batteryPercent_);
+    batteryPercent_ = percent;
+    return changed;
+  }
+
+  constexpr bool volumeVisible() const { return volumeVisible_; }
+  constexpr void showVolume(uint32_t now) {
+    volumeVisible_ = true;
+    volumeShownAt_ = now;
+  }
+
+  constexpr bool dismissExpiredVolume(uint32_t now) {
+    if (!volumeVisible_ || now - volumeShownAt_ < 1800UL) return false;
+    volumeVisible_ = false;
+    return true;
+  }
+
+ private:
+  int batteryPercent_ = -1;
+  uint32_t batterySampledAt_ = 0;
+  uint32_t volumeShownAt_ = 0;
+  bool volumeVisible_ = false;
+};
 
 class CompanionControls {
  public:

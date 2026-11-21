@@ -33,7 +33,7 @@ class PalaGoogleTests(unittest.TestCase):
             queue.stage("pala", 4, None, "Poznámka: krátky text", ready=False)
             queue.stage("other", 1, None, "Iné zariadenie.")
             queue.stage("pala", 5, None, "Do zoznamu neschválený: niečo.")
-            doc, = queue.stage("pala", 6, None, "Poznámka: osobný nápad")
+            doc, = queue.stage("pala", 6, None, "Ulož do Google Docs osobný nápad")
             with patch("pala_google.time.time", return_value=at(22, 59).timestamp()):
                 self.assertEqual(queue.deliver(first, targets, send), "done")
             self.assertEqual(queue.home_counts("PALA", targets, now=at(22, 59)), ("2026-11-19", 0, 2))
@@ -89,6 +89,41 @@ class PalaGoogleTests(unittest.TestCase):
                          ("general", ["Dnes som sa vrátil neskoro."]))
         self.assertEqual(classify_transcript("vprité mlieko na nákupný zoznam"),
                          ("general", ["vprité mlieko na nákupný zoznam"]))
+
+    def test_note_without_a_destination_uses_general_and_calendar_command_does_not(self):
+        note = "Poznámka: vymeniť modrý obal."
+        self.assertEqual(classify_transcript(note), ("general", [note]))
+        for command in ("Zapíš do kalendára zajtra kontrolu o tretej.",
+                        "Do Google Kalendára: kontrola 11. decembra o tretej."):
+            with self.subTest(command=command):
+                self.assertEqual(classify_transcript(command)[0], "calendar")
+
+    def test_personal_collection_defaults_work_topics_and_unbound_tasks_to_general(self):
+        from pala_google import UsbGoogleDelivery
+
+        config = {"google_routes": {"general": {"id": "list", "title": "General"}},
+                  "personal_note_collection": True}
+        with tempfile.TemporaryDirectory() as folder:
+            delivery = UsbGoogleDelivery(Path(folder), config)
+            stage = delivery.stager("note")
+            stage(1, None, "Pracovná úloha skontrolovať návrh.")()
+            stage(2, None, "Úloha: vymeniť obal.")()
+            stage(3, None, "Zapíš do kalendára návštevu o tretej.")()
+            with delivery.queue.database() as db:
+                rows = db.execute("SELECT kind, status FROM google_actions ORDER BY rowid").fetchall()
+            self.assertEqual(rows, [("general", "pending"), ("general", "pending"),
+                                    ("calendar", "needs-confirmation")])
+
+    def test_archive_keeps_full_original_text_and_reuses_the_recording_key(self):
+        text = "Zapíš do kalendára stretnutie o tretej."
+        with tempfile.TemporaryDirectory() as folder:
+            queue = DeliveryQueue(Path(folder))
+            key, = queue.stage("note", 12, None, text, archive=True)
+            self.assertEqual(queue.stage("note", 12, None, text, archive=True), [key])
+            send = Mock(return_value="readback")
+            general = {"id": "list", "title": "General"}
+            self.assertEqual(queue.deliver(key, {"general": general}, send), "done")
+            send.assert_called_once_with("general", general, None, text, key)
 
     def test_mixed_explicit_work_is_held_locally(self):
         self.assertEqual(classify_transcript(

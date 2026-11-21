@@ -25,6 +25,7 @@ IPAddress selectedGateway;
 String selectedSsid;
 uint32_t selectedAt = 0;
 WifiBacklog selectedStatus = WifiBacklog::Unavailable;
+bool selectedTranscribeOnly = false;
 
 bool onWifiLink(const IPAddress& address) {
   const IPAddress local = WiFi.localIP();
@@ -53,7 +54,7 @@ IPAddress lookupPairedBridge(const String& host) {
   return mdnsStarted ? MDNS.queryHost(host.substring(0, host.length() - 6).c_str(), 1500) : IPAddress();
 }
 
-WifiBacklog probe(const NotePeer& peer) {
+WifiBacklog probe(const NotePeer& peer, bool& transcribeOnly) {
   if (!configured(peer)) return WifiBacklog::Unavailable;
   ProviderClient client(peer);
   client.setHandshakeTimeout(2);
@@ -72,6 +73,7 @@ WifiBacklog probe(const NotePeer& peer) {
     if (payload.length() == static_cast<size_t>(length) && !deserializeJson(document, payload)) {
       const JsonVariantConst ready = document["ready"];
       readiness = classifyWifiReadiness(status, ready.is<bool>(), ready.as<bool>());
+      transcribeOnly = readiness != WifiBacklog::Unavailable && document["processing"] == "transcribe";
     }
   }
   http.end();
@@ -100,8 +102,10 @@ WifiBacklog pairedWifiBacklog() {
       break;
     }
   }
+  bool transcribeOnly[kNoteMaxPeers] = {};
   const auto selected = selectWifiBacklog(count, previousIndex,
-      [](int index) { return probe(notePeerAt(index)); });
+      [&](int index) { return probe(notePeerAt(index), transcribeOnly[index]); });
+  selectedTranscribeOnly = selected.index >= 0 && transcribeOnly[selected.index];
   const String id = selected.index >= 0 ? notePeerAt(selected.index).id : String();
   remember(id, selected.status);
   if (selected.status == WifiBacklog::Ready && id != previous) noteSetLastBridge(id);
@@ -119,12 +123,17 @@ NotePeer selectedWifiBridge() {
   return notePeerById(selectedId);
 }
 
+bool wifiBridgeTranscriptionOnly() {
+  return configured(selectedWifiBridge()) && selectedTranscribeOnly;
+}
+
 void resetBridgeAddressCache() {
   cacheDuration = 0;
   cachedAddress = IPAddress();
   selectedId = "";
   selectedAt = 0;
   selectedSsid = "";
+  selectedTranscribeOnly = false;
   selectedStatus = WifiBacklog::Unavailable;
 }
 

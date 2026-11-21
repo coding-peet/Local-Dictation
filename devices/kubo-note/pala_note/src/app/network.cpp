@@ -1415,6 +1415,11 @@ bool synthesizeBrainSpeech(const String& text, const char* outputPath, bool fast
 }
 
 int processPendingNotes(int preferredNote, int maxNotes) {
+#if PALA_BRIDGE_DISCOVERY
+  const bool transcribeOnly = wifiBridgeTranscriptionOnly();
+#else
+  constexpr bool transcribeOnly = false;
+#endif
   static size_t backgroundCursor = 0;
   if (maxNotes <= 0) return 0;
   int done = 0;
@@ -1437,7 +1442,7 @@ int processPendingNotes(int preferredNote, int maxNotes) {
     auto entry = std::find_if(noteIndex.begin(), noteIndex.end(), [noteNum](const NoteEntry& note) {
       return note.num == noteNum;
     });
-    if (entry == noteIndex.end()) continue;
+    if (entry == noteIndex.end() || (transcribeOnly && entry->hasText)) continue;
     permanentCloudFailure = false;
     const bool memoryCurrent = entry->hasText && brainMemoryIsCurrent(noteNum);
     if (memoryCurrent) {
@@ -1502,13 +1507,15 @@ static String htmlEscape(const String& s) {
   return String(escapeViewerHtml(s.c_str()).c_str());
 }
 
-static String readSmallFile(const char* path, size_t maxLen) {
-  File f = SD_MMC.open(path);
-  if (!f) return "";
+static String readSmallFile(File f, size_t maxLen) {
+  if (!f || f.isDirectory()) return "";
   String out;
   while (f.available() && out.length() < maxLen) out += (char)f.read();
-  f.close();
   return out;
+}
+
+static String readSmallFile(const char* path, size_t maxLen) {
+  return readSmallFile(SD_MMC.open(path), maxLen);
 }
 
 String formatMoment(uint32_t ms) {
@@ -1523,39 +1530,47 @@ String formatMoment(uint32_t ms) {
 static String portalCss() {
   return String(
     "<style>"
-    ":root{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,Helvetica,sans-serif;color:#22211f;background:#f6f4ef;font-synthesis:none;--ink:#22211f;--muted:#77736c;--line:#d9d4c9;--paper:#f6f4ef;--surface:#fffdfa;--accent:#ef573f;--lilac:#ddd7e9;--sand:#f1e7cc;--soft:#ebe9e3;}"
-    "*{box-sizing:border-box}body{margin:0;padding:0 24px 64px;background:var(--paper);color:var(--ink);}button,input,select{font-family:inherit}"
+    // Semantic colors from LocalDictation.App/Services/ThemeManager.cs.
+    ":root{color-scheme:light;font-family:'Segoe UI',system-ui,sans-serif;color:var(--ink);background:var(--canvas);font-synthesis:none;"
+    "--canvas:#FEF7FF;--surface:#FFFBFE;--surface-container:#F3EDF7;--surface-high:#ECE6F0;--ink:#1D1B20;--muted:#49454F;"
+    "--accent:#6750A4;--on-accent:#FFFFFF;--line:#CAC4D0;--input-line:#79747E;--selected:#E8DEF8;--selected-ink:#1D192B;--warning:#8C1D18;}"
+    "@media(prefers-color-scheme:dark){:root{color-scheme:dark;--canvas:#141218;--surface:#1D1B20;--surface-container:#211F26;"
+    "--surface-high:#2B2930;--ink:#E6E0E9;--muted:#CAC4D0;--accent:#D0BCFF;--on-accent:#381E72;--line:#49454F;"
+    "--input-line:#938F99;--selected:#4A4458;--selected-ink:#E8DEF8;--warning:#FFB4AB;}}"
+    "*{box-sizing:border-box}body{margin:0;padding:0 24px 64px;background:var(--canvas);color:var(--ink);}button,input,select{font-family:inherit}"
     ".wrap{max-width:1080px;margin:0 auto;}"
-    ".nav{position:sticky;top:12px;z-index:20;min-height:68px;display:flex;align-items:center;justify-content:space-between;margin:12px 0 52px;padding:8px 10px 8px 20px;border:1px solid rgba(31,31,28,.06);border-radius:28px;background:rgba(232,230,223,.94);backdrop-filter:blur(18px);box-shadow:0 16px 36px rgba(31,31,28,.08)}.brand{font-weight:900;letter-spacing:-.055em;font-size:24px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.navlinks{display:flex;gap:5px}.navlink{display:flex;align-items:center;gap:7px;color:#5f5d57;text-decoration:none;border-radius:18px;padding:11px 14px;font-size:13px;font-weight:760}.navlink.active{background:var(--accent);color:#fff}.navicon{width:18px;height:18px;display:grid;place-items:center;line-height:1}.navicon svg{display:block;width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}"
+    ".nav{position:sticky;top:12px;z-index:20;min-height:68px;display:flex;align-items:center;justify-content:space-between;margin:12px 0 52px;padding:8px 10px 8px 20px;border:1px solid var(--line);border-radius:28px;background:var(--surface-high);backdrop-filter:blur(18px);box-shadow:0 16px 36px rgba(31,31,28,.08)}.brand{font-weight:900;letter-spacing:-.055em;font-size:24px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.navlinks{display:flex;gap:5px}.navlink{display:flex;align-items:center;gap:7px;color:var(--muted);text-decoration:none;border-radius:18px;padding:11px 14px;font-size:13px;font-weight:760}.navlink.active{background:var(--accent);color:var(--on-accent)}.navicon{width:18px;height:18px;display:grid;place-items:center;line-height:1}.navicon svg{display:block;width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}"
     ".top{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin:0 0 28px;padding-top:18px;}"
     "h1{font-size:clamp(56px,8vw,92px);letter-spacing:-.048em;line-height:.95;margin:0;font-weight:820;overflow-wrap:anywhere;}"
     ".sub{font-size:12px;text-transform:uppercase;letter-spacing:.14em;color:var(--muted);margin:0 0 14px;font-weight:750;}"
-    ".pill{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;padding:8px 12px;font-size:12px;background:rgba(255,255,255,.7);white-space:nowrap;}"
-    ".stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:0 0 24px}.stat{background:var(--soft);border:0;border-radius:22px;padding:17px}.stat b{display:block;font-size:26px;font-weight:780;letter-spacing:-.025em}.stat span{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:750}"
+    ".pill{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;padding:8px 12px;font-size:12px;background:var(--surface);white-space:nowrap;}"
+    ".stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:0 0 24px}.stat{background:var(--surface-high);border:0;border-radius:22px;padding:17px}.stat b{display:block;font-size:26px;font-weight:780;letter-spacing:-.025em}.stat span{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:750}"
     ".grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;}"
-    ".card{background:var(--surface);border:0;border-radius:26px;padding:22px;box-shadow:0 10px 32px rgba(49,44,36,.045)}.card.lilac{background:var(--lilac)}.card.sand{background:var(--sand)}"
+    ".card{background:var(--surface);border:0;border-radius:26px;padding:22px;box-shadow:0 10px 32px rgba(49,44,36,.045)}.card.lilac{background:var(--selected);color:var(--selected-ink)}.card.sand{background:var(--surface-high)}"
     ".row{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;}"
     ".num{font-size:11px;letter-spacing:.11em;text-transform:uppercase;color:var(--muted);margin-bottom:9px;}"
     ".date{font-size:12px;color:var(--muted);margin:-3px 0 14px;}"
     ".title{font-size:23px;line-height:1.14;letter-spacing:-.025em;font-weight:780;margin:0 0 12px;}"
-    ".topic{border:1px solid var(--line);border-radius:999px;padding:6px 9px;font-size:11px;white-space:nowrap;background:#f5f5ef;color:var(--ink);}"
-    ".text{font-size:14px;line-height:1.55;color:#373732;margin:0 0 14px;white-space:pre-wrap;}"
+    ".topic{border:1px solid var(--line);border-radius:999px;padding:6px 9px;font-size:11px;white-space:nowrap;background:var(--surface-high);color:var(--ink);}"
+    ".text{font-size:14px;line-height:1.55;color:var(--ink);margin:0 0 14px;white-space:pre-wrap;}"
     ".actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;}"
     ".moments{display:flex;gap:8px;overflow-x:auto;padding:5px 0 3px;scrollbar-width:none;}"
-    ".moment{font:inherit;font-weight:750;border:0;border-radius:999px;padding:9px 13px;background:var(--accent);color:#fff;white-space:nowrap;cursor:pointer;}"
+    ".moment{font:inherit;font-weight:750;border:0;border-radius:999px;padding:9px 13px;background:var(--accent);color:var(--on-accent);white-space:nowrap;cursor:pointer;}"
     ".moment:active{transform:translateY(1px)}"
     ".eyebrow{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:16px 0 6px;}"
-    ".btn{appearance:none;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;font:inherit;line-height:1.25;color:var(--ink);text-decoration:none;border:1px solid var(--line);border-radius:999px;padding:9px 13px;background:#fff;font-size:12px;cursor:pointer;}.btn:hover{border-color:var(--ink)}.btn:focus-visible{outline:2px solid var(--accent);outline-offset:3px}.btn.destructive{color:var(--accent);border-color:var(--accent);background:transparent}.btn.destructive:hover{background:#fff0eb}"
-    "a.btn.primary{background:var(--accent);color:#fff;border-color:var(--accent);}.empty{border:1px dashed #c9c5ba;border-radius:24px;padding:42px;text-align:center;color:var(--muted);background:rgba(255,255,255,.5)}"
+    ".btn{appearance:none;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;font:inherit;line-height:1.25;color:var(--ink);text-decoration:none;border:1px solid var(--line);border-radius:999px;padding:9px 13px;background:var(--surface);font-size:12px;cursor:pointer;}.btn:hover{border-color:var(--ink)}.btn:focus-visible{outline:2px solid var(--accent);outline-offset:3px}.btn.destructive{color:var(--warning);border-color:var(--warning);background:transparent}.btn.destructive:hover{background:var(--surface-high)}"
+    ".btn.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent);}.empty{border:1px dashed var(--line);border-radius:24px;padding:42px;text-align:center;color:var(--muted);background:var(--surface)}"
     ".field{display:grid;gap:6px;margin:14px 0}.field label{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}"
-    ".field input,.field select,.search{font:inherit;font-weight:600;border:1px solid var(--line);border-radius:16px;padding:14px 15px;background:#fff;width:100%;min-height:52px;outline:0}.field select{appearance:auto}.field input:focus,.field select:focus,.search:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(237,87,61,.1)}"
-    ".ask{display:flex;gap:10px;background:var(--ink);border-color:var(--ink);padding:12px}.ask input{min-width:0;flex:1;font:inherit;border:0;border-radius:16px;padding:14px 15px;background:#fff;outline:0}.ask button{font:inherit;font-weight:800;border:0;border-radius:16px;padding:12px 18px;background:var(--accent);color:#fff;cursor:pointer}"
-    ".danger{margin-top:26px;border-color:#d7aaa2;background:#f5ddd6}.danger .title{color:#8e3325}.danger button{font:inherit;font-weight:750;border:0;border-radius:999px;padding:10px 14px;background:var(--accent);color:#fff;cursor:pointer}"
-    ".toolbar{display:flex;align-items:center;gap:10px;margin:18px 0 22px}.toolbar .search{flex:1}.status{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}.status .pill{font-weight:750}.ok{background:var(--sand);border-color:#d8cda9}.missing{background:#f1c8bd;border-color:#e3afa2}"
-    ".sectionhead{display:flex;align-items:end;justify-content:space-between;gap:16px;margin:34px 2px 16px}.sectionhead h2{font-size:30px;font-weight:790;letter-spacing:-.025em;margin:0}.sectionhead p{margin:4px 0 0;color:var(--muted);font-size:14px}.todaygrid{display:grid;grid-template-columns:1.15fr .85fr;gap:14px;margin-bottom:24px}.todaylist{display:grid;gap:9px;margin-top:16px}.todayitem{display:flex;align-items:center;gap:12px;padding:13px 14px;background:rgba(255,255,255,.66);border-radius:17px}.todayitem time{font-weight:750;min-width:48px}.todayitem span{font-weight:650}.checkform{margin:0}.check{width:28px;height:28px;border:2px solid var(--ink);border-radius:50%;background:transparent;cursor:pointer;display:grid;place-items:center;color:#fff}.check.done{background:var(--accent);border-color:var(--accent)}"
-    ".tasklist{display:grid;gap:10px;margin-top:20px}.taskrow{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:15px;background:var(--surface);border-radius:22px;padding:17px 19px}.taskrow.completed{opacity:.5}.taskcopy b{display:block;font-size:17px;font-weight:700;line-height:1.3}.taskmeta{color:var(--muted);font-size:12px;margin-top:5px}.badge{border-radius:999px;background:var(--soft);padding:7px 10px;font-size:11px;font-weight:700;color:var(--muted)}"
-    ".monthnav{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.monthnav button{width:42px;height:42px;border:1px solid var(--line);border-radius:50%;background:var(--surface);color:var(--ink);font-size:22px;line-height:1;cursor:pointer}.monthnav button:hover{border-color:var(--ink)}.monthnav .pill{min-width:150px;justify-content:center;font-weight:720}.monthnav .todaybutton{width:auto;padding:0 14px;border-radius:999px;display:flex;align-items:center;gap:7px;font-size:12px;font-weight:760}.todaybutton svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.calendar{background:var(--surface);border-radius:28px;padding:20px;margin:18px 0}.calhead{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:7px}.calhead span{text-align:center;font-size:10px;font-weight:800;color:var(--muted);text-transform:uppercase}.calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}.calday{min-height:72px;border-radius:16px;padding:9px;background:#efede8;font-size:12px;font-weight:760}.calday.blank{background:transparent}.calday.today{outline:2px solid var(--accent);outline-offset:-2px}.dots{display:flex;gap:3px;margin-top:8px;flex-wrap:wrap}.dot{width:7px;height:7px;border-radius:50%;background:var(--accent)}.dot.task{background:#77718a}.agenda{display:grid;gap:10px}.agendarow{display:grid;grid-template-columns:95px 1fr auto;gap:14px;align-items:center;padding:16px 18px;border-radius:21px;background:var(--surface)}.agendadate{font-size:12px;color:var(--muted);font-weight:750}.agendacopy b{display:block;font-weight:760}.agendacopy span{font-size:12px;color:var(--muted)}"
+    ".field input,.field select,.search{font:inherit;font-weight:600;border:1px solid var(--input-line);border-radius:16px;padding:14px 15px;background:var(--surface);color:var(--ink);width:100%;min-height:52px;outline:0}.field select{appearance:auto}.field input:focus,.field select:focus,.search:focus{border-color:var(--accent);outline:2px solid var(--accent);outline-offset:1px}"
+    ".ask{display:flex;gap:10px;background:var(--surface-high);border:1px solid var(--line);padding:12px}.ask input{min-width:0;flex:1;font:inherit;border:0;border-radius:16px;padding:14px 15px;background:var(--surface);color:var(--ink);outline:0}.ask button{font:inherit;font-weight:800;border:0;border-radius:16px;padding:12px 18px;background:var(--accent);color:var(--on-accent);cursor:pointer}"
+    ".danger{margin-top:26px;border:1px solid var(--warning);background:var(--surface-container)}.danger .title{color:var(--warning)}"
+    ".toolbar{display:flex;align-items:center;gap:10px;margin:18px 0 22px}.toolbar .search{flex:1}.status{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}.status .pill{font-weight:750}.ok{background:var(--selected);color:var(--selected-ink);border-color:var(--line)}.missing{background:var(--surface-container);color:var(--warning);border-color:var(--warning)}"
+    ".sectionhead{display:flex;align-items:end;justify-content:space-between;gap:16px;margin:34px 2px 16px}.sectionhead h2{font-size:30px;font-weight:790;letter-spacing:-.025em;margin:0}.sectionhead p{margin:4px 0 0;color:var(--muted);font-size:14px}.todaygrid{display:grid;grid-template-columns:1.15fr .85fr;gap:14px;margin-bottom:24px}.todaylist{display:grid;gap:9px;margin-top:16px}.todayitem{display:flex;align-items:center;gap:12px;padding:13px 14px;background:var(--surface);border-radius:17px}.todayitem time{font-weight:750;min-width:48px}.todayitem span{font-weight:650}.checkform{margin:0}.check{width:28px;height:28px;border:2px solid var(--ink);border-radius:50%;background:transparent;cursor:pointer;display:grid;place-items:center;color:var(--on-accent)}.check.done{background:var(--accent);border-color:var(--accent)}"
+    ".tasklist{display:grid;gap:10px;margin-top:20px}.taskrow{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:15px;background:var(--surface);border-radius:22px;padding:17px 19px}.taskrow.completed{opacity:.5}.taskcopy b{display:block;font-size:17px;font-weight:700;line-height:1.3}.taskmeta{color:var(--muted);font-size:12px;margin-top:5px}.badge{border-radius:999px;background:var(--surface-high);padding:7px 10px;font-size:11px;font-weight:700;color:var(--muted)}"
+    ".monthnav{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.monthnav button{width:42px;height:42px;border:1px solid var(--line);border-radius:50%;background:var(--surface);color:var(--ink);font-size:22px;line-height:1;cursor:pointer}.monthnav button:hover{border-color:var(--ink)}.monthnav .pill{min-width:150px;justify-content:center;font-weight:720}.monthnav .todaybutton{width:auto;padding:0 14px;border-radius:999px;display:flex;align-items:center;gap:7px;font-size:12px;font-weight:760}.todaybutton svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.calendar{background:var(--surface);border-radius:28px;padding:20px;margin:18px 0}.calhead{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:7px}.calhead span{text-align:center;font-size:10px;font-weight:800;color:var(--muted);text-transform:uppercase}.calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}.calday{min-height:72px;border-radius:16px;padding:9px;background:var(--surface-high);font-size:12px;font-weight:760}.calday.blank{background:transparent}.calday.today{outline:2px solid var(--accent);outline-offset:-2px}.dots{display:flex;gap:3px;margin-top:8px;flex-wrap:wrap}.dot{width:7px;height:7px;border-radius:50%;background:var(--accent)}.dot.task{background:var(--muted)}.agenda{display:grid;gap:10px}.agendarow{display:grid;grid-template-columns:95px 1fr auto;gap:14px;align-items:center;padding:16px 18px;border-radius:21px;background:var(--surface)}.agendadate{font-size:12px;color:var(--muted);font-weight:750}.agendacopy b{display:block;font-weight:760}.agendacopy span{font-size:12px;color:var(--muted)}"
     ".settingsgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start}.settingsgrid>.wide{grid-column:1/-1}.settingintro{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:18px}.settingintro .title{margin-bottom:4px}.networkrow{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:13px 0;border-bottom:1px solid var(--line)}.networkrow:last-of-type{border-bottom:0}.helper{font-size:13px;line-height:1.5;color:var(--muted);margin:10px 0 0}.savebar{display:flex;align-items:center;justify-content:flex-end;margin-top:18px}.savebar .moment{padding:12px 20px}"
+    ".navlink:focus-visible,.ask input:focus-visible,.memory-management summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}"
+    ".sectionactions,.pager{display:flex;align-items:center;gap:8px}.pager{justify-content:center;margin:24px 0}.memory-management{margin:24px 0}.memory-management summary{font-weight:750;cursor:pointer}.memory-management .settingsgrid{margin-top:16px}.memory-card .title,.memory-card .text{overflow-wrap:anywhere}.memory-card .row>div{min-width:0}"
     "audio{width:100%;margin-top:8px;height:38px}.hidden{display:none!important}"
     "@media(max-width:760px){body{padding:0 14px 108px}.nav{position:fixed;top:auto;bottom:14px;left:50%;transform:translateX(-50%);width:calc(100% - 28px);max-width:560px;margin:0;padding:7px 9px 7px 14px;min-height:66px}.brand{font-size:20px}.navlinks{flex:1;justify-content:flex-end}.navlink{padding:10px 11px}.navlabel{display:none}.top{display:block;margin-top:34px;padding-top:0}.top>.pill,.top>.monthnav{margin-top:18px}.stats{grid-template-columns:repeat(2,1fr)}.grid,.todaygrid,.settingsgrid{grid-template-columns:1fr}.settingsgrid>.wide{grid-column:auto}.toolbar{flex-wrap:wrap}.toolbar .search{flex-basis:100%}.card{border-radius:22px}.title{font-size:21px}.taskrow{grid-template-columns:auto 1fr}.taskrow>.badge{display:none}.agendarow{grid-template-columns:72px 1fr}.agendarow>.badge{display:none}.calday{min-height:54px;padding:7px 6px}.sectionhead h2{font-size:26px}.monthnav .pill{min-width:132px}}"
     "@media(max-width:420px){.ask{flex-wrap:wrap}.ask input{flex-basis:100%}.ask button{margin-left:auto}}"
@@ -1577,10 +1592,11 @@ static String portalPageStart(const String& title) {
 
 static String portalNav(const String& active) {
   auto link = [&](const String& id, const String& href, const String& icon,
-                  const String& deLabel, const String& enLabel) {
-    return "<a class='navlink " + String(active == id ? "active" : "") + "' href='" + href + "'>"
-           "<span class='navicon'>" + icon + "</span><span class='navlabel'>" +
-           String(viewerText(deLabel.c_str(), enLabel.c_str())) + "</span></a>";
+                  const char* deLabel, const char* enLabel) {
+    const String label = htmlEscape(viewerText(deLabel, enLabel));
+    return "<a class='navlink " + String(active == id ? "active' aria-current='page" : "") +
+           "' href='" + href + "' aria-label='" + label + "' title='" + label + "'>"
+           "<span class='navicon'>" + icon + "</span><span class='navlabel'>" + label + "</span></a>";
   };
   const String homeIcon = "<svg viewBox='0 0 24 24' aria-hidden='true'><path d='M4 11.2 12 4l8 7.2'/><path d='M6.5 10.2V20h11v-9.8'/></svg>";
   const String memoriesIcon = "<svg viewBox='0 0 24 24' aria-hidden='true'><path d='M6 6h14M6 12h14M6 18h14'/><circle cx='3' cy='6' r='.5'/><circle cx='3' cy='12' r='.5'/><circle cx='3' cy='18' r='.5'/></svg>";
@@ -1615,17 +1631,91 @@ static String localizedQueueError(const String& error) {
 
 // ─── Portal handlers ───────────────────────────────────────────────────────
 
+static bool positiveFormValue(const char* name, int& value);
+
+struct MemoryPage {
+  int number;
+  int total;
+  int begin;
+  int end;
+};
+
+static MemoryPage memoryPage(int count, int pageSize) {
+  int requested = 0;
+  if (!positiveFormValue("page", requested)) requested = 1;
+  const int total = count ? 1 + (count - 1) / pageSize : 1;
+  const int number = min(requested, total);
+  const int begin = (number - 1) * pageSize;
+  return {number, total, begin, min(count, begin + pageSize)};
+}
+
+static void appendMemoryPager(String& html, const MemoryPage& page, const char* path, const char* anchor) {
+  if (page.total <= 1) return;
+  html += "<div class='pager'>";
+  if (page.number > 1)
+    html += String("<a class='btn' href='") + path + "?page=" + String(page.number - 1) + anchor + "'>" +
+            String(viewerText("Neuere", "Newer")) + "</a>";
+  html += "<span class='pill'>" + String(page.number) + " / " + String(page.total) + "</span>";
+  if (page.number < page.total)
+    html += String("<a class='btn' href='") + path + "?page=" + String(page.number + 1) + anchor + "'>" +
+            String(viewerText("Ältere", "Older")) + "</a>";
+  html += "</div>";
+}
+
+static void appendMemorySearch(String& html, const char* label) {
+  const String escapedLabel = htmlEscape(label);
+  html += "<div class='toolbar'><input id='memory-search' class='search' type='search' placeholder='" +
+          escapedLabel + "' aria-label='" + escapedLabel + "'></div>"
+          "<p class='empty' id='memory-search-empty' role='status' hidden>" +
+          htmlEscape(viewerText("Keine passenden Gedanken auf dieser Seite.", "No matching memories on this page.")) +
+          "</p>";
+}
+
+static String memoryPreviewTitle(int num, const String& transcript, bool hasText) {
+  if (!hasText) return String(viewerText("Gedanke ", "Memory ")) + String(num);
+  String title = transcript;
+  title.replace("\n", " ");
+  title.trim();
+  if (title.isEmpty()) return String(viewerText("Gedanke ", "Memory ")) + String(num);
+  return title.length() > 58 ? title.substring(0, 58) + "..." : title;
+}
+
+static void appendMemoryCardHeader(String& html, int num, const String& title, const String& capturedUtc,
+                                   const String& badge) {
+  html += "<article class='card memory-card'><div class='row'><div><div class='num'>#" + String(num) +
+          "</div><h2 class='title'>" + htmlEscape(title) + "</h2>";
+  if (capturedUtc.length()) {
+    const String escaped = htmlEscape(capturedUtc);
+    html += "<div class='date' data-utc='" + escaped + "'>" + escaped + "</div>";
+  } else {
+    html += "<div class='date'>" + String(viewerText("Zeit nicht festgelegt", "time not set")) + "</div>";
+  }
+  html += "</div>";
+  if (badge.length()) html += "<span class='topic'>" + htmlEscape(badge) + "</span>";
+  html += "</div>";
+}
+
+static void appendMemoryBrowserScript(String& html) {
+  html += "<script>"
+          "function jumpTo(n,ms){var a=document.getElementById('audio-'+n);if(!a)return;a.currentTime=ms/1000;a.play();}"
+          "var search=document.getElementById('memory-search');"
+          "if(search){var noMatches=document.getElementById('memory-search-empty'),cards=document.querySelectorAll('.memory-card');"
+          "search.addEventListener('input',function(){var q=this.value.toLowerCase().trim(),matches=0;"
+          "cards.forEach(function(card){var visible=card.textContent.toLowerCase().indexOf(q)>=0;"
+          "card.classList.toggle('hidden',!visible);if(visible)matches++;});noMatches.hidden=!q||matches>0;});}"
+          "document.querySelectorAll('[data-utc]').forEach(function(el){"
+          "var d=new Date(el.dataset.utc);"
+          "if(!isNaN(d)){el.textContent=d.toLocaleString([],{year:'numeric',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'});}"
+          "});"
+          "</script>";
+}
+
 static void handlePortalRoot() {
   loadIndex();
   const bool de = palaUiLanguage() == "de";
   BrainStats brainStats = readBrainStats();
   const BatteryReading battery = readBattery();
-  constexpr int kPageSize = 20;
-  const int pageCount = max(1, (static_cast<int>(noteIndex.size()) + kPageSize - 1) / kPageSize);
-  const int requestedPage = transferServer.hasArg("page") ? transferServer.arg("page").toInt() : 1;
-  const int page = constrain(requestedPage, 1, pageCount);
-  const int firstVisible = (page - 1) * kPageSize;
-  const int lastVisible = min(static_cast<int>(noteIndex.size()), firstVisible + kPageSize);
+  const MemoryPage page = memoryPage(static_cast<int>(noteIndex.size()), 20);
 
   String html = portalPageStart(palaNoteName() + " · " + viewerText("Heute", "Today"));
 
@@ -1695,15 +1785,15 @@ static void handlePortalRoot() {
 
   html += "<div class='sectionhead' id='memories'><div><h2>" + String(viewerText("Gedanken", "Memories")) + "</h2><p>" +
           htmlEscape(viewerNamedText("Gespeicherte Gedanken auf {name}.", "Saved memories on {name}.")) + "</p></div>"
-          "<a class='btn' href='/export.txt'>" + String(viewerText("Exportieren", "Export")) + "</a></div>"
-          "<div class='toolbar'><input id='memory-search' class='search' type='search' placeholder='" +
-          String(viewerText("Gedanken durchsuchen…", "Search memories…")) + "' aria-label='Search memories'></div>";
+          "<div class='sectionactions'><a class='btn' href='/export.txt'>" + String(viewerText("Exportieren", "Export")) +
+          "</a><a class='btn' href='/trash'>" + String(viewerText("Papierkorb", "Trash")) + "</a></div></div>";
 
   if (noteIndex.empty()) {
     html += "<div class='empty'>" + String(viewerText("Noch keine Gedanken gespeichert. Halte REC gedrückt, um etwas festzuhalten.", "No memories saved yet. Hold REC to capture a thought.")) + "</div>";
   } else {
+    appendMemorySearch(html, viewerText("Gedanken durchsuchen…", "Search memories…"));
     html += "<div class='grid'>";
-    for (int v = firstVisible; v < lastVisible; v++) {
+    for (int v = page.begin; v < page.end; v++) {
       int i = (int)noteIndex.size() - 1 - v;
       int num = noteIndex[i].num;
 
@@ -1719,21 +1809,8 @@ static void handlePortalRoot() {
           ? String(viewerText("(leeres Transkript)", "(empty transcript)"))
           : String(viewerText("Noch nicht transkribiert.", "Not transcribed yet."));
 
-      String title = transcript; title.replace("\n", " "); title.trim();
-      if (title.length() > 58) title = title.substring(0, 58) + "...";
-      if (title.length() == 0 || !noteIndex[i].hasText)
-        title = String(viewerText("Gedanke ", "Memory ")) + String(num);
-      if (memory.valid) title = memory.title;
-
-      html += "<article class='card memory-card'>";
-      html += "<div class='row'><div><div class='num'>#" + String(num) + "</div>";
-      html += "<h2 class='title'>" + htmlEscape(title) + "</h2>";
-      String createdUtc = noteCreatedUtc(num);
-      if (createdUtc.length() > 0)
-        html += "<div class='date' data-utc='" + createdUtc + "'>" + createdUtc + "</div>";
-      else
-        html += "<div class='date'>" + String(viewerText("Zeit nicht festgelegt", "time not set")) + "</div>";
-      html += "</div><span class='topic'>" + htmlEscape(localizedQueueState(noteQueueState(num))) + "</span></div>";
+      const String title = memory.valid ? memory.title : memoryPreviewTitle(num, transcript, noteIndex[i].hasText);
+      appendMemoryCardHeader(html, num, title, noteCreatedUtc(num), localizedQueueState(noteQueueState(num)));
       const String queueError = noteQueueError(num);
       if (queueError.length()) {
         html += "<div class='status'><span class='pill missing'>Retry " + String(noteQueueRetries(num)) +
@@ -1801,25 +1878,10 @@ static void handlePortalRoot() {
       html += "</div></article>";
     }
     html += "</div>";
-    if (pageCount > 1) {
-      html += "<div class='actions' style='justify-content:center;margin:24px 0'>";
-      if (page > 1) html += "<a class='btn' href='/?page=" + String(page - 1) + "'>" + String(viewerText("Neuere", "Newer")) + "</a>";
-      html += "<span class='pill'>" + String(page) + " / " + String(pageCount) + "</span>";
-      if (page < pageCount) html += "<a class='btn' href='/?page=" + String(page + 1) + "'>" + String(viewerText("Ältere", "Older")) + "</a>";
-      html += "</div>";
-    }
+    appendMemoryPager(html, page, "/", "#memories");
   }
 
-  html += "<script>"
-          "function jumpTo(n,ms){var a=document.getElementById('audio-'+n);if(!a)return;a.currentTime=ms/1000;a.play();}"
-          "var search=document.getElementById('memory-search');"
-          "if(search)search.addEventListener('input',function(){var q=this.value.toLowerCase().trim();"
-          "document.querySelectorAll('.memory-card').forEach(function(card){card.classList.toggle('hidden',q&&card.textContent.toLowerCase().indexOf(q)<0);});});"
-          "document.querySelectorAll('[data-utc]').forEach(function(el){"
-          "var d=new Date(el.dataset.utc);"
-          "if(!isNaN(d)){el.textContent=d.toLocaleString([],{year:'numeric',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'});}"
-          "});"
-          "</script>";
+  appendMemoryBrowserScript(html);
   html += "</div></body></html>";
   transferServer.send(200, "text/html", html);
 }
@@ -2128,13 +2190,14 @@ static void handleDeleteAllNotes() {
     return;
   }
   lastRecNum = -1;
-  transferServer.sendHeader("Location", "/settings#trash");
+  transferServer.sendHeader("Location", "/trash");
   transferServer.send(303);
 }
 
-#if !PALA_BRIDGE_DISCOVERY
-static void redirectToTrash() {
-  transferServer.sendHeader("Location", "/settings#trash");
+static void redirectToTrash(bool keepPage = false) {
+  int page = 0;
+  transferServer.sendHeader("Location", keepPage && positiveFormValue("page", page)
+                                       ? String("/trash?page=") + String(page) : String("/trash"));
   transferServer.send(303);
 }
 
@@ -2145,7 +2208,7 @@ static void handleTrashRestore() {
   } else if (!restoreTrashedNote(num)) {
     transferServer.send(500, "text/plain", "Could not restore this memory. Check the SD card.");
   } else {
-    redirectToTrash();
+    redirectToTrash(true);
   }
 }
 
@@ -2156,7 +2219,7 @@ static void handleTrashRetention() {
   } else if (!setTrashRetentionDays(days)) {
     transferServer.send(500, "text/plain", "Could not save Trash retention.");
   } else {
-    redirectToTrash();
+    redirectToTrash(true);
   }
 }
 
@@ -2175,7 +2238,99 @@ static void handleTrashEmpty() {
   } while (more);
   redirectToTrash();
 }
-#endif
+
+static void appendTrashSettings(String& html, int page, bool hasEntries) {
+  html += "<details class='card memory-management'><summary>" + String(viewerText("Papierkorb verwalten", "Manage Trash")) +
+          "</summary><div class='settingsgrid'><form action='/trash/retention' method='post'>"
+          "<input type='hidden' name='page' value='" + String(page) + "'>"
+          "<div class='field'><label for='trash-days'>" + String(viewerText("Aufbewahrung (Tage)", "Keep items in Trash (days)")) +
+          "</label><input id='trash-days' name='days' type='number' min='1' max='3650' required value='" +
+          String(trashRetentionDays()) + "'></div><button type='submit' class='btn'>" +
+          String(viewerText("Aufbewahrung speichern", "Save retention")) + "</button></form>";
+  html += "<form action='/memories/delete-all' method='post' data-confirm='" +
+          htmlEscape(viewerText("Alle Gedanken in den Papierkorb verschieben?", "Move all memories to Trash?")) +
+          "' onsubmit='return confirm(this.dataset.confirm)'><div class='field'><label for='move-confirm'>" +
+          String(viewerText("MOVE ALL eingeben, um alle Gedanken in den Papierkorb zu verschieben", "Type MOVE ALL to move all memories to Trash")) +
+          "</label><input id='move-confirm' name='confirmation' autocomplete='off' required pattern='MOVE ALL'></div>"
+          "<button class='btn' type='submit'>" + String(viewerText("Alle Gedanken verschieben", "Move all memories to Trash")) +
+          "</button></form>";
+  if (hasEntries) {
+    html += "<form action='/trash/empty' method='post' class='card danger wide' data-confirm='" +
+            htmlEscape(viewerText("Papierkorb endgültig leeren?", "Permanently empty Trash?")) +
+            "' onsubmit='return confirm(this.dataset.confirm)'><div class='field'><label for='trash-confirm'>" +
+            String(viewerText("EMPTY TRASH eingeben, um den Papierkorb endgültig zu leeren", "Type EMPTY TRASH to permanently remove the items in Trash")) +
+            "</label><input id='trash-confirm' name='confirmation' autocomplete='off' required pattern='EMPTY TRASH'></div>"
+            "<button class='btn destructive' type='submit'>" + String(viewerText("Papierkorb leeren", "Empty Trash")) + "</button></form>";
+  }
+  html += "</div></details>";
+}
+
+static void handleTrashPage() {
+  std::vector<TrashedNote> entries;
+  const bool listed = listTrashedNotes(entries);
+  const String heading = viewerText("Papierkorb", "Trash");
+  String html = portalPageStart(palaNoteName() + " · " + heading);
+  html += portalNav("");
+  html += "<div class='top'><div><h1>" + heading + "</h1></div><a class='btn' href='/#memories'>" +
+          String(viewerText("Zu den Gedanken", "Back to memories")) + "</a></div>";
+
+  const MemoryPage page = memoryPage(listed ? static_cast<int>(entries.size()) : 0, 12);
+  if (!listed || entries.empty()) {
+    html += "<div class='empty'>" + String(listed ? viewerText("Der Papierkorb ist leer.", "Trash is empty.")
+                                                 : viewerText("Papierkorb konnte nicht gelesen werden.", "Could not read Trash.")) +
+            "</div>";
+  } else {
+    std::sort(entries.begin(), entries.end(), [](const TrashedNote& a, const TrashedNote& b) {
+      return a.trashedAt != b.trashedAt ? a.trashedAt > b.trashedAt : a.num > b.num;
+    });
+    appendMemorySearch(html, viewerText("Diesen Papierkorb-Abschnitt durchsuchen…", "Search this page of Trash…"));
+    html += "<div class='grid'>";
+    for (int i = page.begin; i < page.end; ++i) {
+      const TrashedNote& entry = entries[i];
+      const String num = String(entry.num);
+      const String transcript = readSmallFile(openParkedNoteFile(entry.num, ParkedNoteFile::Transcript), 1200);
+      appendMemoryCardHeader(html, entry.num, memoryPreviewTitle(entry.num, transcript, !transcript.isEmpty()),
+                             entry.capturedUtc, entry.tag);
+      html += "<p class='text'>" + (transcript.isEmpty() ? String(viewerText("Kein Transkript.", "No transcript."))
+                                                         : htmlEscape(transcript)) + "</p>";
+      if (openParkedNoteFile(entry.num, ParkedNoteFile::Audio)) {
+        html += "<audio controls preload='none' src='/trash/audio?num=" + num + "'></audio>";
+      }
+      html += "<form class='actions' action='/trash/restore' method='post'>"
+              "<input type='hidden' name='num' value='" + num + "'>"
+              "<input type='hidden' name='page' value='" + String(page.number) + "'>"
+              "<button class='btn primary' type='submit'>" + String(viewerText("Wiederherstellen", "Restore")) +
+              "</button></form></article>";
+    }
+    html += "</div>";
+    appendMemoryPager(html, page, "/trash", "");
+  }
+  appendTrashSettings(html, page.number, listed && !entries.empty());
+  appendMemoryBrowserScript(html);
+  html += "</div></body></html>";
+  transferServer.sendHeader("Cache-Control", "no-store");
+  transferServer.sendHeader("X-Frame-Options", "DENY");
+  transferServer.sendHeader("Content-Security-Policy",
+      "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; media-src 'self'; "
+      "base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+  transferServer.send(listed ? 200 : 500, "text/html; charset=utf-8", html);
+}
+
+static void handleTrashAudio() {
+  int num = 0;
+  if (!positiveFormValue("num", num)) {
+    transferServer.send(400, "text/plain", "Invalid memory number.");
+    return;
+  }
+  File file = openParkedNoteFile(num, ParkedNoteFile::Audio);
+  if (!file) {
+    transferServer.send(404, "text/plain", "File not found");
+    return;
+  }
+  transferServer.sendHeader("Cache-Control", "no-store");
+  transferServer.streamFile(file, "audio/wav");
+  file.close();
+}
 
 static void handleBrainAsk() {
   String question = transferServer.arg("question");
@@ -2272,49 +2427,8 @@ void handleSettingsPage() {
     html += "<form action='/settings/key/clear' method='post' class='actions'>"
             "<button class='moment' type='submit' onclick=\"return confirm('" + String(viewerText("API-Key vom Gerät entfernen?", "Remove the API key from this device?")) + "')\">" + String(viewerText("API-Key entfernen", "Remove API key")) + "</button></form>";
   }
-  html += "<section class='card wide' id='trash'><h2 class='title'>Trash</h2>"
-          "<form action='/trash/retention' method='post'><div class='field'><label for='trash-days'>Keep items in Trash (days)</label>"
-          "<input id='trash-days' name='days' type='number' min='1' max='3650' required value='" +
-          String(trashRetentionDays()) + "'></div><button type='submit' class='btn'>Save retention</button></form>";
-  std::vector<TrashedNote> entries;
-  if (!listTrashedNotes(entries)) {
-    html += "<p class='text'>Could not read Trash.</p>";
-  } else if (entries.empty()) {
-    html += "<p class='text'>Trash is empty.</p>";
-  } else {
-    constexpr int pageSize = 12;
-    const int count = static_cast<int>(entries.size());
-    const int pages = (count + pageSize - 1) / pageSize;
-    int requested = 1;
-    positiveFormValue("trashPage", requested);
-    const int page = constrain(requested, 1, pages);
-    const int begin = (page - 1) * pageSize;
-    for (int i = begin; i < min(count, begin + pageSize); ++i) {
-      const TrashedNote& item = entries[i];
-      String date = item.capturedUtc.isEmpty() ? String() : utcToLocalDeviceLabel(item.capturedUtc);
-      html += "<div class='networkrow'><div><strong>Memory #" + String(item.num) + "</strong> " +
-              htmlEscape(item.tag) + (date.isEmpty() ? String() : String(" · ") + htmlEscape(date)) +
-              "</div><form action='/trash/restore' method='post'><input type='hidden' name='num' value='" +
-              String(item.num) + "'><button class='btn' type='submit'>Restore</button></form></div>";
-    }
-    if (pages > 1) {
-      html += "<div class='actions'>";
-      if (page > 1) html += "<a class='btn' href='/settings?trashPage=" + String(page - 1) + "#trash'>Previous</a>";
-      html += "<span>" + String(page) + " / " + String(pages) + "</span>";
-      if (page < pages) html += "<a class='btn' href='/settings?trashPage=" + String(page + 1) + "#trash'>Next</a>";
-      html += "</div>";
-    }
-    html += "<form action='/trash/empty' method='post' class='card danger' "
-            "onsubmit=\"return confirm('Permanently empty Trash?')\"><div class='field'>"
-            "<label for='trash-confirm'>Type EMPTY TRASH to permanently remove items in Trash</label>"
-            "<input id='trash-confirm' name='confirmation' autocomplete='off' required pattern='EMPTY TRASH'></div>"
-            "<button class='btn destructive' type='submit'>Empty Trash</button></form>";
-  }
-  html += "<form action='/memories/delete-all' method='post' class='card' "
-          "onsubmit=\"return confirm('Move all memories to Trash?')\"><div class='field'>"
-          "<label for='move-confirm'>Type MOVE ALL to move all memories to Trash</label>"
-          "<input id='move-confirm' name='confirmation' autocomplete='off' required pattern='MOVE ALL'></div>"
-          "<button class='btn' type='submit'>Move all memories to Trash</button></form></section>";
+  html += "<section class='card wide' id='trash'><h2 class='title'>" + String(viewerText("Papierkorb", "Trash")) +
+          "</h2><a class='btn' href='/trash'>" + String(viewerText("Papierkorb öffnen", "Open Trash")) + "</a></section>";
   html += "</div></div></body></html>";
   transferServer.send(200, "text/html", html);
 }
@@ -2409,20 +2523,34 @@ void setupTransferServer() {
     noteSettingsHttp(transferServer);
 #endif
     transferServer.addMiddleware([](WebServer& server, Middleware::Callback next) {
+      const String uri = server.uri();
+      const bool trash = uri == "/trash" || uri.startsWith("/trash/");
 #if PALA_BRIDGE_DISCOVERY
-      if (server.uri() == "/settings" || server.uri() == "/note-settings" ||
-          server.uri() == "/api/note-settings") {
+      const bool settings = uri == "/settings" || uri == "/note-settings" || uri == "/api/note-settings";
+#else
+      const bool settings = false;
+#endif
+      if (trash || settings) {
         const String host = server.hostHeader();
-        const String origin = server.header("Origin");
         const bool correctHost = !transferUrl.isEmpty() &&
                                  (host == transferUrl || host == transferUrl + ":80");
-        if (!correctHost || (server.method() == HTTP_POST && origin != "http://" + host)) {
-          server.send(403, "application/json",
-                      F("{\"ok\":false,\"error\":\"Open the address shown on the Note.\"}"));
+        const bool checkOrigin = server.method() == HTTP_POST && (settings || PALA_BRIDGE_DISCOVERY);
+        if (!correctHost || (checkOrigin && server.header("Origin") != "http://" + host)) {
+          if (settings) {
+            server.send(403, "application/json", F("{\"ok\":false,\"error\":\"Open the address shown on the Note.\"}"));
+          } else {
+            server.send(403, "text/plain", "Open the address shown on the Note.");
+          }
           return true;
         }
       }
-#endif
+      if (server.method() == HTTP_GET && uri == "/settings" && server.hasArg("trashPage")) {
+        int page = 0;
+        server.sendHeader("Location", positiveFormValue("trashPage", page)
+                                         ? String("/trash?page=") + String(page) : String("/trash"));
+        server.send(303);
+        return true;
+      }
       if (server.method() == HTTP_POST && !viewerWriteAllowed(server.hostHeader().c_str(),
             server.header("Origin").c_str(), server.header("Referer").c_str(),
             server.header("Sec-Fetch-Site").c_str())) {
@@ -2446,10 +2574,12 @@ void setupTransferServer() {
   transferServer.on("/ask", HTTP_POST, handleBrainAsk);
 #if !PALA_BRIDGE_DISCOVERY
   transferServer.on("/settings", HTTP_GET, handleSettingsPage);
+#endif
+  transferServer.on("/trash", HTTP_GET, handleTrashPage);
+  transferServer.on("/trash/audio", HTTP_GET, handleTrashAudio);
   transferServer.on("/trash/restore", HTTP_POST, handleTrashRestore);
   transferServer.on("/trash/retention", HTTP_POST, handleTrashRetention);
   transferServer.on("/trash/empty", HTTP_POST, handleTrashEmpty);
-#endif
   transferServer.on("/settings/save", HTTP_POST, handleSettingsSave);
 #if PALA_BRIDGE_DISCOVERY
   transferServer.on("/settings/bridge", HTTP_POST, handleBridgeAddressSave);

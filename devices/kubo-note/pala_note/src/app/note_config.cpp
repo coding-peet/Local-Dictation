@@ -2,9 +2,12 @@
 
 #include "bluetooth_sync.h"
 #include "bridge_client.h"
+#include "display_pages.h"
 #include "note_peers.h"
 #include "notes.h"
 #include "settings.h"
+#include "sleep.h"
+#include "sleep_policy.h"
 #include <ArduinoJson.h>
 #include <WebServer.h>
 #include <WiFi.h>
@@ -109,6 +112,8 @@ void getSettings(JsonVariantConst request, NoteConfigTransport link, JsonDocumen
   device["language"] = palaUiLanguage();
   device["keepsWifiPassword"] = true;
   device["memoryTrash"] = true;
+  device["displayPages"] = palaDisplayPages();
+  device["sleepMinutes"] = palaIdleSleepMinutes();
 #if PALA_BRIDGE_DISCOVERY
   device["bridgeAddress"] = palaBridgeAddress();
 #endif
@@ -349,6 +354,22 @@ void dispatch(JsonVariantConst request, NoteConfigTransport link, bool authentic
       resetBridgeAddressCache();
     }
 #endif
+  } else if (op == "sleep.save") {
+    const JsonVariantConst value = request["minutes"];
+    if (!value.is<int>() || !validIdleSleepMinutes(value.as<int>())) {
+      fillResult(result, "Enter a timeout from 1 to 99 minutes or use Default.");
+    } else if (!palaSetIdleSleepMinutes(value.as<int>())) {
+      fillResult(result, "Could not save the sleep timeout.");
+    } else {
+      resetActivity();
+    }
+  } else if (op == "pages.save") {
+    const JsonString order = request["pages"].as<JsonString>();
+    if (order.size() != kDisplayPageCount || !validDisplayPages(order.c_str(), order.size())) {
+      fillResult(result, "Invalid display page order.");
+    } else if (!palaSetDisplayPages(String(order.c_str()))) {
+      fillResult(result, "Could not save the display pages.");
+    }
   } else if (op == "settings.save") {
     if (!palaSaveLocalNoteSettings(request["name"] | "", request["language"] | ""))
       fillResult(result, "Could not save the device name and language.");

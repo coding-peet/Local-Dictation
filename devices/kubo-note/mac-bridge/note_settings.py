@@ -17,6 +17,7 @@ MAX_LINE = 4096
 NOTE_LANGUAGES = frozenset(("en", "de", "sk", "cs", "fr", "es", "it", "pl", "nl", "pt", "ru", "uk"))
 NOTE_NUMBER_MAX = 2_147_483_647
 TRASH_DAYS_MAX = 3650
+IDLE_SLEEP_MINUTES_MAX = 99
 CAPTURED_UTC = r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"
 
 
@@ -51,6 +52,13 @@ def bounded_integer(value, minimum, maximum):
     return type(value) is int and minimum <= value <= maximum
 
 
+def valid_display_pages(value):
+    if not isinstance(value, str) or re.fullmatch(r"[TtEeCcNnMm]{4,5}", value) is None:
+        return False
+    expected = set("TECN" if len(value) == 4 else "TECNM")
+    return set(value.upper()) == expected
+
+
 def note_request(data):
     op = data["op"]
     if op in ("get", "trash.status"):
@@ -72,6 +80,10 @@ def note_request(data):
         return {"op": op, "id": data["id"]}
     if op == "bridge.address":
         return {"op": op, "address": text(data.get("address"), 15, empty=True)}
+    if op == "sleep.save" and bounded_integer(data.get("minutes"), 0, IDLE_SLEEP_MINUTES_MAX):
+        return {"op": op, "minutes": data["minutes"]}
+    if op == "pages.save" and valid_display_pages(data.get("pages")):
+        return {"op": op, "pages": data["pages"]}
     if op == "bridge.order":
         ids = data.get("ids")
         if (isinstance(ids, list) and len(ids) <= 8 and all(valid(value, PEER_ID) for value in ids)
@@ -121,6 +133,10 @@ def note_response(reply, transport, op="get"):
         result["device"]["memoryTrash"] = device["memoryTrash"]
     if device.get("keepsWifiPassword") is True:
         result["device"]["keepsWifiPassword"] = True
+    if bounded_integer(device.get("sleepMinutes"), 0, IDLE_SLEEP_MINUTES_MAX):
+        result["device"]["sleepMinutes"] = device["sleepMinutes"]
+    if valid_display_pages(device.get("displayPages")):
+        result["device"]["displayPages"] = device["displayPages"]
     if "bridgeAddress" in device:
         result["device"]["bridgeAddress"] = text(device["bridgeAddress"], 15, empty=True)
     result["wifi"] = [{"ssid": text(item["ssid"], 32)}
@@ -338,6 +354,25 @@ class SettingsRoute:
             except ValueError as error:
                 raise SettingsError(str(error)) from error
             return {"ok": True, "bridge": saved}
+        if op == "bridge.processing.save":
+            from note_web import save_processing_preferences
+
+            try:
+                processing = save_processing_preferences(self.state, data.get("mode"),
+                                                         data.get("taskList"), data.get("calendarId"))
+            except ValueError as error:
+                raise SettingsError(str(error)) from error
+            return {"ok": True, "processing": processing}
+        if op == "bridge.processing.check":
+            from bridge import codex_command, require_chatgpt_login
+            from subprocess import TimeoutExpired
+
+            try:
+                cli = codex_command()
+                require_chatgpt_login(cli)
+            except (OSError, RuntimeError, TimeoutExpired):
+                return {"ok": False, "error": "Codex CLI is unavailable or signed out. Run codex login, then check again."}
+            return {"ok": True}
         request = note_request(data)
         if op != "get" and "_target" in data:
             request["_target"] = data["_target"]
@@ -354,5 +389,8 @@ class SettingsRoute:
             capabilities = result.setdefault("capabilities", {"pair": True, "peers": False, "bridgeOrder": False})
             if self.pairing is not None:
                 capabilities["pairBle"] = self.pairing.ble_available
-            result["bridge"] = bridge_preferences(self.state, self.legacy())
+            from note_web import processing_preferences
+
+            result["bridge"] = {**bridge_preferences(self.state, self.legacy()),
+                                "processing": processing_preferences(self.state)}
         return result

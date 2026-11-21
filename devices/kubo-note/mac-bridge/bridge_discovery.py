@@ -1,9 +1,12 @@
 """Publish the paired HTTPS service on explicitly approved IPv4 networks."""
 from ipaddress import IPv4Address, IPv4Network
+import ctypes
 import hmac
 import logging
 import re
+import socket
 import ssl
+import sys
 import threading
 import time
 from http.server import ThreadingHTTPServer
@@ -21,7 +24,112 @@ def private_network(value):
     return network
 
 
+# The leading fields of the Windows SDK's sockaddr_in and IP_ADAPTER_*_LH.
+# Pointer sizes and alignment follow the process architecture.
+class _SockaddrIn(ctypes.Structure):
+    _fields_ = [
+        ("family", ctypes.c_uint16),
+        ("port", ctypes.c_uint16),
+        ("address", ctypes.c_ubyte * 4),
+        ("padding", ctypes.c_ubyte * 8),
+    ]
+
+
+class _SocketAddress(ctypes.Structure):
+    _fields_ = [("address", ctypes.POINTER(_SockaddrIn)), ("length", ctypes.c_int)]
+
+
+class _UnicastAddress(ctypes.Structure):
+    pass
+
+
+_UnicastAddress._fields_ = [
+    ("alignment", ctypes.c_uint64),
+    ("next", ctypes.POINTER(_UnicastAddress)),
+    ("socket_address", _SocketAddress),
+    ("prefix_origin", ctypes.c_int),
+    ("suffix_origin", ctypes.c_int),
+    ("dad_state", ctypes.c_int),
+    ("valid_lifetime", ctypes.c_uint32),
+    ("preferred_lifetime", ctypes.c_uint32),
+    ("lease_lifetime", ctypes.c_uint32),
+    ("prefix_length", ctypes.c_uint8),
+]
+
+
+class _AdapterAddress(ctypes.Structure):
+    pass
+
+
+_AdapterAddress._fields_ = [
+    ("alignment", ctypes.c_uint64),
+    ("next", ctypes.POINTER(_AdapterAddress)),
+    ("adapter_name", ctypes.c_void_p),
+    ("first_unicast", ctypes.POINTER(_UnicastAddress)),
+    ("first_anycast", ctypes.c_void_p),
+    ("first_multicast", ctypes.c_void_p),
+    ("first_dns_server", ctypes.c_void_p),
+    ("dns_suffix", ctypes.c_void_p),
+    ("description", ctypes.c_void_p),
+    ("friendly_name", ctypes.c_void_p),
+    ("physical_address", ctypes.c_ubyte * 8),
+    ("physical_address_length", ctypes.c_uint32),
+    ("flags", ctypes.c_uint32),
+    ("mtu", ctypes.c_uint32),
+    ("if_type", ctypes.c_uint32),
+    ("oper_status", ctypes.c_int),
+]
+
+
+def _usable_windows_ipv4(adapter):
+    if_oper_status_up = 1
+    ip_dad_state_preferred = 4
+    interfaces = []
+    while adapter:
+        interface = adapter.contents
+        adapter = interface.next
+        if interface.oper_status != if_oper_status_up:
+            continue
+        unicast = interface.first_unicast
+        while unicast:
+            address = unicast.contents
+            unicast = address.next
+            endpoint_address = address.socket_address
+            if (address.dad_state != ip_dad_state_preferred or address.prefix_length > 32
+                    or not endpoint_address.address or endpoint_address.length < ctypes.sizeof(_SockaddrIn)):
+                continue
+            endpoint = endpoint_address.address.contents
+            if endpoint.family == socket.AF_INET:
+                interfaces.append((socket.inet_ntoa(bytes(endpoint.address)), address.prefix_length))
+    return interfaces
+
+
+def _windows_ipv4_interfaces():
+    # Limit the snapshot to unicast addresses. Windows recommends a 15 KB
+    # buffer, with retries if adapters or addresses change during enumeration.
+    flags = 0x2 | 0x4 | 0x8  # Skip anycast, multicast and DNS server addresses.
+    error_buffer_overflow = 111
+    error_no_data = 232
+    size = ctypes.c_uint32(15 * 1024)
+    query = ctypes.windll.iphlpapi.GetAdaptersAddresses
+    query.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p,
+                      ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
+    query.restype = ctypes.c_uint32
+    for _ in range(3):
+        buffer = ctypes.create_string_buffer(size.value)
+        result = query(socket.AF_INET, flags, None, buffer, ctypes.byref(size))
+        if result == 0:
+            return _usable_windows_ipv4(ctypes.cast(buffer, ctypes.POINTER(_AdapterAddress)))
+        if result == error_no_data:
+            return []
+        if result != error_buffer_overflow:
+            break
+    raise ctypes.WinError(result)
+
+
 def ipv4_interfaces():
+    if sys.platform == "win32":
+        return _windows_ipv4_interfaces()
     import ifaddr
 
     return [(ip.ip, ip.network_prefix) for adapter in ifaddr.get_adapters()

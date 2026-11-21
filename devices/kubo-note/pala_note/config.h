@@ -62,14 +62,10 @@
 
 /* UI timing */
 #define REC_HOLD_MS         320
-#define ASK_DOUBLE_TAP_MS   360UL
 #define COMPANION_HOLD_MS   3000UL
 #define BTN_LONG_MS         600
 #define BACKGROUND_IDLE_MS  8000UL
 #define BACKGROUND_RETRY_MS 60000UL
-#define AUTO_SLEEP_IDLE_MS  60000UL
-#define AUTO_SLEEP_GRACE_MS 180000UL
-#define COMPANION_IDLE_SLEEP_MS 300000UL // 5 minutes without HTTP/button activity
 #define TICKER_INTERVAL_MS  950
 
 /* Battery warning */

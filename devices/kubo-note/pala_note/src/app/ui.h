@@ -3,10 +3,11 @@
 #include <Arduino.h>
 #include "backlog_transport.h"
 
-// The device UI intentionally exposes only Record, Ask, processing, answer,
-// Companion, error, and sleep. Organization belongs to the Web Companion.
+// Page visibility and order are managed in the shared Note settings.
 void showIdle(int pendingCount = 0, int batteryPercent = -1);
-void showTodayAgenda(bool events, int page = 0);
+enum class AgendaNavigation { EventsShortcut, LastDisplayPage, MoreDisplayPages };
+void showTodayAgenda(bool events, int page, AgendaNavigation navigation);
+void showCalendarMonth(int monthOffset, bool moreDisplayPages);
 int todayAgendaPageCount(bool events);
 void showRecording();
 void showRecordingProgress(uint32_t elapsedMs, int moments);
@@ -21,14 +22,13 @@ void showAskProgress(const char* action, const char* object = nullptr);
 void showAskSpeaking(const String& answer, int sourceCount);
 int askAnswerPageCount(const String& answer);
 void showAskSpeakingPage(const String& answer, int sourceCount, int page);
-void showTransferConnecting();
+void showTransferConnecting(int batteryPercent);
 void showNotePairingWait(bool bluetooth);
 void showNoteUsbPairingPrompt(const String& peer);
 void showNoteBluetoothPairingNumber(uint32_t code);
 enum class CompanionLink { Offline, Wifi, Hotspot };
 void showTransferMode(CompanionLink link, const String& network, const String& ip,
-                      const String& apPassword, int volume);
-void showCompanionVolume(int percent);
+                      const String& apPassword, int batteryPercent, int volumeOverlay);
 void showSetupRequired();
 void showError(const char* message);
 void showSleepLocked();

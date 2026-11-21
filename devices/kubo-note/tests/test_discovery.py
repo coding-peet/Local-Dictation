@@ -50,6 +50,45 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual(allowed_addresses(config, ["192.168.1.31"]), {"192.168.1.31"})
         self.assertEqual(allowed_addresses({**config, "discovery_networks": ["0.0.0.0/0"]}, ["10.59.167.226"]), set())
 
+    def test_windows_uses_only_eligible_interfaces_for_discovery(self):
+        from bridge_discovery import ipv4_interfaces
+
+        adapter = SimpleNamespace(ips=[
+            SimpleNamespace(ip="192.0.2.31", network_prefix=24),
+            SimpleNamespace(ip="192.0.2.248", network_prefix=24),
+        ])
+        ifaddr = SimpleNamespace(get_adapters=lambda: [adapter])
+        with patch.object(sys, "platform", "win32"), \
+                patch.dict(sys.modules, {"ifaddr": ifaddr}), \
+                patch("bridge_discovery._windows_ipv4_interfaces", create=True,
+                      return_value=[("192.0.2.31", 24)]):
+            self.assertEqual(ipv4_interfaces(), [("192.0.2.31", 24)])
+
+    def test_windows_rejects_down_interfaces_and_deprecated_addresses(self):
+        from ctypes import pointer, sizeof
+        from bridge_discovery import (
+            _AdapterAddress, _SockaddrIn, _SocketAddress, _UnicastAddress,
+            _usable_windows_ipv4,
+        )
+
+        def native_address(ip, dad_state, prefix_length):
+            endpoint = _SockaddrIn(family=socket.AF_INET)
+            endpoint.address[:] = socket.inet_aton(ip)
+            return _UnicastAddress(socket_address=_SocketAddress(pointer(endpoint), sizeof(endpoint)),
+                                   dad_state=dad_state, prefix_length=prefix_length)
+
+        preferred = native_address("192.0.2.31", 4, 24)
+        deprecated = native_address("192.0.2.248", 3, 24)
+        preferred.next = pointer(deprecated)
+        disconnected = native_address("198.51.100.5", 4, 25)
+        second = _AdapterAddress(oper_status=2, first_unicast=pointer(disconnected))
+        first = _AdapterAddress(oper_status=1, first_unicast=pointer(preferred), next=pointer(second))
+
+        self.assertEqual(_usable_windows_ipv4(pointer(first)), [("192.0.2.31", 24)])
+        # Re-read the OS state on each enumeration so a recovered interface is used.
+        second.oper_status = 1
+        self.assertEqual(_usable_windows_ipv4(pointer(first)), [("192.0.2.31", 24), ("198.51.100.5", 25)])
+
     def test_rebind_drops_old_listener_before_opening_new_one(self):
         events = []
         listeners = {"192.168.1.31": SimpleNamespace(close=lambda: events.append("close 31"))}

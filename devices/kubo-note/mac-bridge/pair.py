@@ -56,7 +56,7 @@ def pair(state, header, args):
     if config.exists():
         data = json.loads(config.read_text())
     else:
-        data = {"token": secrets.token_urlsafe(32), "host": host}
+        data = {"token": secrets.token_urlsafe(32), "host": host, "processing_mode": "transcribe"}
         certificate(state, host, "", "IP:" + host)
     if "discovery_id" not in data:
         data["discovery_id"] = "pala-" + secrets.token_hex(12)

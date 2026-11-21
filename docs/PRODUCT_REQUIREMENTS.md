@@ -844,6 +844,9 @@ clear to the user, preserve original recognition, and keep manual edits dominant
 - Manage Wi-Fi profiles and paired devices through the shared web page.
   Use USB or BLE from the PC, or the existing Wi-Fi Companion from a phone.
   Use the same page asset for all three transports. A phone app is optional.
+  The Note centers WEB and keeps the battery on the right in Host mode.
+  Check the battery once per minute and refresh when its displayed level
+  changes. Volume buttons show a temporary five-bar overlay.
 - Keep up to five independent pairings on the Note and show the list in
   the web page. Remove access through that page. Preserve the existing
   peer when migrating its pairing.
@@ -865,9 +868,27 @@ clear to the user, preserve original recognition, and keep manual edits dominant
 - Use the paired Bridge for local transcription. Preserve TLS identity and
   per-device authentication. Keep offline recordings recoverable until
   transcription succeeds.
-- Move removed memories and their SD-card files to Trash. Exclude items in
-  Trash from notes, search, export, and processing. Support restoring a
-  memory and manually emptying Trash with explicit confirmation.
+- Open the ordered set of optional display pages with a short upper press.
+  Note settings fixes Home at the bottom and shows the upper-button sequence
+  from bottom to top. Tasks, Events, current month, next month, and month after
+  next each have a separate enable switch and position. Skip
+  disabled pages, preserve paging through Tasks and Events, and return
+  Home after the last view or a lower tap.
+  Holding the upper button on these pages starts a recording.
+- Set a persistent idle sleep timeout of 1 to 99 minutes for Home and
+  Web Companion. Default restores 1 minute on Home, a 3-minute budget
+  with queued work, and 5 minutes in Web Companion. Finish an active stage
+  before sleeping and leave unfinished recordings recoverable.
+- On the awake Home screen, one lower tap opens Events when enabled,
+  two taps play the weekly briefing, three taps request synchronization
+  for queued recordings, and holding the lower button asks Kubo.
+  Finish classifying the gesture before starting background work.
+- Calculate month grids offline from the Note's local date. Show ISO week
+  numbers and highlight today on the current-month page.
+- Move removed memories and their SD-card files to Trash. Offer a separate
+  Trash page from Web Companion Home with memory cards, browsing, and
+  restore. Exclude Trash items from active notes, search, export, and
+  processing. Require explicit confirmation to empty Trash.
 - Keep memories in Trash for 90 days by default. Allow changing retention
   in Note settings from 1 to 3650 days. Apply retention from the time the
   memory was moved. Run expiry when the Note is awake and has a valid clock.
@@ -889,7 +910,14 @@ clear to the user, preserve original recognition, and keep manual edits dominant
   Release the COM port between checks so Pala can sleep normally.
 - Deliver each plain personal dictation to the configured Google General
   list or document as a separate entry with the complete original text.
+  Peter's personal Note sends ordinary dictations, including work-related
+  topics, to the Google Tasks list **Kubo notes general**. A dictation
+  beginning with "Poznámka" follows General unless it names a destination.
+  Bridge settings offer **Kubo processing**. Off permits local transcription
+  saved on the Note. On enables organization and configured Google delivery
+  using the user's Codex CLI and Google authorizations.
   Keep the approved dedicated Google destinations for explicit commands.
+  A calendar command follows the appointment confirmation flow.
 - Use short Google Tasks dictations as their own title. For longer
   dictations, select a compact topic title locally and retain the
   complete transcript in the task details.

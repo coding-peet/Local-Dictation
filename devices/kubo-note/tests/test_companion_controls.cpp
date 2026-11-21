@@ -51,3 +51,28 @@ constexpr bool interruptedChordCannotAccumulateHoldTime() {
   return control.poll(6200, true, true, hold) == Action::Exit;
 }
 static_assert(interruptedChordCannotAccumulateHoldTime());
+
+constexpr bool volumeOverlayRestartsAndExpiresAcrossClockWrap() {
+  CompanionDisplayState display;
+  if (display.volumeVisible()) return false;
+  display.showVolume(0xfffffff0u);
+  if (!display.volumeVisible() || display.dismissExpiredVolume(1000)) return false;
+  display.showVolume(1000);
+  if (display.dismissExpiredVolume(2799)) return false;
+  if (!display.dismissExpiredVolume(2800) || display.volumeVisible()) return false;
+  return !display.dismissExpiredVolume(2801);
+}
+
+constexpr bool batterySamplesOnlyRedrawOnVisibleChange() {
+  CompanionDisplayState display;
+  if (!display.updateBattery(100, 86)) return false;
+  if (display.batterySampleDue(60099) || !display.batterySampleDue(60100)) return false;
+  if (display.updateBattery(60100, 70) || display.batteryPercent() != 70) return false;
+  if (display.updateBattery(120100, -1) || display.batteryPercent() != 70) return false;
+  if (!display.updateBattery(180100, 66) || display.batteryPercent() != 66) return false;
+  display.updateBattery(0xfffffff0u, 66);
+  return !display.batterySampleDue(59983) && display.batterySampleDue(59984);
+}
+
+static_assert(volumeOverlayRestartsAndExpiresAcrossClockWrap());
+static_assert(batterySamplesOnlyRedrawOnVisibleChange());

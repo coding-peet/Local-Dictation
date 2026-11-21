@@ -2,13 +2,16 @@
 #include "settings.h"
 #include <Preferences.h>
 #include "bridge_address.h"
+#include "display_pages.h"
 #include "notes.h"
 #include "settings_pair.h"
+#include "sleep_policy.h"
 
 static Preferences prefs;
 static bool ready = false;
 static int cachedWifiCount = -1;
 static int cachedApiConfigured = -1;
+static int cachedIdleSleepMinutes = -1;
 
 static bool supportedLanguage(const String& language) {
   return language == "de" || language == "en" || language == "fr" ||
@@ -183,6 +186,52 @@ bool palaSetBridgeAddress(const String& address) {
   if (!address.length()) return prefs.remove("bridge_ip");
   return prefs.putString("bridge_ip", address) == address.length() &&
          storedString("bridge_ip") == address;
+}
+
+int palaIdleSleepMinutes() {
+  if (cachedIdleSleepMinutes < 0) {
+    palaSettingsBegin();
+    if (!ready) return 0;
+    const int minutes = prefs.getUChar("sleep_minutes", 0);
+    cachedIdleSleepMinutes = validIdleSleepMinutes(minutes) ? minutes : 0;
+  }
+  return cachedIdleSleepMinutes;
+}
+
+bool palaSetIdleSleepMinutes(int minutes) {
+  if (!validIdleSleepMinutes(minutes)) return false;
+  palaSettingsBegin();
+  if (!ready) return false;
+  if (palaIdleSleepMinutes() == minutes) return true;
+  const auto stored = static_cast<uint8_t>(minutes);
+  if (prefs.putUChar("sleep_minutes", stored) != sizeof(stored) ||
+      prefs.getUChar("sleep_minutes", 0xff) != stored) {
+    cachedIdleSleepMinutes = -1;
+    return false;
+  }
+  cachedIdleSleepMinutes = minutes;
+  return true;
+}
+
+String palaDisplayPages() {
+#if PALA_BRIDGE_DISCOVERY
+  palaSettingsBegin();
+  const String order = storedString("display_pages");
+  if (!validDisplayPages(order.c_str(), order.length())) return String(kDefaultDisplayPages);
+  return order.length() == kLegacyDisplayPageCount ? order + 'm' : order;
+#else
+  // The standalone provider has no shared settings portal.
+  return "Tecnm";
+#endif
+}
+
+bool palaSetDisplayPages(const String& order) {
+  palaSettingsBegin();
+  if (!ready || order.length() != kDisplayPageCount ||
+      !validDisplayPages(order.c_str(), order.length())) return false;
+  if (storedString("display_pages") == order) return true;
+  return prefs.putString("display_pages", order) == order.length() &&
+         storedString("display_pages") == order;
 }
 
 String palaSpeechVoice() {

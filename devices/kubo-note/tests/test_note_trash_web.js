@@ -24,7 +24,7 @@ class Element {
   scrollIntoView() { this.scrolled = true; }
 }
 
-function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, hash = '', name = 'Willow' } = {}) {
+function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, hash = '', name = 'Willow', displayPages, sleepMinutes } = {}) {
   const elements = new Map();
   const buttons = [];
   for (const match of settings.matchAll(/<([a-z][a-z0-9]*)\b[^<>]*\bid="([^"]+)"[^<>]*>/g)) {
@@ -61,11 +61,17 @@ function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, ha
         case 'get':
           reply = {
             ...reply, ok: connected, csrf: 'synthetic-nonce', transport, capabilities: { devicePortal: portal },
-            device: connected ? { name, language: 'en', memoryTrash } : undefined, wifi: [], peers: [],
+            device: connected ? { name, language: 'en', memoryTrash, displayPages, sleepMinutes } : undefined, wifi: [], peers: [],
           };
           break;
         case 'settings.save':
           name = data.name;
+          break;
+        case 'sleep.save':
+          sleepMinutes = data.minutes;
+          break;
+        case 'pages.save':
+          displayPages = data.pages;
           break;
         case 'trash.status':
           reply = { ...reply, days: retention, count: trash.length };
@@ -226,4 +232,89 @@ test('Empty Trash needs exact input and waits for the last batch', async () => {
   assert.equal(page.calls.filter(call => call.op === 'trash.empty').length, 3);
   assert.equal(page.el('trash-count').textContent, 'No recordings in Trash.');
   assert.equal(page.el('status').textContent, 'Trash emptied.');
+});
+
+test('display pages run upwards from fixed Home and save that order', async () => {
+  assert.match(settings, /<ul id="display-pages-list"><\/ul>\s*<div class="row display-home"><strong>Home<\/strong><span class="muted">Always on bottom<\/span>/);
+  const page = fixture({ displayPages: 'TECN' });
+  await page.refresh();
+  assert.equal(page.el('display-pages').hidden, false);
+  const list = page.el('display-pages-list');
+  const [next, current, events, tasks] = list.children;
+  assert.deepEqual(list.children.map(item => item.children[0].children[1]),
+    ['Next month', 'Current month', 'Events', 'Tasks']);
+  assert.deepEqual(next.children[1].children.map(control => control.textContent), ['Move down']);
+  assert.deepEqual(tasks.children[1].children.map(control => control.textContent), ['Move up']);
+  const currentToggle = current.children[0].children[0];
+  const tasksToggle = tasks.children[0].children[0];
+  const eventsToggle = events.children[0].children[0];
+  currentToggle.checked = false;
+  currentToggle.dispatch('change');
+  tasksToggle.checked = false;
+  tasksToggle.dispatch('change');
+  eventsToggle.checked = false;
+  eventsToggle.dispatch('change');
+  for (let index = 0; index < 3; index++) {
+    const controls = list.children[index].children[1].children;
+    controls.find(control => control.textContent === 'Move down').dispatch('click');
+  }
+  assert.deepEqual(page.calls, [{ op: 'get' }]);
+
+  const saving = page.dispatch('display-pages-form', 'submit');
+  assert.equal(page.el('display-pages-fields')?.disabled, true);
+  await saving;
+  assert.equal(page.el('display-pages-fields').disabled, false);
+  assert.deepEqual(page.calls, [{ op: 'get' }, { op: 'pages.save', pages: 'Ntec' }, { op: 'get' }]);
+  assert.deepEqual(list.children.map(item => item.children[0].children[1]),
+    ['Current month', 'Events', 'Tasks', 'Next month']);
+  assert.deepEqual(list.children.map(item => item.children[0].children[0].checked), [false, false, false, true]);
+});
+
+test('older firmware hides the display pages section', async () => {
+  const page = fixture();
+  await page.refresh();
+  assert.equal(page.el('display-pages').hidden, true);
+  assert.deepEqual(page.calls, [{ op: 'get' }]);
+});
+
+test('the third month can be enabled and reordered alongside other pages', async () => {
+  const page = fixture({ displayPages: 'TECNm' });
+  await page.refresh();
+  const list = page.el('display-pages-list');
+  const monthAfterNext = list.children[0];
+  assert.equal(monthAfterNext.children[0].children[1], 'Month after next');
+  const checkbox = monthAfterNext.children[0].children[0];
+  assert.equal(checkbox.checked, false);
+  checkbox.checked = true;
+  checkbox.dispatch('change');
+  monthAfterNext.children[1].children[0].dispatch('click');
+  list.children[1].children[1].children[0].dispatch('click');
+  assert.equal(list.children[0].children[0].children[1], 'Month after next');
+  list.children[0].children[1].children[0].dispatch('click');
+  await page.dispatch('display-pages-form', 'submit');
+  assert.deepEqual(page.calls, [{ op: 'get' }, { op: 'pages.save', pages: 'TECMN' }, { op: 'get' }]);
+  assert.equal(list.children[1].children[0].children[1], 'Month after next');
+  assert.equal(list.children[1].children[0].children[0].checked, true);
+});
+
+test('sleep settings save a range-bound choice and restore the firmware default', async () => {
+  const page = fixture({ sleepMinutes: 0 });
+  await page.refresh();
+  assert.equal(page.el('sleep-timeout').hidden, false);
+  assert.equal(page.el('sleep-minutes').value, '');
+  page.el('sleep-minutes').valueAsNumber = 99;
+  await page.dispatch('sleep-form', 'submit');
+  assert.equal(page.el('sleep-minutes').value, '99');
+  await page.dispatch('sleep-default', 'click');
+  assert.equal(page.el('sleep-minutes').value, '');
+  assert.deepEqual(page.calls, [
+    { op: 'get' }, { op: 'sleep.save', minutes: 99 }, { op: 'get' },
+    { op: 'sleep.save', minutes: 0 }, { op: 'get' },
+  ]);
+});
+
+test('sleep settings are hidden if the connected firmware lacks them', async () => {
+  const page = fixture();
+  await page.refresh();
+  assert.equal(page.el('sleep-timeout').hidden, true);
 });

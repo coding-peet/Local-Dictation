@@ -119,8 +119,10 @@ same list keeps one item and adds “Opakovaná požiadavka (x2)” to its note.
 Preserve existing note text. A retry of the same recording applies its effect
 once. Verify the result in Google Tasks on Galaxy.
 
-Append explicit personal notes with a date to the selected Google Docs
-document **Kubo notes general**. Put confirmed personal appointments in
+The current default General destination is the Google Tasks list
+**Kubo notes general**. The word "Poznámka" without a destination follows
+General. Append notes explicitly directed to Google Docs with a date to the
+approved document. Put confirmed personal appointments in
 Google Calendar. Keep is for manual notes. Treat “Keep” as ordinary text
 in dictation. Prepare work dictations locally for manual transfer to OneNote,
 Planner or the work calendar.

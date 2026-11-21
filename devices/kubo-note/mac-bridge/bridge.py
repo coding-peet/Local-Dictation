@@ -4,6 +4,7 @@ import datetime as dt
 import hashlib
 import hmac
 import http.client
+from importlib import import_module
 import io
 import json
 import os
@@ -28,7 +29,7 @@ from appointment_dates import recording_time, resolve_yearless, valid_future_sta
 from bridge_activity import BridgeActivity, activity_step
 from bridge_discovery import authorized_device, BridgeServer, serve
 from note_settings import EnrollmentStore
-from note_web import bridge_preferences
+from note_web import bridge_preferences, processing_config
 from pair import STATE, WINDOWS_DICTATION_MODEL
 from weather import ForecastCache
 
@@ -168,7 +169,7 @@ def codex(prompt, schema):
         env = {k: v for k, v in os.environ.items() if k not in ("OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL")}
         subprocess.run(args + ["-"], input=prompt.encode(), cwd=work, env=env,
                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True, timeout=120)
-        return out.read_text().strip()
+        return out.read_text(encoding="utf-8").strip()
 
 
 YEARLESS = {
@@ -226,6 +227,10 @@ def local_dictation_health(connection):
     return health
 
 
+class ProcessingDisabled(RuntimeError):
+    """The current mode permits transcription only."""
+
+
 class Bridge:
     def __init__(self, state, config):
         self.state = state
@@ -245,16 +250,21 @@ class Bridge:
             yield db
 
     def deliver(self, action, key):
-        if self.config.get("destination") == "google":
+        config = processing_config(self.state, self.config)
+        if config.get("destination") == "google":
+            if config["processing_mode"] != "kubo":
+                raise ProcessingDisabled("Bridge is set to transcription only.")
             if action["kind"] in ("shopping", "arrival", "keep"):
                 return  # The Samsung downloads these from the private shopping feed.
             if action["kind"] in ("work", "work_note", "work_event"):
+                if config["personal_note_collection"]:
+                    raise ValueError("This personal Note profile only approves Google destinations.")
                 from microsoft_store import deliver
                 deliver(self.state, self.config, action, key)
                 return
             from google_store import apply_google
             with self.activity.step("google"):
-                apply_google(self.config, self.state, action, key)
+                apply_google(config, self.state, action, key)
             return
         kind = action["kind"]
         if kind == "apple_note":
@@ -270,6 +280,7 @@ class Bridge:
         subprocess.run([child], input=encode(cmd), check=True, timeout=90)
 
     def memories(self, doc, schema):
+        config = processing_config(self.state, self.config)
         key = digest([doc["pala_note"], doc["pala_created"], doc["pala_transcript"]])
         with self.database() as db:
             row = db.execute("SELECT data FROM memories WHERE id=?", (key,)).fetchone()
@@ -298,7 +309,7 @@ class Bridge:
                     "For a shopping-list-only note use kind=reference, tasks=[], and a descriptive title. "
                     "In mixed notes keep independent tasks, events, and explicitly requested timed reminders. "
                     "Never export the list-entry instruction as a work task.")
-                if self.config.get("destination") == "google":
+                if config.get("destination") == "google":
                     action_schema["properties"]["kind"]["enum"] += ["work_event", "work_note", "keep"]
                     prompt += (" Use work_event only for explicitly work-related appointments, otherwise event. "
                                "Use work_note for an explicitly requested OneNote entry only, with its text in title. "
@@ -335,6 +346,8 @@ class Bridge:
                 if len(actions) > 64 or not result.get("title") or not result.get("summary"):
                     raise ValueError("Neplatná poznámka")
                 for i, a in enumerate(actions):
+                    if config["personal_note_collection"] and a["kind"] in ("work", "work_note", "work_event"):
+                        continue
                     if not resolve_action_yearless(a, reference):
                         # Preserve the proposal locally until the device can collect a date.
                         db.execute("INSERT INTO actions VALUES(?,?,?)",
@@ -361,7 +374,8 @@ class Bridge:
                 self.deliver(action, "arrival" if action["kind"] == "arrival" else ident)
                 self.mark(ident, "done")
             elif status == "pending":
-                pending.append(dict(id=ident, **action))
+                if not config["personal_note_collection"] or action["kind"] != "work_event":
+                    pending.append(dict(id=ident, **action))
         return json.dumps(result, ensure_ascii=False), pending
 
     def mark(self, ident, status):
@@ -464,16 +478,27 @@ class Bridge:
         finally:
             connection.close()
 
-    def dispatch(self, route, body, content_type):
+    def dispatch(self, route, body, content_type, *, device=None):
         if route == "/v1/audio/transcriptions":
             return self.transcribe(body, content_type)
         doc = json.loads(body)
         with self.lock:
+            config = processing_config(self.state, self.config) if hasattr(self, "state") else {}
+            if config.get("processing_mode") == "transcribe":
+                raise ProcessingDisabled("Bridge is set to transcription only.")
             if route == "/pala/event":
                 return self.confirm(doc)
             if route == "/v1/responses":
                 fmt = doc.get("text", {}).get("format", {})
                 if fmt.get("name") == "pala_memory":
+                    if device is not None and config.get("google_routes"):
+                        from pala_google import DeliveryQueue, general_fallback_kinds
+
+                        # The Note sends this only after saving the transcript to SD.
+                        # The shared journal deduplicates Wi-Fi retries and USB/BLE sync.
+                        DeliveryQueue(self.state).stage(device, doc["pala_note"],
+                                                        doc["pala_created"], doc["pala_transcript"],
+                                                        general_fallback=general_fallback_kinds(config))
                     text, pending = self.memories(doc, fmt["schema"])
                 else:
                     text = codex(doc["instructions"] + "\n" + doc["input"], fmt.get("schema"))
@@ -483,7 +508,10 @@ class Bridge:
             if route == "/v1/embeddings":
                 if self.encoder is None:
                     from sentence_transformers import SentenceTransformer
-                    self.encoder = SentenceTransformer(MODEL)
+                    try:
+                        self.encoder = SentenceTransformer(MODEL, local_files_only=True)
+                    except OSError:
+                        self.encoder = SentenceTransformer(MODEL)
                 vector = self.encoder.encode(doc["input"])[:256]
                 norm = max(sum(float(x)**2 for x in vector)**0.5, 1e-12)
                 return {"data": [{"embedding": [float(x) / norm for x in vector]}]}
@@ -552,7 +580,8 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 # The Note waits on a busy API and tries another link if the API is unavailable.
                 status = bridge.local_transcription_status()
-                self.send_json(status, {"ready": status == HTTPStatus.OK})
+                mode = processing_config(bridge.state, bridge.config)["processing_mode"]
+                self.send_json(status, {"ready": status == HTTPStatus.OK, "processing": mode})
             return
 
         path = bridge.state / "phone-token"
@@ -571,7 +600,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         bridge = self.server.bridge
-        if not authorize_bridge_device(bridge, self.headers.get("Authorization", "")):
+        authorization = self.headers.get("Authorization", "")
+        device = paired_device(bridge, authorization)
+        if device is None and not authorized_device(bridge.config, authorization):
             self.send_error(401)
             return
         bridge.last_contact = dt.datetime.now(dt.timezone.utc).isoformat()
@@ -590,7 +621,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(400)
                 return
             with activity_step(activity, "transcribing" if transcription else "processing"):
-                result = bridge.dispatch(self.path, data, self.headers.get("Content-Type", ""))
+                result = bridge.dispatch(self.path, data, self.headers.get("Content-Type", ""), device=device)
             binary = isinstance(result, bytes)
             payload = result if binary else encode(result)
             self.send_response(200)
@@ -600,6 +631,8 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(payload)
         except (BrokenPipeError, ConnectionResetError):
             pass
+        except ProcessingDisabled:
+            self.send_json(409, {"processing": "transcribe"})
         except Exception as error:
             # Operational errors must remain retryable in the firmware's durable queue.
             self.log_error("Spracovanie zlyhalo (%s)", type(error).__name__)
@@ -697,6 +730,11 @@ if __name__ == "__main__":
         from google_store import google_credentials
         google_credentials(STATE, interactive=True)
         sys.exit(0)
+    if sys.argv[1:] == ["--tasks-login"]:
+        from google_store import google_credentials
+        from google_tasks import TASKS_SCOPE
+        google_credentials(STATE, interactive=True, scopes=[TASKS_SCOPE], token_name="google-tasks-token.json")
+        sys.exit(0)
     if sys.argv[1:] == ["--review"]:
         bridge = Bridge(STATE, config)
         with bridge.database() as db:
@@ -708,7 +746,14 @@ if __name__ == "__main__":
             if reply in ("a", "n"):
                 bridge.confirm({"id": ident, "accept": reply == "a"})
         sys.exit(0)
-    stop = managed_stop_event(sys.stdin.buffer) if sys.argv[1:] == ["--managed"] else None
+    stop = None
+    if sys.argv[1:] == ["--managed"]:
+        if os.name == "nt":
+            # Windows native imports can block once the shutdown thread reads the control pipe.
+            # Load the optional runtime first so a model cannot lock up HTTPS requests.
+            with contextlib.suppress(ImportError, OSError, RuntimeError):
+                import_module("sentence_transformers")
+        stop = managed_stop_event(sys.stdin.buffer)
     try:
         run_bridge(config, stop)
     except ModuleNotFoundError as error:

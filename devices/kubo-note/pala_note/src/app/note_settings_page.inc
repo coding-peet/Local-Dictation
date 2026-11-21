@@ -7,16 +7,33 @@ R"PALAHTML(<!doctype html>
 <title>Note settings</title>
 <style>
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-  --page: #f6f4ef;
-  --card: #fffdfa;
-  --text: #22211f;
-  --muted: #635e56;
-  --line: #d9d4c9;
-  --accent: #ef573f;
-  --focus: #a93121;
-  --danger: #9a2d36;
+  /* Local Dictation semantic colors from ThemeManager, in light and dark. */
+  --page: #fef7ff;
+  --card: #fffbfe;
+  --container: #f3edf7;
+  --text: #1d1b20;
+  --muted: #49454f;
+  --line: #cac4d0;
+  --input-line: #79747e;
+  --accent: #6750a4;
+  --on-accent: #ffffff;
+  --danger: #8c1d18;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #141218;
+    --card: #1d1b20;
+    --container: #211f26;
+    --text: #e6e0e9;
+    --muted: #cac4d0;
+    --line: #49454f;
+    --input-line: #938f99;
+    --accent: #d0bcff;
+    --on-accent: #381e72;
+    --danger: #ffb4ab;
+  }
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -31,7 +48,7 @@ section { background: var(--card); padding: clamp(.875rem, 3.2vw, 1.4rem); borde
 #trash-disclosure summary { cursor: pointer; }
 #trash-disclosure summary h2 { display: inline-block; margin: 0; }
 #trash-disclosure[open] summary { margin-bottom: .85rem; }
-#viewer { color: var(--focus); font-weight: 650; }
+#viewer { color: var(--accent); font-weight: 650; }
 p { margin: .25rem 0 .75rem; }
 .muted { color: var(--muted); }
 #status { min-height: 1.5em; margin: .25rem 0 .85rem; }
@@ -42,18 +59,22 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 label { display: grid; gap: .3rem; min-width: 0; font-weight: 550; }
 input, select, button { font: inherit; min-height: 2.65rem; border-radius: .55rem; }
-input, select { color: var(--text); background: var(--card); border: 1px solid var(--line); padding: .48rem .62rem; min-width: 0; width: 100%; }
+input, select { color: var(--text); background: var(--card); border: 1px solid var(--input-line); padding: .48rem .62rem; min-width: 0; width: 100%; }
 button { cursor: pointer; border-radius: 999px; font-weight: 650; background: var(--card); border: 1px solid var(--line); color: var(--text); padding: .42rem .8rem; }
-button:hover { border-color: var(--focus); }
-:where(a, button, input, select, summary):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+button:hover { border-color: var(--accent); }
+:where(a, button, input, select, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 :where(button, input):disabled { opacity: .6; cursor: default; }
-.primary { background: var(--accent); border-color: var(--accent); color: var(--text); }
+.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .actions { display: flex; flex-wrap: wrap; gap: .45rem; }
 ul { margin: 0 0 .8rem; padding: 0; list-style: none; }
 li { min-height: 3rem; border-bottom: 1px solid var(--line); padding: .35rem 0; }
 li:last-child { border-bottom: 0; }
 li span { overflow-wrap: anywhere; }
 li .actions { flex-shrink: 0; }
+#display-pages-list .row { flex-wrap: wrap; }
+.display-home { padding: .65rem .8rem; border-radius: .75rem; background: var(--container); }
+.page-toggle { display: flex; align-items: center; gap: .5rem; }
+.page-toggle input { width: 1.1rem; min-height: 1.1rem; margin: 0; accent-color: var(--accent); }
 dialog { width: min(27rem, 100% - 2rem); color: var(--text); background: var(--card); border: 1px solid var(--line); border-radius: .9rem; padding: 1.15rem; }
 dialog::backdrop { background: #0009; }
 .pair-code { font: bold 2rem/1.25 ui-monospace, monospace; letter-spacing: .12em; }
@@ -89,6 +110,35 @@ dialog .actions { justify-content: end; }
       </div>
       <p id="wifi-password-hint" class="muted" hidden>Leave the password blank when editing a network to keep its saved password.</p>
       <div class="actions"><button class="primary" type="submit">Save network</button></div>
+    </fieldset>
+  </form>
+</section>
+
+<section id="display-pages" hidden>
+  <h2>Display pages</h2>
+  <p class="muted">Tap the upper button to move up through enabled pages. From the top enabled page,
+    the next tap returns to Home. Tap the lower button to return to Home from any display page.</p>
+  <form id="display-pages-form">
+    <fieldset id="display-pages-fields">
+      <ul id="display-pages-list"></ul>
+      <div class="row display-home"><strong>Home</strong><span class="muted">Always on bottom</span></div>
+      <div class="actions"><button type="submit" class="primary">Save display pages</button></div>
+    </fieldset>
+  </form>
+</section>
+
+<section id="sleep-timeout" hidden>
+  <h2>Sleep timeout</h2>
+  <form id="sleep-form">
+    <fieldset id="sleep-fields">
+      <label for="sleep-minutes">Idle minutes
+        <input id="sleep-minutes" type="number" min="1" max="99" step="1" required aria-describedby="sleep-status">
+      </label>
+      <p id="sleep-status" class="muted"></p>
+      <div class="actions">
+        <button type="submit" class="primary">Save timeout</button>
+        <button type="button" id="sleep-default">Default</button>
+      </div>
     </fieldset>
   </form>
 </section>
@@ -133,6 +183,20 @@ dialog .actions { justify-content: end; }
       <label>Weather location <input id="weather-location" maxlength="120" placeholder="City, country code"></label>
     </div>
     <div class="actions"><button class="primary" type="submit">Save Bridge settings</button></div>
+  </form>
+  <form id="bridge-processing-form" hidden>
+    <label class="page-toggle"><input id="kubo-processing" type="checkbox"> Kubo processing</label>
+    <p class="muted">Turn off for local transcription only. Transcripts are saved on Note.</p>
+    <div id="kubo-processing-fields" hidden>
+      <div class="fields">
+        <label>Default Google Tasks list <input id="kubo-task-list" maxlength="120" placeholder="Kubo notes general"></label>
+        <label>Personal Google Calendar ID <input id="kubo-calendar" maxlength="240" placeholder="primary" spellcheck="false"></label>
+      </div>
+      <p class="muted">Run <code>codex login</code> to connect the account for note recognition and sorting.</p>
+      <p id="kubo-google-status" class="muted"></p>
+      <button id="kubo-check-login" type="button">Check Codex sign-in</button>
+    </div>
+    <div class="actions"><button class="primary" type="submit">Save processing mode</button></div>
   </form>
   <form id="bridge-address-form" hidden>
     <label>Fallback IPv4 address
@@ -218,6 +282,10 @@ const endpoint = '/api/note-settings';
 let csrf = '';
 let busy = false;
 let bridgeOrder = [];
+let displayPages = [];
+const displayPageNames = {
+  T: 'Tasks', E: 'Events', C: 'Current month', N: 'Next month', M: 'Month after next',
+};
 let savedNetworks = [];
 let keepsWifiPassword = false;
 let trashCount = 0;
@@ -264,8 +332,8 @@ function button(label, action, danger = false) {
 function row(list, label, controls) {
   const item = document.createElement('li');
   item.className = 'row';
-  const name = document.createElement('span');
-  name.textContent = label;
+  const name = typeof label === 'string' ? document.createElement('span') : label;
+  if (typeof label === 'string') name.textContent = label;
   const actions = document.createElement('div');
   actions.className = 'actions';
   actions.append(...controls);
@@ -300,6 +368,44 @@ function drawBridgeOrder() {
   });
 }
 
+function drawDisplayPages() {
+  const list = el('display-pages-list');
+  list.replaceChildren();
+  // The Note stores pages in the order visited from Home, starting at the bottom.
+  for (let index = displayPages.length - 1; index >= 0; index--) {
+    const page = displayPages[index];
+    const id = page.toUpperCase();
+    const name = displayPageNames[id];
+    const label = document.createElement('label');
+    label.className = 'page-toggle';
+    const toggle = document.createElement('input');
+    toggle.type = 'checkbox';
+    toggle.checked = page === id;
+    toggle.addEventListener('change', () => {
+      displayPages[index] = toggle.checked ? id : id.toLowerCase();
+    });
+    label.append(toggle, name);
+
+    const move = delta => {
+      const other = index + delta;
+      [displayPages[index], displayPages[other]] = [displayPages[other], displayPages[index]];
+      drawDisplayPages();
+    };
+    const controls = [];
+    if (index + 1 < displayPages.length) {
+      const up = button('Move up', () => move(1));
+      up.ariaLabel = 'Move ' + name + ' up';
+      controls.push(up);
+    }
+    if (index > 0) {
+      const down = button('Move down', () => move(-1));
+      down.ariaLabel = 'Move ' + name + ' down';
+      controls.push(down);
+    }
+    row(list, label, controls);
+  }
+}
+
 function show(data) {
   const caps = data.capabilities || {};
   const attached = Boolean(data.ok && data.device);
@@ -316,6 +422,23 @@ function show(data) {
   el('connection').textContent = 'Note disconnected';
   if (attached) el('connection').textContent = data.transport ? 'Connected via ' + data.transport : 'Connected';
   el('note').hidden = !attached;
+  const pages = attached ? data.device.displayPages : null;
+  const legacyPages = typeof pages === 'string' && pages.length === 4;
+  const expectedPages = legacyPages ? 'TECN' : 'TECNM';
+  const hasPages = typeof pages === 'string' && pages.length === expectedPages.length &&
+    [...expectedPages].every(page => pages.toUpperCase().includes(page));
+  el('display-pages').hidden = !hasPages;
+  displayPages = hasPages ? Array.from(pages) : [];
+  drawDisplayPages();
+  const sleepMinutes = attached ? data.device.sleepMinutes : null;
+  const hasSleepTimeout = Number.isInteger(sleepMinutes) && sleepMinutes >= 0 && sleepMinutes <= 99;
+  el('sleep-timeout').hidden = !hasSleepTimeout;
+  if (hasSleepTimeout) {
+    el('sleep-minutes').value = sleepMinutes ? String(sleepMinutes) : '';
+    el('sleep-status').textContent = sleepMinutes
+      ? 'Current timeout: ' + sleepMinutes + ' min on Home and in Web Companion.'
+      : 'Default: 1 min on Home, up to 3 min with queued work, and 5 min in Web Companion.';
+  }
   savedNetworks = wifi.map(network => network.ssid);
   keepsWifiPassword = wifiAvailable && data.device.keepsWifiPassword === true;
   el('wifi-password-hint').hidden = !keepsWifiPassword;
@@ -363,6 +486,18 @@ function show(data) {
       () => save('peers.remove', { id }, 'Pairing removed.')), true)
   ]));
   const bridge = data.bridge;
+  const processing = bridge?.processing;
+  el('bridge-processing-form').hidden = !processing;
+  if (processing) {
+    const enabled = processing.mode === 'kubo';
+    el('kubo-processing').checked = enabled;
+    el('kubo-processing-fields').hidden = !enabled;
+    el('kubo-task-list').value = processing.taskList || '';
+    el('kubo-calendar').value = processing.calendarId || '';
+    el('kubo-google-status').textContent = 'Google Tasks sign-in ' +
+      (processing.tasksLoginConfigured ? 'configured' : 'required') + '. Calendar sign-in ' +
+      (processing.calendarLoginConfigured ? 'configured' : 'required') + '.';
+  }
   el('bridge-form').hidden = !bridge;
   if (bridge) {
     el('bridge-name').value = bridge.name || '';
@@ -489,6 +624,8 @@ async function showSettings(data) {
 async function run(action) {
   if (busy) return;
   busy = true;
+  el('display-pages-fields').disabled = true;
+  el('sleep-fields').disabled = true;
   document.querySelectorAll('main > :not(dialog) button').forEach(control => { control.disabled = true; });
   el('status').dataset.error = 'false';
   try {
@@ -497,6 +634,8 @@ async function run(action) {
     status(error.message || 'Could not reach Note.', true);
   } finally {
     busy = false;
+    el('display-pages-fields').disabled = false;
+    el('sleep-fields').disabled = false;
     document.querySelectorAll('main > :not(dialog) button').forEach(control => { control.disabled = false; });
     await readOpenedTrash();
   }
@@ -592,6 +731,22 @@ function pair(transport) {
 }
 
 el('refresh').addEventListener('click', refresh);
+el('display-pages-form').addEventListener('submit', event => {
+  event.preventDefault();
+  if (!el('display-pages').hidden) {
+    save('pages.save', { pages: displayPages.join('') }, 'Display pages saved.');
+  }
+});
+el('sleep-form').addEventListener('submit', event => {
+  event.preventDefault();
+  const minutes = el('sleep-minutes').valueAsNumber;
+  if (!el('sleep-timeout').hidden && Number.isInteger(minutes) && minutes >= 1 && minutes <= 99) {
+    save('sleep.save', { minutes }, 'Sleep timeout saved.');
+  }
+});
+el('sleep-default').addEventListener('click', () => {
+  if (!el('sleep-timeout').hidden) save('sleep.save', { minutes: 0 }, 'Default sleep timeout restored.');
+});
 el('note-form').addEventListener('submit', event => {
   event.preventDefault();
   save('settings.save', { name: el('note-name').value.trim(), language: el('note-language').value }, 'Note settings saved.');
@@ -611,6 +766,22 @@ el('bridge-form').addEventListener('submit', event => {
   event.preventDefault();
   save('bridge.save', { name: el('bridge-name').value.trim(), weatherLocation: el('weather-location').value.trim() }, 'Bridge settings saved.');
 });
+el('kubo-processing').addEventListener('change', () => {
+  el('kubo-processing-fields').hidden = !el('kubo-processing').checked;
+});
+el('bridge-processing-form').addEventListener('submit', event => {
+  event.preventDefault();
+  save('bridge.processing.save', {
+    mode: el('kubo-processing').checked ? 'kubo' : 'transcribe',
+    taskList: el('kubo-task-list').value.trim(),
+    calendarId: el('kubo-calendar').value.trim()
+  }, 'Bridge processing mode saved.');
+});
+el('kubo-check-login').addEventListener('click', () => run(async () => {
+  status('Checking Codex sign-in…');
+  await request('bridge.processing.check', {});
+  status('Codex CLI is signed in with ChatGPT.');
+}));
 el('bridge-address-form').addEventListener('submit', event => {
   event.preventDefault();
   save('bridge.address', { address: el('bridge-address').value.trim() }, 'Bridge address saved.');

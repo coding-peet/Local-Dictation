@@ -808,11 +808,9 @@ def main():
                 return
 
         bridge = Bridge(STATE, config)
-        router = None
-        if config.get("google_routes"):
-            from pala_google import UsbGoogleDelivery
+        from pala_google import UsbGoogleDelivery
 
-            router = UsbGoogleDelivery(STATE, config)
+        router = UsbGoogleDelivery(STATE, config)
         if args.watch:
             stop = managed_stop_event(sys.stdin.buffer) if args.managed else threading.Event()
             transfer_lock = threading.Lock()

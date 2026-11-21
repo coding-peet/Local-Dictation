@@ -21,6 +21,7 @@ private:
 };
 
 NotePeer selectedWifiBridge();
+bool wifiBridgeTranscriptionOnly();
 void resetBridgeAddressCache();
 WifiBacklog pairedWifiBacklog();
 #else

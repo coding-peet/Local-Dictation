@@ -17,11 +17,52 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "mac-bridge"))
 
 from bridge import authorize_bridge_device
 from note_bluetooth_pair import windows_numeric_pair
-from note_settings import EnrollmentStore, PairJob, PairingBroker, SettingsRoute, complete_pairing, encode_request
+from note_settings import (EnrollmentStore, PairJob, PairingBroker, SettingsRoute,
+                           complete_pairing, encode_request, note_request, note_response)
 from note_transport import BluetoothRequest, SettingsTransport
 from note_web import API, SettingsError, SettingsHTTPServer, bridge_preferences, settings_page
 from test_usb_sync import FakePala, TOKEN
 from usb_sync import main, paired_config
+
+
+class DisplayPagesTests(unittest.TestCase):
+    def test_reordering_and_disabling_are_preserved_in_request_and_readback(self):
+        operation = {"op": "pages.save", "pages": "NetC"}
+        self.assertEqual(note_request(operation), operation)
+
+        device = {"name": "Willow", "language": "en", "displayPages": "NetC"}
+        reply = note_response({"ok": True, "device": device}, "BLE")
+        self.assertEqual(reply["device"], device)
+
+    def test_fifth_page_is_preserved_for_new_firmware(self):
+        operation = {"op": "pages.save", "pages": "MENtc"}
+        self.assertEqual(note_request(operation), operation)
+        device = {"name": "Willow", "language": "en", "displayPages": "MENtc"}
+        self.assertEqual(note_response({"ok": True, "device": device}, "USB")["device"], device)
+
+    def test_invalid_or_missing_page_preferences(self):
+        for invalid in ("TECc", "TECX", "TCN", "TECN\0", ["T", "E", "C", "N"], None):
+            with self.subTest(invalid=invalid), self.assertRaises(SettingsError):
+                note_request({"op": "pages.save", "pages": invalid})
+        for field in ({}, {"displayPages": "TttE"}):
+            device = {"name": "Willow", "language": "en", **field}
+            self.assertNotIn("displayPages", note_response({"ok": True, "device": device}, "USB")["device"])
+
+
+class IdleSleepSettingsTests(unittest.TestCase):
+    def test_custom_timeout_and_default_round_trip(self):
+        for minutes in (0, 1, 99):
+            operation = {"op": "sleep.save", "minutes": minutes}
+            self.assertEqual(note_request(operation), operation)
+            device = {"name": "Willow", "language": "en", "sleepMinutes": minutes}
+            self.assertEqual(note_response({"ok": True, "device": device}, "BLE")["device"], device)
+
+    def test_invalid_values_and_unsupported_firmware(self):
+        for value in (-1, 100, True, 1.5, "3", None):
+            with self.subTest(value=value), self.assertRaises(SettingsError):
+                note_request({"op": "sleep.save", "minutes": value})
+        old = {"name": "Willow", "language": "en"}
+        self.assertNotIn("sleepMinutes", note_response({"ok": True, "device": old}, "USB")["device"])
 
 
 class LoopbackSettingsTests(unittest.TestCase):

@@ -17,7 +17,11 @@ struct TrashedNote {
   String capturedUtc;
 };
 
+namespace fs { class File; }
+enum class ParkedNoteFile { Transcript, Audio };
+
 bool listTrashedNotes(std::vector<TrashedNote>& entries);
+fs::File openParkedNoteFile(int num, ParkedNoteFile kind);
 bool restoreTrashedNote(int num);
 bool noteIsTrashed(int num);
 int  trashRetentionDays();

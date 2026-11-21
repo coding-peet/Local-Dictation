@@ -400,6 +400,20 @@ bool listTrashedNotes(std::vector<TrashedNote>& entries) {
   return true;
 }
 
+File openParkedNoteFile(int num, ParkedNoteFile kind) {
+  if (num <= 0 || !noteIsTrashed(num)) return {};
+  const String folder = trashFolder(num);
+  if (phaseOf(folder) != Phase::Parked) return {};
+  TrashedNote entry{};
+  if (!readJournal(folder, num, Phase::Parked, entry)) return {};
+  const String path = folder + "/" + noteBase(num) +
+                      (kind == ParkedNoteFile::Transcript ? ".txt" : ".wav");
+  File file = SD_MMC.open(path.c_str(), FILE_READ);
+  if (!file && kind == ParkedNoteFile::Transcript)
+    file = SD_MMC.open((path + ".bak").c_str(), FILE_READ);
+  return file && !file.isDirectory() ? file : File{};
+}
+
 bool restoreTrashedNote(int num) {
   if (num <= 0) return false;
   const String folder = trashFolder(num);

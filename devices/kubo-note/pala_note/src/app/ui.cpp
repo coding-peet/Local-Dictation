@@ -12,6 +12,7 @@
 #include "home_weather.h"
 #include "home_delivery.h"
 #include "home_bridge_status.h"
+#include "battery.h"
 
 #include <ctime>
 
@@ -107,6 +108,7 @@ const char* translatedUi(const char* english) {
       {"STORAGE FULL", "PLNA PAMAT"},
       {"RECORD AGAIN", "NAHRAJ ZNOVA"},
       {"ASK AGAIN", "OPYTAJ SA ZNOVA"},
+      {"KUBO DISABLED", "KUBO VYPNUTE"},
       {"NO WIFI", "BEZ WI-FI"},
       {"VOICE FAILED", "CHYBA HLASU"},
       {"BRIEF FAILED", "CHYBA SUHRNU"},
@@ -174,13 +176,21 @@ void drawFooterCentered(const char* text, uint8_t color) {
 }
 
 void drawBattery(int percent) {
-  if (percent < 0) return;
-  percent = constrain(percent, 0, 100);
+  const int bars = batteryBarCount(percent);
+  if (bars < 0) return;
   constexpr int x = kHomeBatteryX, y = 9, height = 12;
   strokeRect(x, y, kBatteryBodyWidth, height, 1, BLACK);
   fillRect(x + kBatteryBodyWidth, y + 3, kBatteryContactWidth, 6, BLACK);
-  const int bars = percent > 66 ? 3 : percent > 33 ? 2 : percent > 10 ? 1 : 0;
   for (int i = 0; i < bars; i++) fillRect(x + 3 + i * 6, y + 3, 5, 6, BLACK);
+}
+
+void drawCompanionHeader(int batteryPercent) {
+  constexpr const char* mode = "WEB";
+  const int nameWidth = W / 2 - textW(mode, 1) / 2 - kInset - 6;
+  labelLeft(kHeaderY, palaNoteName().c_str(), 1, BLACK, nameWidth);
+  drawStrC(W / 2, kHeaderY, mode, 1, BLACK);
+  drawBattery(batteryPercent);
+  hline(kInset, kHeaderRuleY, kContentWidth, BLACK);
 }
 
 void drawHero(const char* text, int y, uint8_t color, int maxBottom = 122) {
@@ -679,7 +689,7 @@ int todayAgendaPageCount(bool events) {
   return agendaPages(todayAgendaItems(events));
 }
 
-void showTodayAgenda(bool events, int page) {
+void showTodayAgenda(bool events, int page, AgendaNavigation navigation) {
   clearWhite();
   const std::vector<BrainTaskRecord> items = todayAgendaItems(events);
   const int pages = agendaPages(items);
@@ -716,8 +726,63 @@ void showTodayAgenda(bool events, int page) {
     for (int i = 0; i < kAgendaLinesPerPage && firstLine + i < static_cast<int>(lines.size()); i++)
       drawStr(kInset, 68 + i * 19, lines[firstLine + i].c_str(), 1, BLACK);
   }
-  if (items.empty() || pages == 1) drawFooterCentered(uiText("NOCHMAL: ZURUECK", "AGAIN: BACK"), BLACK);
-  else drawFooter(uiText("WEITER", "NEXT"), uiText("ZURUECK", "BACK"), BLACK);
+  if (navigation != AgendaNavigation::EventsShortcut) {
+    if (page + 1 < pages || navigation == AgendaNavigation::MoreDisplayPages)
+      drawFooter("NEXT", "HOME", BLACK);
+    else drawFooterCentered("HOME", BLACK);
+  } else if (items.empty() || pages == 1) {
+    drawFooterCentered(uiText("NOCHMAL: ZURUECK", "AGAIN: BACK"), BLACK);
+  } else {
+    drawFooter(uiText("WEITER", "NEXT"), uiText("ZURUECK", "BACK"), BLACK);
+  }
+  refresh();
+}
+
+void showCalendarMonth(int monthOffset, bool moreDisplayPages) {
+  const String local = utcToLocalDeviceLabel(currentUtcIso());
+  const CalendarMonth month = calendarMonth(local.substring(0, 4).toInt(),
+      local.substring(5, 7).toInt(), local.substring(8, 10).toInt(), monthOffset);
+
+  clearWhite();
+  if (month.rows == 0) {
+    drawStrC(W / 2, 82, uiText("DATUM FEHLT", "DATE NOT SET"), 2, BLACK);
+  } else {
+    constexpr int margin = 8;
+    constexpr int columnWidth = (W - 2 * margin) / 8;
+    constexpr int firstCenter = margin + columnWidth / 2;
+    static const char* const names[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                                        "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+    static const char* const headings[] = {"CW", "MO", "TU", "WE", "TH", "FR", "SA", "SU"};
+
+    char title[16];
+    snprintf(title, sizeof(title), "%s %d", names[month.month - 1], month.year);
+    drawStrC(W / 2, 12, title, 2, BLACK);
+    hline(margin, 35, W - 2 * margin, BLACK);
+    for (int column = 0; column < 8; ++column) {
+      const int center = firstCenter + column * columnWidth;
+      drawCharLegacy(center - 9, 44, headings[column][0], 1, BLACK);
+      drawCharLegacy(center, 44, headings[column][1], 1, BLACK);
+    }
+    vline(margin + columnWidth, 41, 19 * month.rows + 12, BLACK);
+    for (int row = 0; row < month.rows; ++row) {
+      const int y = 61 + 19 * row;
+      const auto& week = month.weeks[row];
+      char value[4];
+      snprintf(value, sizeof(value), "%02d", week.number);
+      drawStrC(firstCenter, y, value, -1, BLACK);
+      for (int column = 0; column < 7; ++column) {
+        const int day = week.days[column];
+        if (!day) continue;
+        const int center = firstCenter + (column + 1) * columnWidth;
+        const bool today = day == month.today;
+        if (today) fillRect(center - 10, y - 2, 21, 17, BLACK);
+        snprintf(value, sizeof(value), "%d", day);
+        drawStrC(center, y, value, today ? -1 : 1, today ? WHITE : BLACK);
+      }
+    }
+  }
+  if (moreDisplayPages) drawFooter("NEXT", "HOME", BLACK);
+  else drawFooterCentered("HOME", BLACK);
   refresh();
 }
 
@@ -860,9 +925,9 @@ void showNoteBluetoothPairingNumber(uint32_t code) {
   refresh();
 }
 
-void showTransferConnecting() {
+void showTransferConnecting(int batteryPercent) {
   clearWhite();
-  drawHeader(translatedUi("LOCAL"), BLACK);
+  drawCompanionHeader(batteryPercent);
   labelLeft(kContentTop, translatedUi("COMPANION"), 1, BLACK);
   labelRight(kContentTop, "Wi-Fi", 1, BLACK);
   drawStatusHero(uiText("VERBINDE", "CONNECTING"), 67, BLACK);
@@ -877,9 +942,6 @@ constexpr int kCompanionNetworkLineHeight = 17;
 constexpr int kCompanionAddressY = 101;
 constexpr int kCompanionAddressHeight = 28;
 constexpr int kCompanionPasswordY = 135;
-constexpr int kCompanionVolumeY = 155;
-constexpr int kCompanionVolumeHeight = 17;
-static_assert(kCompanionVolumeY + kCompanionVolumeHeight < kFooterRuleY);
 
 void drawCompanionNetworkName(const String& network) {
   String name = normalizeForDisplay(network);
@@ -892,19 +954,37 @@ void drawCompanionNetworkName(const String& network) {
   }
 }
 
-void drawCompanionVolume(int percent) {
-  fillRect(kInset, kCompanionVolumeY, kContentWidth, kCompanionVolumeHeight, WHITE);
-  char value[24];
-  snprintf(value, sizeof(value), "%s %d/5", uiText("Lautstaerke", "Volume"),
-           (constrain(percent, 20, 100) + 19) / 20);
-  labelLeft(kCompanionVolumeY, value, 1, BLACK);
+void drawCompanionVolumeOverlay(int percent) {
+  constexpr int panelTop = 46;
+  constexpr int panelHeight = 114;
+  constexpr int barWidth = 20, barGap = 10, barCount = 5;
+  constexpr int chartWidth = barCount * barWidth + (barCount - 1) * barGap;
+  constexpr int chartLeft = (W - chartWidth) / 2;
+  constexpr int chartBottom = 142;
+  static_assert(panelTop + panelHeight < kFooterRuleY);
+  strokeRoundRect(kInset, panelTop, kContentWidth, panelHeight, 10, 2, BLACK);
+  drawStrC(W / 2, 60, uiText("Lautstaerke", translatedUi("Volume")), 2, BLACK);
+
+  const int level = (constrain(percent, 20, 100) + 19) / 20;
+  for (int i = 0; i < barCount; i++) {
+    const int x = chartLeft + i * (barWidth + barGap);
+    const int height = 10 + i * 8;
+    if (i < level) fillRect(x, chartBottom - height, barWidth, height, BLACK);
+    else strokeRect(x, chartBottom - height, barWidth, height, 1, BLACK);
+  }
+  drawFooter(translatedUi("UPPER +"), translatedUi("LOWER -"), BLACK);
 }
 }  // namespace
 
 void showTransferMode(CompanionLink link, const String& network, const String& ip,
-                      const String& apPassword, int volume) {
+                      const String& apPassword, int batteryPercent, int volumeOverlay) {
   clearWhite();
-  drawHeader("WEB", BLACK);
+  drawCompanionHeader(batteryPercent);
+  if (volumeOverlay >= 0) {
+    drawCompanionVolumeOverlay(volumeOverlay);
+    refresh();
+    return;
+  }
   if (link == CompanionLink::Offline) {
     labelLeft(kContentTop, "Wi-Fi", 1, BLACK);
     drawStatusHero(uiText("Nicht verbunden", "Not connected"), 66, BLACK);
@@ -924,13 +1004,7 @@ void showTransferMode(CompanionLink link, const String& network, const String& i
       labelRight(kCompanionPasswordY, apPassword.c_str(), 1, BLACK);
     }
   }
-  drawCompanionVolume(volume);
   drawFooterCentered(uiText("Beide halten", "Hold both to exit"), BLACK);
-  refresh();
-}
-
-void showCompanionVolume(int percent) {
-  drawCompanionVolume(percent);
   refresh();
 }
 

@@ -42,7 +42,7 @@ class PalaTaskPilot(Bridge):
             raise ValueError("Missing Pala recording identity.")
         return "Pala Note Tasks pilot " + digest([self.list_id, doc["pala_note"], doc["pala_created"], self.expected])
 
-    def dispatch(self, route, body, content_type):
+    def dispatch(self, route, body, content_type, *, device=None):
         if route == "/v1/audio/transcriptions":
             result = self.transcribe(body, content_type)
             if words(result["text"]) == self.expected:
