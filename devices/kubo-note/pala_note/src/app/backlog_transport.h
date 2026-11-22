@@ -14,6 +14,10 @@ constexpr bool resumeBacklogAfterUsbDetach(bool idle, bool hadSession, bool wasP
   return idle && (hadSession || wasProbing);
 }
 
+constexpr bool tryPreferredBluetooth(bool preferred, bool alreadyTried, bool audioQueued) {
+  return preferred && !alreadyTried && audioQueued;
+}
+
 constexpr BacklogLink pairedBacklogAfterWifi(WifiBacklog wifi, bool wifiWorkDue, bool audioQueued) {
   if (wifi == WifiBacklog::Ready && wifiWorkDue) return BacklogLink::Wifi;
   if (wifi == WifiBacklog::Unavailable && audioQueued) return BacklogLink::Bluetooth;

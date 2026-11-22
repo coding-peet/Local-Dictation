@@ -15,8 +15,15 @@ class HomeDeliveryRefresh {
     if (waiting == 0) following_ = false;
   }
 
+  constexpr void attempted(uint32_t now) {
+    attempted_ = true;
+    attemptedAt_ = now;
+  }
+
   constexpr bool needsRoutineRefresh(uint32_t now) const {
-    return !received_ || now - receivedAt_ >= 300000UL;
+    constexpr uint32_t interval = 120000;
+    return (!received_ || now - receivedAt_ >= interval) &&
+           (!attempted_ || now - attemptedAt_ >= interval);
   }
 
   constexpr bool needsFollowup(uint32_t now) const {
@@ -27,6 +34,8 @@ class HomeDeliveryRefresh {
  private:
   uint32_t submittedAt_ = 0;
   uint32_t receivedAt_ = 0;
+  uint32_t attemptedAt_ = 0;
+  bool attempted_ = false;
   bool following_ = false;
   bool received_ = false;
 };

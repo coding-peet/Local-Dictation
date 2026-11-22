@@ -14,6 +14,44 @@ from pala_google import DeliveryQueue, classify_transcript
 
 
 class PalaGoogleTests(unittest.TestCase):
+    def test_codex_quota_prefers_five_hours_and_falls_back_to_weekly(self):
+        from codex_usage import usage_snapshot
+
+        now = 1_795_000_000
+        five_hours = {"usedPercent": 68, "windowDurationMins": 300, "resetsAt": now + 200}
+        weekly = {"usedPercent": 71, "windowDurationMins": 10_080, "resetsAt": now + 3000}
+        live = {"rateLimitsByLimitId": {"codex": {"primary": weekly, "secondary": five_hours}}}
+        snapshot = usage_snapshot(live, now)
+        self.assertEqual(snapshot.five_hours, (32, now + 200))
+        self.assertEqual(snapshot.weekly, (29, now + 3000))
+        self.assertEqual(snapshot.legacy_window(), (32, now + 200))
+        live["rateLimitsByLimitId"]["codex"]["secondary"] = {**five_hours, "resetsAt": now}
+        self.assertEqual(usage_snapshot(live, now).legacy_window(), (29, now + 3000))
+        legacy = {"rateLimits": {"primary": {**five_hours, "usedPercent": 105, "resetsAt": None}}}
+        snapshot = usage_snapshot(legacy, now)
+        self.assertEqual(snapshot.five_hours, (0, 0))
+        self.assertEqual(snapshot.legacy_window(), (0, now + 900))
+        self.assertIsNone(usage_snapshot({"rateLimitsByLimitId": {"another": {"primary": weekly}}}, now))
+        self.assertIsNone(usage_snapshot({"rateLimits": {"primary": {**weekly, "usedPercent": None}}}, now))
+
+    def test_home_dashboard_only_shares_codex_usage_with_compatible_kubo_processing(self):
+        from codex_usage import UsageSnapshot, codex_usage
+        from pala_google import home_dashboard_payload
+
+        snapshot = UsageSnapshot(None, (29, 1795000200), 1795000100)
+        with tempfile.TemporaryDirectory() as folder, patch.object(
+                codex_usage, "get", return_value=snapshot) as read:
+            state = Path(folder)
+            self.assertEqual(home_dashboard_payload(state, {"processing_mode": "transcribe"}, "note",
+                                                    version=4), "h2,-1,0,-")
+            self.assertEqual(home_dashboard_payload(state, {"processing_mode": "kubo"}, "note"), "h2,-1,0,-")
+            read.assert_not_called()
+            self.assertEqual(home_dashboard_payload(state, {"processing_mode": "kubo"}, "note",
+                                                    version=3), "h3,-1,0,-,29,1795000200")
+            self.assertEqual(home_dashboard_payload(state, {"processing_mode": "kubo"}, "note",
+                                                    version=4), "h4,-1,0,-,1795000100,-1,0,29,1795000200")
+            self.assertEqual(read.call_count, 2)
+
     def test_home_counts_use_the_day_of_the_last_confirmed_action(self):
         def at(hour, minute):
             return datetime(2026, 11, 19, hour, minute, tzinfo=timezone.utc)
@@ -97,6 +135,14 @@ class PalaGoogleTests(unittest.TestCase):
                         "Do Google Kalendára: kontrola 11. decembra o tretej."):
             with self.subTest(command=command):
                 self.assertEqual(classify_transcript(command)[0], "calendar")
+
+    def test_calendar_intent_handles_a_polite_command_but_not_a_calendar_mention(self):
+        for text in ("Prosím, naplánuj mi termín zajtra o tretej.",
+                     "Pridaj udalosť do Google kalendára zajtra o tretej.",
+                     "Napíš mi do kalendára návštevu u veterinára o 16:00."):
+            with self.subTest(text=text):
+                self.assertEqual(classify_transcript(text)[0], "calendar")
+        self.assertEqual(classify_transcript("Poznámka: zajtra si pozri kalendár.")[0], "general")
 
     def test_personal_collection_defaults_work_topics_and_unbound_tasks_to_general(self):
         from pala_google import UsbGoogleDelivery
@@ -347,3 +393,31 @@ class PalaGoogleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class HomeDashboardTests(unittest.TestCase):
+    def test_count_requests_only_status_and_excludes_completed_tasks(self):
+        from contextlib import nullcontext
+        from unittest.mock import patch
+        from pala_google import count_open_general_tasks
+
+        target = {"id": "general", "title": "General"}
+        api = unittest.mock.Mock()
+        with patch("pala_google._api", return_value=nullcontext(api)), \
+             patch("pala_google._verify_task_list") as verify, \
+             patch("pala_google.items", return_value=[{"status": "needsAction"}, {"status": "completed"}]) as scan:
+            self.assertEqual(count_open_general_tasks(Path("."), target), 1)
+        verify.assert_called_once_with(api, target)
+        self.assertFalse(scan.call_args.kwargs["showCompleted"])
+        self.assertEqual(scan.call_args.kwargs["fields"], "nextPageToken,items(status)")
+
+    def test_payload_contains_open_count_pending_count_and_local_clock(self):
+        from unittest.mock import Mock, patch
+        from pala_google import home_dashboard_payload
+
+        queue = Mock()
+        queue.home_counts.return_value = ("2026-11-21", 8, 2, 1795285920)
+        config = {"processing_mode": "kubo", "google_routes": {}}
+        with patch("note_web.processing_config", return_value=config), \
+             patch("pala_google.general_open_count", return_value=17):
+            self.assertRegex(home_dashboard_payload(Path("."), config, "note", queue=queue),
+                             r"^h2,17,2,[0-9]{2}:[0-9]{2}$")

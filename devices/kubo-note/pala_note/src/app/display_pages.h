@@ -28,9 +28,9 @@ constexpr bool validDisplayPages(const char* order, std::size_t length) {
   return true;
 }
 
-constexpr int nextDisplayPageIndex(const char* order, int after) {
+constexpr int nextDisplayPageIndex(const char* order, int after, bool wrap = true) {
   for (int index = after + 1; index < kDisplayPageCount; ++index) {
     if (order[index] == displayPageId(order[index])) return index;
   }
-  return -1;
+  return wrap ? -1 : after;
 }

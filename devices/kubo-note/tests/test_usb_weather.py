@@ -83,6 +83,25 @@ class ReceiptPala(FakePala):
 
 
 class UsbWeatherTests(unittest.TestCase):
+    def test_home_usage_falls_back_to_previous_dashboard_on_older_note(self):
+        from usb_sync import transfer_delivery_counts
+
+        class OlderNote(ReceiptPala):
+            def write(self, frame):
+                if frame.startswith((PREFIX + b"DELIVERY h4,", PREFIX + b"DELIVERY h3,")):
+                    self.calls.append(("DELIVERY", frame[len(PREFIX):].decode().split()[1:]))
+                    self.reply("ERROR DELIVERY")
+                    return len(frame)
+                return super().write(frame)
+
+        dashboard = "h4,17,2,19:32,1795000900,-1,0,29,1795000200"
+        for device, expected in (
+            (ReceiptPala(), [dashboard]),
+            (OlderNote(), [dashboard, "h3,17,2,19:32,29,1795000200", "h2,17,2,19:32"]),
+        ):
+            transfer_delivery_counts(device, (TOKEN,), "2026-11-20,2,1", dashboard=dashboard)
+            self.assertEqual([args[0] for command, args in device.calls if command == "DELIVERY"], expected)
+
     def test_counts_only_uses_the_paired_session_and_checks_the_acknowledgment(self):
         from usb_sync import transfer_delivery_counts
 

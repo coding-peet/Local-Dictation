@@ -20,6 +20,7 @@ R"PALAHTML(<!doctype html>
   --accent: #6750a4;
   --on-accent: #ffffff;
   --danger: #8c1d18;
+  --success: #267340;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -33,6 +34,7 @@ R"PALAHTML(<!doctype html>
     --accent: #d0bcff;
     --on-accent: #381e72;
     --danger: #ffb4ab;
+    --success: #75ca91;
   }
 }
 * { box-sizing: border-box; }
@@ -42,7 +44,7 @@ main { width: min(100% - 2rem, 48rem); margin: 2rem auto 3rem; }
 header, .row { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
 header { margin-bottom: 1rem; }
 h1, h2 { line-height: 1.2; margin: 0; }
-h1 { font-size: clamp(2rem, 6vw, 3.5rem); font-weight: 820; letter-spacing: -.048em; }
+h1 { font-size: clamp(1.65rem, 4vw, 2.25rem); font-weight: 750; letter-spacing: -.025em; }
 h2 { font-size: 1.35rem; margin-bottom: .85rem; }
 section { background: var(--card); padding: clamp(.875rem, 3.2vw, 1.4rem); border: 1px solid var(--line); border-radius: 1.5rem; margin-bottom: .875rem; }
 #trash-disclosure summary { cursor: pointer; }
@@ -51,12 +53,92 @@ section { background: var(--card); padding: clamp(.875rem, 3.2vw, 1.4rem); borde
 #viewer { color: var(--accent); font-weight: 650; }
 p { margin: .25rem 0 .75rem; }
 .muted { color: var(--muted); }
-#status { min-height: 1.5em; margin: .25rem 0 .85rem; }
+#status { margin: 0; }
+#status:not(:empty) { margin: .25rem 0 .85rem; }
 #status[data-error="true"], .danger { color: var(--danger); }
-form, fieldset, .fields { display: grid; gap: .75rem; }
+form, fieldset { display: grid; gap: .75rem; }
 fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 #bridge-address-form, #bridge-order { margin-top: .85rem; }
-.fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.setting-row {
+  display: grid;
+  grid-template-columns: min(15rem, 44%) minmax(0, 1fr);
+  align-items: center;
+  gap: .75rem;
+}
+#bridge-processing-form { margin-top: 1.15rem; padding-top: 1.15rem; border-top: 1px solid var(--line); }
+#kubo-processing-fields { display: grid; gap: .75rem; }
+.setting-with-help, .bridge-codex-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: .75rem;
+  align-items: center;
+}
+.bridge-codex-row p, #kubo-google-status { margin: 0; }
+.bridge-codex-row button { white-space: nowrap; }
+.bridge-switch-label { display: flex; justify-content: space-between; align-items: center; gap: .75rem; cursor: pointer; }
+.bridge-switch { position: relative; flex: 0 0 3.25rem; height: 2rem; }
+.bridge-switch input { position: absolute; inset: 0; margin: 0; min-height: 0; opacity: 0; cursor: pointer; }
+.bridge-switch-track {
+  display: block;
+  height: 100%;
+  border: 2px solid var(--input-line);
+  border-radius: 999px;
+  background: var(--container);
+  pointer-events: none;
+}
+.bridge-switch-track::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  inset-inline-start: .45rem;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  background: var(--input-line);
+}
+.bridge-switch input:checked + .bridge-switch-track { border-color: var(--accent); background: var(--accent); }
+.bridge-switch input:checked + .bridge-switch-track::after {
+  content: '\2713';
+  inset-inline-start: auto;
+  inset-inline-end: .2rem;
+  width: 1.6rem;
+  height: 1.6rem;
+  background: var(--on-accent);
+  color: var(--accent);
+}
+.bridge-switch input:focus-visible + .bridge-switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+.context-help { position: relative; }
+.context-help[open] { z-index: 2; }
+.context-help summary {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  color: var(--muted);
+  cursor: pointer;
+  list-style: none;
+}
+.context-help summary::-webkit-details-marker { display: none; }
+.context-help summary:hover, .context-help[open] summary { background: var(--container); color: var(--text); }
+.help-popup {
+  position: absolute;
+  z-index: 1;
+  inset-inline-end: 0;
+  margin: .25rem 0 0;
+  width: min(22rem, calc(100vw - 4.5rem));
+  padding: .7rem .85rem;
+  border: 1px solid var(--input-line);
+  border-radius: .7rem;
+  background: var(--card);
+  color: var(--text);
+  font-size: .9rem;
+  white-space: pre-line;
+  box-shadow: 0 .35rem 1rem #0003;
+}
 label { display: grid; gap: .3rem; min-width: 0; font-weight: 550; }
 input, select, button { font: inherit; min-height: 2.65rem; border-radius: .55rem; }
 input, select { color: var(--text); background: var(--card); border: 1px solid var(--input-line); padding: .48rem .62rem; min-width: 0; width: 100%; }
@@ -66,13 +148,54 @@ button:hover { border-color: var(--accent); }
 :where(button, input):disabled { opacity: .6; cursor: default; }
 .primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .actions { display: flex; flex-wrap: wrap; gap: .45rem; }
+.form-footer { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem 1rem; }
+.password-feedback {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .5rem;
+  flex: 1 1 7rem;
+  max-width: 24rem;
+  min-width: 0;
+  margin-inline-start: auto;
+}
+.password-feedback .help-popup { inset-block-end: calc(100% + .25rem); margin: 0; }
 ul { margin: 0 0 .8rem; padding: 0; list-style: none; }
 li { min-height: 3rem; border-bottom: 1px solid var(--line); padding: .35rem 0; }
 li:last-child { border-bottom: 0; }
 li span { overflow-wrap: anywhere; }
 li .actions { flex-shrink: 0; }
+#wifi-list { margin-bottom: 1.1rem; border-bottom: 1px solid var(--line); }
+#wifi-list:empty { display: none; }
 #display-pages-list .row { flex-wrap: wrap; }
-#display-pages-list .actions { display: grid; grid-template-columns: repeat(2, minmax(6.3rem, 1fr)); }
+#display-pages-list .actions { display: grid; grid-template-columns: repeat(2, 7.25rem); }
+#display-pages-list button { width: 100%; padding-inline: .55rem; white-space: nowrap; }
+.unsaved { margin: 0; font-size: .875rem; color: var(--danger); }
+.password-entry { position: relative; min-width: 0; }
+.password-entry input { padding-inline-end: 2.8rem; }
+.password-entry input::-ms-reveal { display: none; }
+#note-password-form[data-passwords-match="true"] :is(#note-password-new, #note-password-repeat) {
+  border-color: var(--success);
+}
+.password-eye {
+  position: absolute;
+  inset: .2rem .3rem .2rem auto;
+  width: 2.2rem;
+  min-height: 0;
+  padding: 0;
+  border-color: transparent;
+  color: var(--muted);
+  background: transparent;
+}
+.password-eye[aria-pressed="true"] { color: var(--accent); background: var(--container); }
+.password-strength { display: grid; gap: .25rem; font-size: .8rem; }
+.strength-caption { color: var(--muted); }
+.strength-caption strong:not(:empty)::before { content: " · "; }
+.strength-track { height: .35rem; border-radius: 1rem; background: var(--line); overflow: hidden; }
+.strength-track::before { content: ''; display: block; height: 100%; border-radius: inherit; }
+.password-strength[data-strength="1"] .strength-track::before { width: 33%; background: #d34c4c; }
+.password-strength[data-strength="2"] .strength-track::before { width: 66%; background: #c68e13; }
+.password-strength[data-strength="3"] .strength-track::before { width: 100%; background: #3a9b62; }
 .page-down { grid-column: 1; }
 .page-up { grid-column: 2; }
 .display-home { padding: .65rem .8rem; border-radius: .75rem; background: var(--container); }
@@ -84,7 +207,13 @@ dialog::backdrop { background: #0009; }
 dialog .actions { justify-content: end; }
 @media (max-width: 32rem) {
   main { margin-top: 1.1rem; }
-  .fields { grid-template-columns: 1fr; }
+  .form-footer { gap: .55rem .65rem; }
+  .bridge-codex-row button { max-width: 9rem; white-space: normal; }
+  #display-pages-list .actions { grid-template-columns: repeat(2, 6.5rem); }
+  #display-pages-list button { padding-inline: .35rem; }
+}
+@media (max-width: 25rem) {
+  .setting-row { grid-template-columns: 1fr; gap: .3rem; }
 }
 </style>
 </head>
@@ -100,6 +229,64 @@ dialog .actions { justify-content: end; }
 </header>
 <p id="status" role="status" aria-live="polite"></p>
 
+<section id="access-login" hidden>
+  <h2>Sign in to Note</h2>
+  <p id="access-login-help" class="muted" hidden>Set the Note password over a paired USB connection.</p>
+  <form id="access-login-form">
+    <div class="setting-row">
+      <label for="access-password">Note password</label>
+      <div class="password-entry">
+        <input id="access-password" type="password" minlength="8" maxlength="48" autocomplete="current-password" required>
+        <button id="access-password-eye" type="button" class="password-eye" aria-controls="access-password" aria-label="Show password" title="Show password" aria-pressed="false"><span aria-hidden="true">&#128065;&#65038;</span></button>
+      </div>
+    </div>
+    <div class="actions"><button class="primary" type="submit">Sign in</button></div>
+  </form>
+</section>
+
+<section id="note-password" hidden>
+  <h2>Note password</h2>
+  <form id="note-password-form">
+    <div class="setting-row">
+      <label for="note-password-old">Current password</label>
+      <div class="password-entry">
+        <input id="note-password-old" type="password" maxlength="48" autocomplete="current-password">
+        <button id="note-password-old-eye" type="button" class="password-eye" aria-controls="note-password-old" aria-label="Show password" title="Show password" aria-pressed="false"><span aria-hidden="true">&#128065;&#65038;</span></button>
+      </div>
+    </div>
+    <div class="setting-row">
+      <label for="note-password-new">New password</label>
+      <div class="password-entry">
+        <input id="note-password-new" type="password" minlength="8" maxlength="48" autocomplete="new-password" aria-describedby="note-password-new-strength-label" required>
+        <button id="note-password-new-eye" type="button" class="password-eye" aria-controls="note-password-new" aria-label="Show password" title="Show password" aria-pressed="false"><span aria-hidden="true">&#128065;&#65038;</span></button>
+      </div>
+    </div>
+    <div class="setting-row">
+      <label for="note-password-repeat">Repeat new password</label>
+      <div class="password-entry">
+        <input id="note-password-repeat" type="password" minlength="8" maxlength="48" autocomplete="new-password" required>
+        <button id="note-password-repeat-eye" type="button" class="password-eye" aria-controls="note-password-repeat" aria-label="Show password" title="Show password" aria-pressed="false"><span aria-hidden="true">&#128065;&#65038;</span></button>
+      </div>
+    </div>
+    <div class="form-footer">
+      <div class="actions">
+        <button class="primary" type="submit">Save password</button>
+        <button id="note-password-logout" type="button">Sign out</button>
+      </div>
+      <div class="password-feedback">
+        <div id="note-password-new-strength" class="password-strength" data-strength="0">
+          <span class="strength-track" aria-hidden="true"></span>
+          <span class="strength-caption">Strength <strong id="note-password-new-strength-label" role="status"></strong></span>
+        </div>
+        <details class="context-help">
+          <summary aria-label="How password strength is estimated">&#9432;</summary>
+          <p id="note-password-new-strength-help" class="help-popup"></p>
+        </details>
+      </div>
+    </div>
+  </form>
+</section>
+
 <section id="wifi">
   <h2>Wi-Fi networks</h2>
   <p id="wifi-unavailable" class="muted">Connect the Note and select Refresh to manage its Wi-Fi networks.</p>
@@ -107,24 +294,43 @@ dialog .actions { justify-content: end; }
   <ul id="wifi-list"></ul>
   <form id="wifi-form">
     <fieldset id="wifi-fields" disabled>
-      <div class="fields">
-        <label>Network name (SSID) <input id="wifi-name" maxlength="32" required autocomplete="off" spellcheck="false"></label>
-        <label>Password <input id="wifi-secret" type="password" maxlength="63" autocomplete="new-password" aria-describedby="wifi-password-hint"></label>
+      <label class="setting-row">Network name (SSID) <input id="wifi-name" maxlength="32" required autocomplete="off" spellcheck="false"></label>
+      <div class="setting-row">
+        <label for="wifi-secret">Password</label>
+        <div class="password-entry">
+          <input id="wifi-secret" type="password" maxlength="63" autocomplete="new-password" aria-describedby="wifi-password-hint wifi-secret-strength-label">
+          <button id="wifi-secret-eye" type="button" class="password-eye" aria-controls="wifi-secret" aria-label="Show password" title="Show password" aria-pressed="false"><span aria-hidden="true">&#128065;&#65038;</span></button>
+        </div>
       </div>
       <p id="wifi-password-hint" class="muted" hidden>Leave the password blank when editing a network to keep its saved password.</p>
-      <div class="actions"><button class="primary" type="submit">Save network</button></div>
+      <div class="form-footer">
+        <button class="primary" type="submit">Save network</button>
+        <div class="password-feedback">
+          <div id="wifi-secret-strength" class="password-strength" data-strength="0">
+            <span class="strength-track" aria-hidden="true"></span>
+            <span class="strength-caption">Strength <strong id="wifi-secret-strength-label" role="status"></strong></span>
+          </div>
+          <details class="context-help">
+            <summary aria-label="How password strength is estimated">&#9432;</summary>
+            <p id="wifi-secret-strength-help" class="help-popup"></p>
+          </details>
+        </div>
+      </div>
     </fieldset>
   </form>
 </section>
 
 <section id="display-pages" hidden>
   <h2>Display pages</h2>
-  <p class="muted">Tap the upper button to move up through enabled pages. From the top enabled page,
-    the next tap returns to Home. Tap the lower button to return to Home from any display page.</p>
+  <p class="muted">Tap the upper button to move up through enabled pages.
+    Tap the lower button to return to Home from any display page.</p>
   <form id="display-pages-form">
     <fieldset id="display-pages-fields">
       <ul id="display-pages-list"></ul>
       <div class="row display-home"><strong>Home</strong><span class="muted">Always on bottom</span></div>
+      <label class="page-toggle" id="page-wrap-field" hidden>
+        <input id="page-wrap" type="checkbox"> Return to Home after the top page
+      </label>
       <div class="actions"><button type="submit" class="primary">Save display pages</button></div>
     </fieldset>
   </form>
@@ -133,16 +339,42 @@ dialog .actions { justify-content: end; }
 <section id="sync-timing" hidden>
   <h2>Recording sync</h2>
   <form id="sync-timing-form">
-    <label>Automatic sync
-      <select id="sync-mode">
-        <option value="0">Before sleep (default)</option>
-        <option value="1">Immediately on wake</option>
-        <option value="2">After recording</option>
-        <option value="3">Manual only</option>
-      </select>
-    </label>
-    <p class="muted">To sync manually, tap the upper button three times on Home.</p>
+    <div class="setting-row">
+      <label for="sync-mode">Automatic sync</label>
+      <div class="setting-with-help">
+        <select id="sync-mode" aria-describedby="sync-mode-hint">
+          <option value="0">Before sleep (default)</option>
+          <option value="1">Immediately on wake</option>
+          <option value="2">After recording</option>
+          <option value="3">Manual only</option>
+        </select>
+        <details class="context-help">
+          <summary aria-label="About recording sync">&#9432;</summary>
+          <p id="sync-mode-hint" class="help-popup">To sync manually, tap the upper button three times on Home.</p>
+        </details>
+      </div>
+    </div>
     <div class="actions"><button type="submit" class="primary">Save sync timing</button></div>
+  </form>
+</section>
+
+<section id="wireless-priority" hidden>
+  <h2>Sync connection priority</h2>
+  <form id="wireless-form">
+    <div class="setting-row">
+      <label for="wireless-choice">Preferred wireless connection</label>
+      <div class="setting-with-help">
+        <select id="wireless-choice" aria-describedby="wireless-hint">
+          <option value="wifi">Wi-Fi first</option>
+          <option value="bluetooth">Bluetooth first</option>
+        </select>
+        <details class="context-help">
+          <summary aria-label="About sync priority">&#9432;</summary>
+          <p id="wireless-hint" class="help-popup">USB has first priority. This setting controls wireless recording sync.</p>
+        </details>
+      </div>
+    </div>
+    <div class="actions"><button type="submit" class="primary">Save priority</button></div>
   </form>
 </section>
 
@@ -150,7 +382,7 @@ dialog .actions { justify-content: end; }
   <h2>Sleep timeout</h2>
   <form id="sleep-form">
     <fieldset id="sleep-fields">
-      <label for="sleep-minutes">Idle minutes
+      <label class="setting-row" for="sleep-minutes">Idle minutes
         <input id="sleep-minutes" type="number" min="1" max="99" step="1" required aria-describedby="sleep-status">
       </label>
       <p id="sleep-status" class="muted"></p>
@@ -165,19 +397,23 @@ dialog .actions { justify-content: end; }
 <section id="note" hidden>
   <h2>Note</h2>
   <form id="note-form">
-    <div class="fields">
-      <label>Name <input id="note-name" maxlength="10" required></label>
-      <label>Language
-        <select id="note-language">
-          <option value="en">English</option><option value="de">Deutsch</option>
-          <option value="sk">Slovenčina</option><option value="cs">Čeština</option>
-          <option value="fr">Français</option><option value="es">Español</option>
-          <option value="it">Italiano</option><option value="pl">Polski</option>
-          <option value="nl">Nederlands</option><option value="pt">Português</option>
-          <option value="ru">Русский</option><option value="uk">Українська</option>
-        </select>
-      </label>
-    </div>
+    <label class="setting-row">Name <input id="note-name" maxlength="10" required></label>
+    <label class="setting-row">Language
+      <select id="note-language">
+        <option value="en">English</option><option value="de">Deutsch</option>
+        <option value="sk">Slovenčina</option><option value="cs">Čeština</option>
+        <option value="fr">Français</option><option value="es">Español</option>
+        <option value="it">Italiano</option><option value="pl">Polski</option>
+        <option value="nl">Nederlands</option><option value="pt">Português</option>
+        <option value="ru">Русский</option><option value="uk">Українська</option>
+      </select>
+    </label>
+    <label class="setting-row" id="note-codex-limit-row" hidden>Codex limit on Home
+      <select id="note-codex-limit">
+        <option value="5h">5 hours (weekly fallback)</option>
+        <option value="weekly">Weekly</option>
+      </select>
+    </label>
     <div class="actions"><button class="primary" type="submit">Save Note settings</button></div>
   </form>
 </section>
@@ -197,31 +433,50 @@ dialog .actions { justify-content: end; }
 <section id="bridge" hidden>
   <h2>Bridge</h2>
   <form id="bridge-form" hidden>
-    <div class="fields">
-      <label>Bridge name <input id="bridge-name" maxlength="24"></label>
-      <label>Weather location <input id="weather-location" maxlength="120" placeholder="City, country code"></label>
-    </div>
+    <label class="setting-row">Bridge name <input id="bridge-name" maxlength="24"></label>
+    <label class="setting-row">Weather location <input id="weather-location" maxlength="120" placeholder="City, country code"></label>
+    <label class="setting-row">Holiday country <select id="holiday-country">
+      <option value="SK">Slovakia</option>
+      <option value="CZ">Czechia</option>
+    </select></label>
     <div class="actions"><button class="primary" type="submit">Save Bridge settings</button></div>
   </form>
   <form id="bridge-processing-form" hidden>
-    <label class="page-toggle"><input id="kubo-processing" type="checkbox"> Kubo processing</label>
-    <p class="muted">Turn off for local transcription only. Transcripts are saved on Note.</p>
-    <div id="kubo-processing-fields" hidden>
-      <div class="fields">
-        <label>Default Google Tasks list <input id="kubo-task-list" maxlength="120" placeholder="Kubo notes general"></label>
-        <label>Personal Google Calendar ID <input id="kubo-calendar" maxlength="240" placeholder="primary" spellcheck="false"></label>
-      </div>
-      <p class="muted">Run <code>codex login</code> to connect the account for note recognition and sorting.</p>
-      <p id="kubo-google-status" class="muted"></p>
-      <button id="kubo-check-login" type="button">Check Codex sign-in</button>
+    <div class="setting-with-help">
+      <label class="bridge-switch-label">
+        Enable Kubo processing
+        <span class="bridge-switch">
+          <input id="kubo-processing" type="checkbox" role="switch" aria-describedby="kubo-processing-hint">
+          <span class="bridge-switch-track" aria-hidden="true"></span>
+        </span>
+      </label>
+      <details class="context-help">
+        <summary aria-label="About Kubo processing">&#9432;</summary>
+        <p id="kubo-processing-hint" class="help-popup">Turn off for local transcription only. Transcripts are saved on Note.</p>
+      </details>
     </div>
-    <div class="actions"><button class="primary" type="submit">Save processing mode</button></div>
+    <div id="kubo-processing-fields" hidden>
+      <label class="setting-row">Default Google Tasks list <input id="kubo-task-list" maxlength="120" placeholder="Kubo notes general"></label>
+      <label class="setting-row">Personal Google Calendar ID <input id="kubo-calendar" maxlength="240" placeholder="primary" spellcheck="false"></label>
+      <div class="bridge-codex-row">
+        <p class="muted">Run <code>codex login</code> for note recognition and sorting.</p>
+        <button id="kubo-check-login" type="button">Check Codex sign-in</button>
+      </div>
+      <p id="kubo-google-status" class="muted"></p>
+    </div>
+    <div class="actions"><button class="primary" type="submit">Save processing parameters</button></div>
   </form>
   <form id="bridge-address-form" hidden>
-    <label>Fallback IPv4 address
-      <input id="bridge-address" maxlength="15" inputmode="decimal" autocomplete="off" spellcheck="false" aria-describedby="bridge-address-hint">
-    </label>
-    <p id="bridge-address-hint" class="muted">Leave blank to use automatic discovery. A fallback address must be on the Note's private Wi-Fi network.</p>
+    <div class="setting-row">
+      <label for="bridge-address">Fallback IPv4 address</label>
+      <div class="setting-with-help">
+        <input id="bridge-address" maxlength="15" inputmode="decimal" autocomplete="off" spellcheck="false" aria-describedby="bridge-address-hint">
+        <details class="context-help">
+          <summary aria-label="About the fallback Bridge address">&#9432;</summary>
+          <p id="bridge-address-hint" class="help-popup">Leave blank to use automatic discovery. A fallback address must be on the Note's private Wi-Fi network.</p>
+        </details>
+      </div>
+    </div>
     <div class="actions"><button class="primary" type="submit">Save address</button></div>
   </form>
   <div id="bridge-order" hidden>
@@ -241,7 +496,7 @@ dialog .actions { justify-content: end; }
       <button id="trash-empty" class="danger" type="button" hidden>Empty Trash…</button>
     </div>
     <form id="trash-retention-form">
-      <label>Keep trashed recordings for this many days
+      <label class="setting-row">Retention (days)
         <input id="trash-days" type="number" min="1" max="3650" step="1" value="90" required>
       </label>
       <div class="actions"><button class="primary" type="submit">Save retention</button></div>
@@ -253,7 +508,7 @@ dialog .actions { justify-content: end; }
   <h2>Move all recordings to Trash</h2>
   <p>Move all recordings, their transcripts and associated memories to Trash on the Note.</p>
   <form id="move-all-form" action="/memories/delete-all" method="post">
-    <label>Type MOVE ALL to confirm
+    <label class="setting-row">Type MOVE ALL to confirm
       <input id="move-all-confirmation" name="confirmation" required pattern="MOVE ALL" autocomplete="off" spellcheck="false">
     </label>
     <div class="actions"><button class="danger" type="submit">Move all to Trash</button></div>
@@ -299,6 +554,7 @@ dialog .actions { justify-content: end; }
 const el = id => document.getElementById(id);
 const endpoint = '/api/note-settings';
 let csrf = '';
+let noteSession = '';
 let busy = false;
 let bridgeOrder = [];
 let displayPages = [];
@@ -312,6 +568,98 @@ let trashIndex = 0;
 let trashRead = false;
 const trashPageSize = 5;
 
+let savedNoteName = '';
+let savedTarget = null;
+let savedTransport = '';
+const drafts = new Map();
+const newPasswordFields = ['note-password-old', 'note-password-new', 'note-password-repeat'];
+
+function trackDraft(op, id, values, onNote = true) {
+  const form = el(id);
+  const notice = document.createElement('p');
+  notice.className = 'unsaved';
+  notice.role = 'status';
+  notice.hidden = true;
+  form.append(notice);
+  const draft = { values, onNote, notice, saved: JSON.stringify(values()), revision: 0 };
+  drafts.set(op, draft);
+  const edited = () => markDraft(op);
+  form.addEventListener('input', edited);
+  form.addEventListener('change', edited);
+}
+
+function isDirty(draft) {
+  return JSON.stringify(draft.values()) !== draft.saved;
+}
+
+function showDraftNotice(draft) {
+  const pending = isDirty(draft);
+  const target = draft.onNote ? (savedNoteName || 'Note') : 'Bridge';
+  const message = pending ? 'Changes are not saved to ' + target + '. Select Save.' : '';
+  if (draft.notice.textContent !== message) draft.notice.textContent = message;
+  draft.notice.hidden = !pending;
+}
+
+function markDraft(op) {
+  const draft = drafts.get(op);
+  draft.revision++;
+  showDraftNotice(draft);
+}
+
+function acceptDraft(op) {
+  const draft = drafts.get(op);
+  draft.saved = JSON.stringify(draft.values());
+  showDraftNotice(draft);
+}
+
+function showFormValues(op, render) {
+  const draft = drafts.get(op);
+  if (!isDirty(draft)) {
+    render();
+    acceptDraft(op);
+  }
+}
+
+function passwordStrength(value) {
+  const text = value.trim().toLowerCase();
+  if (!value) return 0;
+  const variety = new Set(text).size;
+  if (text.length < 10 || variety < 4 || /(?:123456|abcdef|qwerty|password|heslo)/.test(text) ||
+      /^(.{1,5})\1+$/.test(text)) return 1;
+  return text.length >= 16 && variety >= 8 ? 3 : 2;
+}
+
+function showPasswordStrength(id) {
+  const meter = el(id + '-strength');
+  if (!meter) return;
+  const level = passwordStrength(el(id).value);
+  meter.dataset.strength = String(level);
+  el(id + '-strength-label').textContent = ['', 'Weak', 'Fair', 'Strong'][level];
+}
+
+function showPasswordMatch() {
+  const password = el('note-password-new').value;
+  const repeat = el('note-password-repeat').value;
+  el('note-password-form').dataset.passwordsMatch = String(password !== '' && password === repeat);
+}
+
+function showPassword(id, visible) {
+  el(id).type = visible ? 'text' : 'password';
+  const eye = el(id + '-eye');
+  const caption = visible ? 'Hide password' : 'Show password';
+  eye.ariaPressed = String(visible);
+  eye.ariaLabel = eye.title = caption;
+}
+
+function clearPasswords(...ids) {
+  for (const id of ids) {
+    el(id).value = '';
+    showPassword(id, false);
+    showPasswordStrength(id);
+  }
+  showPasswordMatch();
+}
+
 function status(message, error = false) {
   el('status').textContent = message;
   el('status').dataset.error = String(error);
@@ -319,6 +667,7 @@ function status(message, error = false) {
 
 async function request(op, fields) {
   const headers = { Accept: 'application/json', 'X-Pala-Settings': '1' };
+  if (noteSession) headers['X-Pala-Note-Session'] = noteSession;
   const options = { cache: 'no-store', headers };
   if (op) {
     headers['Content-Type'] = 'application/json';
@@ -332,6 +681,13 @@ async function request(op, fields) {
   }
   const result = await response.json();
   if (typeof result.csrf === 'string') csrf = result.csrf;
+  if (op === 'auth.login' && result.ok) noteSession = result.session;
+  if (result.ok && (op === 'auth.logout' || op === 'auth.save')) noteSession = '';
+  if (result.access === 'locked' || result.access === 'setup') {
+    noteSession = '';
+    if (result.transport === 'Wi-Fi') window.location.assign('/login');
+    if (op) show(result);
+  }
   if (op && (!response.ok || !result.ok)) {
     throw new Error(result.error || 'The setting could not be saved.');
   }
@@ -378,6 +734,7 @@ function drawBridgeOrder() {
     const move = delta => {
       const other = index + delta;
       [bridgeOrder[index], bridgeOrder[other]] = [bridgeOrder[other], bridgeOrder[index]];
+      markDraft('bridge.order');
       drawBridgeOrder();
     };
     const controls = [];
@@ -402,12 +759,14 @@ function drawDisplayPages() {
     toggle.checked = page === id;
     toggle.addEventListener('change', () => {
       displayPages[index] = toggle.checked ? id : id.toLowerCase();
+      markDraft('pages.save');
     });
     label.append(toggle, name);
 
     const move = delta => {
       const other = index + delta;
       [displayPages[index], displayPages[other]] = [displayPages[other], displayPages[index]];
+      markDraft('pages.save');
       drawDisplayPages();
     };
     const controls = [];
@@ -430,17 +789,38 @@ function drawDisplayPages() {
 function show(data) {
   const caps = data.capabilities || {};
   const attached = Boolean(data.ok && data.device);
+  const locked = data.access === 'locked' || data.access === 'setup';
+  const usb = data.transport === 'USB';
+  const passwordSupported = attached && typeof data.device.webPasswordConfigured === 'boolean';
+  el('access-login').hidden = !locked;
+  el('access-login-form').hidden = data.access === 'setup';
+  el('access-login-help').hidden = data.access !== 'setup';
+  el('note-password').hidden = !passwordSupported;
+  el('note-password-old').required = !usb;
+  el('note-password-logout').hidden = usb;
+  el('wifi').hidden = locked;
   const wifiAvailable = attached && Array.isArray(data.wifi);
   const wifi = wifiAvailable ? data.wifi : [];
   const peers = Array.isArray(data.peers) ? data.peers : [];
-  const canPair = caps.pair === true;
+  const canPair = !locked && caps.pair === true;
   const canManagePeers = attached && caps.peers !== false && Array.isArray(data.peers);
   const name = attached && typeof data.device.name === 'string' ? data.device.name.trim() : '';
+  const target = attached ? (data.targetKey || (caps.devicePortal === true ? 'local' : null)) : null;
+  if (locked || (attached && (!target || target !== savedTarget))) {
+    clearPasswords('access-password', 'wifi-secret', ...newPasswordFields);
+    el('wifi-name').value = '';
+    for (const [op, draft] of drafts) if (draft.onNote) acceptDraft(op);
+  }
+  if (attached) {
+    savedTarget = target;
+    savedTransport = data.transport;
+    savedNoteName = name;
+  }
   const title = name ? name + ' settings' : 'Note settings';
   document.title = title;
   el('settings-title').textContent = title;
   el('viewer').textContent = 'Back to ' + (name || 'Note');
-  el('connection').textContent = 'Note disconnected';
+  el('connection').textContent = locked ? 'Note locked' : 'Note disconnected';
   if (attached) el('connection').textContent = data.transport ? 'Connected via ' + data.transport : 'Connected';
   el('note').hidden = !attached;
   const pages = attached ? data.device.displayPages : null;
@@ -449,17 +829,27 @@ function show(data) {
   const hasPages = typeof pages === 'string' && pages.length === expectedPages.length &&
     [...expectedPages].every(page => pages.toUpperCase().includes(page));
   el('display-pages').hidden = !hasPages;
-  displayPages = hasPages ? Array.from(pages) : [];
+  const pageWrap = attached ? data.device.pageWrap : null;
+  el('page-wrap-field').hidden = !hasPages || typeof pageWrap !== 'boolean';
+  if (hasPages) showFormValues('pages.save', () => {
+    displayPages = Array.from(pages);
+    el('page-wrap').checked = pageWrap === true;
+  });
+  const preferBluetooth = attached ? data.device.preferBluetooth : null;
+  el('wireless-priority').hidden = typeof preferBluetooth !== 'boolean';
+  if (typeof preferBluetooth === 'boolean') showFormValues('wireless.save', () => {
+    el('wireless-choice').value = preferBluetooth ? 'bluetooth' : 'wifi';
+  });
   drawDisplayPages();
   const syncTiming = attached ? data.device.syncTiming : null;
   const hasSyncTiming = Number.isInteger(syncTiming) && syncTiming >= 0 && syncTiming <= 3;
   el('sync-timing').hidden = !hasSyncTiming;
-  if (hasSyncTiming) el('sync-mode').value = String(syncTiming);
+  if (hasSyncTiming) showFormValues('sync.save', () => { el('sync-mode').value = String(syncTiming); });
   const sleepMinutes = attached ? data.device.sleepMinutes : null;
   const hasSleepTimeout = Number.isInteger(sleepMinutes) && sleepMinutes >= 0 && sleepMinutes <= 99;
   el('sleep-timeout').hidden = !hasSleepTimeout;
   if (hasSleepTimeout) {
-    el('sleep-minutes').value = sleepMinutes ? String(sleepMinutes) : '';
+    showFormValues('sleep.save', () => { el('sleep-minutes').value = sleepMinutes ? String(sleepMinutes) : ''; });
     el('sleep-status').textContent = sleepMinutes
       ? 'Current timeout: ' + sleepMinutes + ' min on Home and in Web Companion.'
       : 'Default: 1 min on Home, up to 3 min with queued work, and 5 min in Web Companion.';
@@ -491,15 +881,18 @@ function show(data) {
     : 'To connect over Bluetooth, briefly press both buttons on the Note, then select Refresh.';
   el('peer-empty').hidden = !canManagePeers || peers.length > 0;
   el('wifi-empty').hidden = !wifiAvailable || wifi.length > 0;
-  if (attached) {
+  el('note-codex-limit-row').hidden = !attached || typeof data.device.weeklyCodexLimit !== 'boolean';
+  if (attached) showFormValues('settings.save', () => {
     el('note-name').value = name;
     el('note-language').value = data.device.language || 'en';
-  }
+    el('note-codex-limit').value = data.device.weeklyCodexLimit === true ? 'weekly' : '5h';
+  });
   el('wifi-list').replaceChildren();
   wifi.forEach(({ ssid }) => row(el('wifi-list'), ssid, [
     button('Edit', () => {
       el('wifi-name').value = ssid;
-      el('wifi-secret').value = '';
+      clearPasswords('wifi-secret');
+      acceptDraft('wifi.save');
       el('wifi-secret').focus();
     }),
     button('Remove', () => confirmRemoval('Remove Wi-Fi network?', ssid,
@@ -514,28 +907,32 @@ function show(data) {
   const processing = bridge?.processing;
   el('bridge-processing-form').hidden = !processing;
   if (processing) {
-    const enabled = processing.mode === 'kubo';
-    el('kubo-processing').checked = enabled;
-    el('kubo-processing-fields').hidden = !enabled;
-    el('kubo-task-list').value = processing.taskList || '';
-    el('kubo-calendar').value = processing.calendarId || '';
+    showFormValues('bridge.processing.save', () => {
+      el('kubo-processing').checked = processing.mode === 'kubo';
+      el('kubo-processing-fields').hidden = !el('kubo-processing').checked;
+      el('kubo-task-list').value = processing.taskList || '';
+      el('kubo-calendar').value = processing.calendarId || '';
+    });
     el('kubo-google-status').textContent = 'Google Tasks sign-in ' +
       (processing.tasksLoginConfigured ? 'configured' : 'required') + '. Calendar sign-in ' +
       (processing.calendarLoginConfigured ? 'configured' : 'required') + '.';
   }
   el('bridge-form').hidden = !bridge;
-  if (bridge) {
+  if (bridge) showFormValues('bridge.save', () => {
     el('bridge-name').value = bridge.name || '';
     el('weather-location').value = bridge.weatherLocation || '';
-  }
-  bridgeOrder = Array.isArray(data.bridgeOrder) ? data.bridgeOrder.map(id => peers.find(peer => peer.id === id)).filter(Boolean) : [];
-  const hasOrder = caps.bridgeOrder === true && bridgeOrder.length > 1;
+    el('holiday-country').value = bridge.holidayCountry || 'SK';
+  });
+  const ordered = Array.isArray(data.bridgeOrder) ? data.bridgeOrder.map(id => peers.find(peer => peer.id === id)).filter(Boolean) : [];
+  showFormValues('bridge.order', () => { bridgeOrder = ordered; });
+  const hasOrder = caps.bridgeOrder === true && ordered.length > 1;
   el('bridge-order').hidden = !hasOrder;
   const hasAddress = attached && typeof data.device.bridgeAddress === 'string';
   el('bridge-address-form').hidden = !hasAddress;
-  if (hasAddress) el('bridge-address').value = data.device.bridgeAddress;
+  if (hasAddress) showFormValues('bridge.address', () => { el('bridge-address').value = data.device.bridgeAddress; });
   el('bridge').hidden = !bridge && !hasOrder && !hasAddress;
   drawBridgeOrder();
+  for (const draft of drafts.values()) showDraftNotice(draft);
 }
 
 function trashLabel(entry) {
@@ -585,7 +982,7 @@ async function readTrash() {
   try {
     const trash = await request('trash.status', {});
     trashCount = trash.count;
-    el('trash-days').value = String(trash.days);
+    showFormValues('trash.retention', () => { el('trash-days').value = String(trash.days); });
     el('trash-count').textContent = trashCount === 0 ? 'No recordings in Trash.' :
       trashCount === 1 ? '1 recording in Trash.' : trashCount + ' recordings in Trash.';
     el('trash-empty').hidden = trashCount === 0;
@@ -598,7 +995,9 @@ async function readTrash() {
 
 function changeTrash(op, fields, message) {
   return run(async () => {
+    const revision = drafts.get(op)?.revision;
     await request(op, fields);
+    if (revision !== undefined && drafts.get(op).revision === revision) acceptDraft(op);
     try {
       await readTrash();
       status(message);
@@ -678,8 +1077,23 @@ function refresh() {
 function save(op, fields, message) {
   return run(async () => {
     status('Saving…');
+    const revision = drafts.get(op)?.revision;
+    if (op === 'auth.save' && savedTransport === 'USB') {
+      // Renew the page's write permission before sending the password.
+      const current = await request();
+      if (!current.ok) throw new Error(current.error || 'Wake the Note and check its USB connection.');
+      if (!savedTarget || current.targetKey !== savedTarget || current.transport !== 'USB') {
+        clearPasswords(...newPasswordFields);
+        await showSettings(current);
+        throw new Error('The Note or its connection changed. Enter the password again.');
+      }
+    }
     await request(op, fields);
-    if (op === 'wifi.save') el('wifi-secret').value = '';
+    if (revision !== undefined && drafts.get(op).revision === revision) {
+      if (op === 'wifi.save') clearPasswords('wifi-secret');
+      if (op === 'auth.save') clearPasswords(...newPasswordFields);
+      acceptDraft(op);
+    }
     try {
       await showSettings(await request());
       status(message);
@@ -759,7 +1173,16 @@ el('refresh').addEventListener('click', refresh);
 el('display-pages-form').addEventListener('submit', event => {
   event.preventDefault();
   if (!el('display-pages').hidden) {
-    save('pages.save', { pages: displayPages.join('') }, 'Display pages saved.');
+    const fields = { pages: displayPages.join('') };
+    if (!el('page-wrap-field').hidden) fields.wrap = el('page-wrap').checked;
+    save('pages.save', fields, 'Display pages saved.');
+  }
+});
+el('wireless-form').addEventListener('submit', event => {
+  event.preventDefault();
+  const choice = el('wireless-choice').value;
+  if (!el('wireless-priority').hidden && ['wifi', 'bluetooth'].includes(choice)) {
+    save('wireless.save', { preferBluetooth: choice === 'bluetooth' }, 'Sync priority saved.');
   }
 });
 el('sync-timing-form').addEventListener('submit', event => {
@@ -779,9 +1202,28 @@ el('sleep-form').addEventListener('submit', event => {
 el('sleep-default').addEventListener('click', () => {
   if (!el('sleep-timeout').hidden) save('sleep.save', { minutes: 0 }, 'Default sleep timeout restored.');
 });
+el('access-login-form').addEventListener('submit', event => {
+  event.preventDefault();
+  if (el('access-login').hidden) return;
+  const password = el('access-password').value;
+  clearPasswords('access-password');
+  save('auth.login', { password }, 'Signed in.');
+});
+el('note-password-form').addEventListener('submit', event => {
+  event.preventDefault();
+  if (el('note-password').hidden) return;
+  const old = el('note-password-old');
+  const password = el('note-password-new');
+  const repeat = el('note-password-repeat');
+  const fields = { old: old.value, password: password.value, repeat: repeat.value };
+  save('auth.save', fields, 'Note password saved.');
+});
+el('note-password-logout').addEventListener('click', () => save('auth.logout', {}, 'Signed out.'));
 el('note-form').addEventListener('submit', event => {
   event.preventDefault();
-  save('settings.save', { name: el('note-name').value.trim(), language: el('note-language').value }, 'Note settings saved.');
+  const fields = { name: el('note-name').value.trim(), language: el('note-language').value };
+  if (!el('note-codex-limit-row').hidden) fields.weeklyCodexLimit = el('note-codex-limit').value === 'weekly';
+  save('settings.save', fields, 'Note settings saved.');
 });
 el('wifi-form').addEventListener('submit', event => {
   event.preventDefault();
@@ -796,7 +1238,10 @@ el('wifi-form').addEventListener('submit', event => {
 });
 el('bridge-form').addEventListener('submit', event => {
   event.preventDefault();
-  save('bridge.save', { name: el('bridge-name').value.trim(), weatherLocation: el('weather-location').value.trim() }, 'Bridge settings saved.');
+  save('bridge.save', {
+    name: el('bridge-name').value.trim(), weatherLocation: el('weather-location').value.trim(),
+    holidayCountry: el('holiday-country').value
+  }, 'Bridge settings saved.');
 });
 el('kubo-processing').addEventListener('change', () => {
   el('kubo-processing-fields').hidden = !el('kubo-processing').checked;
@@ -807,7 +1252,7 @@ el('bridge-processing-form').addEventListener('submit', event => {
     mode: el('kubo-processing').checked ? 'kubo' : 'transcribe',
     taskList: el('kubo-task-list').value.trim(),
     calendarId: el('kubo-calendar').value.trim()
-  }, 'Bridge processing mode saved.');
+  }, 'Bridge processing parameters saved.');
 });
 el('kubo-check-login').addEventListener('click', () => run(async () => {
   status('Checking Codex sign-in…');
@@ -849,6 +1294,37 @@ el('save-order').addEventListener('click', () => save('bridge.order', { ids: bri
 el('pair-usb').addEventListener('click', () => pair('usb'));
 el('pair-ble').addEventListener('click', () => pair('ble'));
 el('pair-enable').addEventListener('click', () => save('pair.enableBle', {}, 'Bluetooth pairing is enabled for 90 seconds.'));
+const values = (...ids) => () => ids.map(id => el(id).value);
+trackDraft('settings.save', 'note-form', values('note-name', 'note-language', 'note-codex-limit'));
+trackDraft('wifi.save', 'wifi-form', () => [el('wifi-name').value, Boolean(el('wifi-secret').value)]);
+trackDraft('auth.save', 'note-password-form', () => newPasswordFields.map(id => Boolean(el(id).value)));
+trackDraft('pages.save', 'display-pages-form', () => [displayPages.join(''), el('page-wrap').checked === true]);
+trackDraft('sync.save', 'sync-timing-form', values('sync-mode'));
+trackDraft('wireless.save', 'wireless-form', values('wireless-choice'));
+trackDraft('sleep.save', 'sleep-form', values('sleep-minutes'));
+trackDraft('bridge.save', 'bridge-form', values('bridge-name', 'weather-location', 'holiday-country'), false);
+trackDraft('bridge.processing.save', 'bridge-processing-form', () =>
+  [el('kubo-processing').checked === true, el('kubo-task-list').value, el('kubo-calendar').value], false);
+trackDraft('bridge.address', 'bridge-address-form', values('bridge-address'));
+trackDraft('bridge.order', 'bridge-order', () => bridgeOrder.map(peer => peer.id));
+trackDraft('trash.retention', 'trash-retention-form', values('trash-days'));
+
+for (const id of ['access-password', 'wifi-secret', ...newPasswordFields]) {
+  el(id + '-eye').addEventListener('click', () => showPassword(id, el(id).type === 'password'));
+}
+const strengthHelp = [
+  'Weak: fewer than 10 characters, fewer than 4 different characters, a repeated block up to 5 characters long, or one of these patterns: 123456, abcdef, qwerty, password, heslo.',
+  'Strong: at least 16 characters and 8 different characters after the weak checks. Fair: the remaining passwords.',
+  'The estimate ignores case and surrounding spaces. Save accepts supported passwords at every rating.',
+].join('\n\n');
+for (const id of ['note-password-new', 'wifi-secret']) {
+  el(id + '-strength-help').textContent = strengthHelp;
+  el(id).addEventListener('input', () => showPasswordStrength(id));
+}
+for (const id of ['note-password-new', 'note-password-repeat']) {
+  el(id).addEventListener('input', showPasswordMatch);
+  el(id).addEventListener('change', showPasswordMatch);
+}
 refresh();
 </script>
 </body>

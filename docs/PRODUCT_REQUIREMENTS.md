@@ -820,16 +820,25 @@ clear to the user, preserve original recognition, and keep manual edits dominant
   hosts local transcription service controls. Reconnect and Start local API
   are visible on that page. The endpoint field is under Advanced and search
   can open it without applying settings.
-- Show the network Bridge status, approved HTTPS listeners, pairing profile,
-  last authenticated HTTPS contact, and available error details in Connections.
-  Provide Start, Restart, Stop, and an opt-in to start with Local Dictation.
+- Put network Bridge status or approved HTTPS listeners at the right of the
+  Bridge heading in Connections. Keep the last authenticated HTTPS contact
+  in the status tooltip. Label an independently started Bridge Standalone
+  next to its HTTPS address. Show pairing problems and available error details.
+  Keep Start, Restart and Stop in one row at the minimum window width.
+  Preserve full accessible names and the opt-in to start with Local Dictation.
   Use the existing tray for Bridge status and restart. Closing Settings
   keeps the managed Bridge running. Tray Exit closes its control pipe.
 - Show the current Bridge activity in plain language for USB, Bluetooth,
-  Wi-Fi and Google delivery. Use a linear indicator while the duration is
-  unknown. Keep recording contents out of activity status.
-- Use Pala Note Configuration as the hardware card title. Open the shared
-  web settings from Connections and from the Note's Web Companion.
+  Wi-Fi and Google delivery. Keep the track visible when idle and put
+  the right-aligned activity status below it. When active, show an indeterminate
+  indicator with a glow using the current theme's accent. With Windows
+  animations disabled, highlight the track with a static accent outline.
+  Omit the glow in high contrast. Keep recording contents out of activity status.
+- Use Pala Note Configuration as the hardware card title. Place Enable Pala
+  sync and Open Note settings in one row below the heading, then the
+  transcription model. The settings button requires Pala sync to be on.
+  Place Bridge controls and status underneath. Open the
+  shared web settings from Connections and from the Note's Web Companion.
   Save the Note's display name and language on the device without changing
   its pairing identity. Use the saved name in Web Companion navigation,
   browser titles, question actions, and the shared Note settings.
@@ -838,6 +847,15 @@ clear to the user, preserve original recognition, and keep manual edits dominant
   Preserve the paired profile's model by default. Let the user follow the
   main Dictation model or choose an installed Slovak-compatible ASR model.
   Apply the selected model to the next Pala transcription.
+- Show the remaining Codex account allowance beside the saved Note name on
+  Home when Kubo processing is enabled and usage is available. Save the choice
+  of a five-hour or weekly window in Note settings. The five-hour setting
+  falls back to the weekly window when necessary. Below the percentage, show
+  five hour blocks or seven day blocks for the remaining time until reset.
+  Right-align the pending recordings indicator before connection and battery
+  status. Hide the percentage and blocks only when the full Note name and
+  recording count need the header space. Carry both quota windows through
+  the paired Home snapshot.
 - Set **Weather location** in the shared web settings opened from Connections.
   Bridge uses the saved town, with an optional two-letter country code.
   Clearing it disables forecast updates. The automatic source is open.
@@ -847,6 +865,13 @@ clear to the user, preserve original recognition, and keep manual edits dominant
   The Note centers WEB and keeps the battery on the right in Host mode.
   Check the battery once per minute and refresh when its displayed level
   changes. Volume buttons show a temporary five-bar overlay.
+- Use one Note password for Wi-Fi Web Companion and interactive Bluetooth
+  settings. Gate note listings, downloads, audio, Trash and settings behind
+  an expiring session. Use the same current-password and repeated-new-password
+  form on every supported connection. Give both new-password fields a green
+  border while their nonempty values match. A paired local USB connection may set
+  or reset the password with the two new entries. Machine authentication
+  authorizes automatic Bridge transcription.
 - Keep up to five independent pairings on the Note and show the list in
   the web page. Remove access through that page. Preserve the existing
   peer when migrating its pairing.
@@ -941,10 +966,15 @@ clear to the user, preserve original recognition, and keep manual edits dominant
   headfirst before its final peek. Bend the anemone polyps in the direction of
   the current and let them straighten as the water settles. Keep the aquarium
   independent of transcription and delivery.
-- Show **Doručené dnes** and **Čaká na Google** in the compact bottom strip.
-  Count unique dictations with confirmed Google Tasks or Docs delivery
-  today, and unique transcribed dictations awaiting any required Google
-  Tasks or Docs delivery confirmation. Center each count under its label.
+- Show unfinished items in the configured Google Tasks General list in the
+  left Home column. Show the last confirmed Google delivery time in the
+  right column. When Google confirmation is pending, show the number of
+  waiting dictations there until delivery completes.
+- Keep Home at the bottom of the display-pages settings and let the user
+  choose whether tapping past the top page returns Home or stays there.
+- Offer Wi-Fi first or Bluetooth first for wireless recording sync.
+  Give USB priority in both modes and preserve Wi-Fi for operations that
+  require the paired Bridge's HTTPS API.
 - Between the status row and delivery counters, show weather and Moon
   first, then the calendar heading, then the weekly date strip. Leave
   equal space from the upper divider to the weather and from the date
@@ -958,3 +988,11 @@ clear to the user, preserve original recognition, and keep manual edits dominant
   Calculate the Moon phase from the device clock. Cache up to seven days
   for the configured town and refresh during paired USB or Bluetooth
   synchronization even when transcription is busy.
+- Put **Holiday country** next to Weather location in shared Note settings.
+  Default to Slovakia and include Czechia. Use each country's statutory
+  non-working holidays and apply year-specific exceptions.
+- Sync the holiday dates for the current and next year to Note and persist
+  them for offline use. Look up complete dates across month and year
+  boundaries. Include the prior year's final days for the New Year week.
+  In the monthly calendars and the weekly strip on Home, show the day
+  numbers in bold for holidays. Keep the black highlight for today.

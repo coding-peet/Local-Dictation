@@ -1,6 +1,8 @@
 """Personal appointments in the paired user's Google Calendar."""
+from datetime import datetime
 import hashlib
 import os
+from zoneinfo import ZoneInfo
 
 
 def google_credentials(state, interactive=False, *, scopes=None,
@@ -30,9 +32,10 @@ def apply_google(config, state, action, key):
     from googleapiclient.discovery import build
     from googleapiclient.errors import HttpError
     events = build("calendar", "v3", credentials=google_credentials(state), cache_discovery=False).events()
+    zone = ZoneInfo(config.get("timezone", "Europe/Bratislava"))
     body = {"id": hashlib.sha256(key.encode()).hexdigest(), "summary": action["title"],
-            "start": {"dateTime": action["due"] + ":00", "timeZone": config["timezone"]},
-            "end": {"dateTime": action["end"] + ":00", "timeZone": config["timezone"]}}
+            "start": {"dateTime": action["due"] + ":00", "timeZone": zone.key},
+            "end": {"dateTime": action["end"] + ":00", "timeZone": zone.key}}
     if action["minutes"] >= 0:
         body["reminders"] = {"useDefault": False, "overrides": [
             {"method": "popup", "minutes": min(40320, action["minutes"])}]}
@@ -41,3 +44,11 @@ def apply_google(config, state, action, key):
     except HttpError as err:
         if err.resp.status != 409:
             raise
+    saved = events.get(calendarId=config["calendar"], eventId=body["id"]).execute()
+    if (saved.get("id") != body["id"] or saved.get("summary") != action["title"] or
+            saved.get("status") == "cancelled"):
+        raise RuntimeError("Google Calendar did not confirm the saved event.")
+    for field, key in (("start", "due"), ("end", "end")):
+        value = datetime.fromisoformat(saved[field]["dateTime"])
+        if value.tzinfo is None or value.astimezone(zone).replace(tzinfo=None) != datetime.fromisoformat(action[key]):
+            raise RuntimeError("Google Calendar did not confirm the selected interval.")

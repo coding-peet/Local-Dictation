@@ -54,3 +54,8 @@ static_assert(pairedBacklogAfterWifi(WifiBacklog::Ready, false, true) == Backlog
 static_assert(pairedBacklogAfterWifi(WifiBacklog::Ready, true, true) == BacklogLink::Wifi);
 static_assert(pairedBacklogAfterWifi(WifiBacklog::Unavailable, true, false) == BacklogLink::Deferred);
 static_assert(pairedBacklogAfterWifi(WifiBacklog::Unchecked, true, true) == BacklogLink::Deferred);
+
+static_assert(tryPreferredBluetooth(true, false, true));
+static_assert(!tryPreferredBluetooth(true, true, true));
+static_assert(!tryPreferredBluetooth(false, false, true));
+static_assert(!tryPreferredBluetooth(true, false, false));

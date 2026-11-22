@@ -2,6 +2,7 @@
 import argparse
 import contextlib
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -10,8 +11,10 @@ from pathlib import Path
 import re
 import sqlite3
 import sys
+import threading
 import time
 import unicodedata
+from typing import Callable
 from zoneinfo import ZoneInfo
 
 from appointment_dates import recording_time
@@ -41,8 +44,10 @@ DOC = re.compile(
     r"(?:\s*[:,–-]\s*|\s+)(.+)$", re.IGNORECASE | re.DOTALL,
 )
 CALENDAR = re.compile(
-    r"^(?:termin\b|pridaj(?:\s+mi)?\s+(?:osobny\s+)?termin\b"
-    r"|(?:(?:daj|pridaj|zapis|uloz)(?:\s+mi)?\s+)?do\s+(?:google\s+)?kalendara\b)",
+    r"^(?:prosim[\s,:]+)?(?:termin\b"
+    r"|(?:pridaj|naplanuj|zapis|vytvor|napis|vloz)(?:\s+mi)?\s+(?:osobny\s+)?(?:termin|udalost)\b"
+    r"|(?:(?:daj|pridaj|zapis|uloz|napis|vloz|zaznamenaj|naplanuj)(?:\s+mi)?\s+)?"
+    r"do\s+(?:google\s+)?kalendara\b)",
     re.IGNORECASE,
 )
 NAMED_TARGET = re.compile(
@@ -190,7 +195,7 @@ class DeliveryQueue:
                                (status, key))
         return [key for key, _ in actions]
 
-    def home_counts(self, device, bindings, *, now=None):
+    def home_counts(self, device, bindings, *, now=None, with_last=False):
         # The firmware clock uses the Central European time and DST rules.
         zone = ZoneInfo("Europe/Bratislava")
         today = (now or datetime.now(timezone.utc)).astimezone(zone).date()
@@ -209,9 +214,10 @@ class DeliveryQueue:
                     waiting.add(recording)
                 if complete and confirmation is not None:
                     confirmed[recording] = max(confirmed.get(recording, 0), confirmation)
-        delivered = sum(start <= stamp < end for recording, stamp in confirmed.items()
-                        if recording not in waiting)
-        return today.isoformat(), delivered, len(waiting)
+        completed = [stamp for recording, stamp in confirmed.items() if recording not in waiting]
+        delivered = sum(start <= stamp < end for stamp in completed)
+        result = (today.isoformat(), delivered, len(waiting))
+        return (*result, max(completed, default=None)) if with_last else result
 
     def pending(self):
         with self.database() as db:
@@ -300,6 +306,104 @@ def home_delivery_payload(state, config, device, *, queue=None):
         raise ValueError("Google destinations must be explicitly bound.")
     day, delivered, waiting = queue.home_counts(device, bindings)
     return f"{day},{delivered},{waiting}"
+
+
+class GeneralTaskCount:
+    """Keep device requests responsive while checking only the configured Google Tasks list."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.key = None
+        self.count = None
+        self.changed_at = 0
+        self.next_check = 0
+        self.refreshing = False
+
+    def get(self, state, target):
+        key = (state, target["id"], target["title"])
+        now = time.monotonic()
+        with self.lock:
+            if key != self.key:
+                self.key = key
+                self.count = None
+                self.next_check = 0
+            if not self.refreshing and now >= self.next_check:
+                self.refreshing = True
+                self.next_check = now + 60
+                threading.Thread(target=self._refresh, args=(key, target), daemon=True).start()
+            if self.count is not None and now - self.changed_at <= 300:
+                return self.count
+        return -1
+
+    def _refresh(self, key, target):
+        try:
+            count = count_open_general_tasks(key[0], target)
+            with self.lock:
+                if self.key == key:
+                    self.count = count
+                    self.changed_at = time.monotonic()
+        except Exception:
+            # Retain the last good count briefly when the account is offline.
+            pass
+        finally:
+            with self.lock:
+                self.refreshing = False
+
+
+def count_open_general_tasks(state, target):
+    with _api(state, "tasks", "v1", TASKS_SCOPE, "google-tasks-token.json") as api:
+        _verify_task_list(api, target)
+        tasks = items(api.tasks(), tasklist=target["id"], maxResults=100, showCompleted=False,
+                      showHidden=False, showDeleted=False, showAssigned=True,
+                      fields="nextPageToken,items(status)")
+        return sum(task.get("status") == "needsAction" for task in tasks)
+
+
+general_task_count = GeneralTaskCount()
+
+
+def general_open_count(state, config):
+    from note_web import processing_config
+
+    active = processing_config(state, config)
+    target = active["google_routes"].get("general")
+    if active["processing_mode"] != "kubo" or not isinstance(target, dict):
+        return -1
+    if target.get("provider", "tasks") != "tasks" or not target.get("id") or not target.get("title"):
+        return -1
+    return general_task_count.get(state, target)
+
+
+def home_codex_usage(state, config):
+    from codex_usage import codex_usage
+    from note_web import processing_config
+
+    if processing_config(state, config)["processing_mode"] == "kubo":
+        return codex_usage.get()
+    return None
+
+
+def home_dashboard_payload(state, config, device, *, queue=None, version=2):
+    from note_web import processing_config
+
+    active = processing_config(state, config)
+    bindings = active["google_routes"] if active["processing_mode"] == "kubo" else {}
+    waiting, confirmed = 0, None
+    if device and (queue is not None or (state / "google-delivery.sqlite").is_file()):
+        queue = queue if queue is not None else DeliveryQueue(state)
+        _, _, waiting, confirmed = queue.home_counts(device, bindings, with_last=True)
+    local_time = (datetime.fromtimestamp(confirmed, ZoneInfo("Europe/Bratislava")).strftime("%H:%M")
+                  if confirmed is not None else "-")
+    counts = f"{general_open_count(state, config) if device else -1},{waiting},{local_time}"
+    usage = home_codex_usage(state, config) if version >= 3 and device else None
+    if usage is not None:
+        if version >= 4:
+            short, short_reset = usage.five_hours or (-1, 0)
+            week, week_reset = usage.weekly or (-1, 0)
+            return f"h4,{counts},{usage.sample_expires},{short},{short_reset},{week},{week_reset}"
+        remaining, expires = usage.legacy_window()
+        return f"h3,{counts},{remaining},{expires}"
+    return f"h2,{counts}"
 
 
 def _api(state, service, version, scope, token):
@@ -438,6 +542,15 @@ def deliver_google(state, zone, kind, target, captured, text, key):
         return saved["id"]
 
 
+@dataclass(frozen=True)
+class StagedGoogleDelivery:
+    acknowledge: Callable[[], None]
+    organize_calendar: bool
+
+    def __call__(self):
+        self.acknowledge()
+
+
 class UsbGoogleDelivery:
     def __init__(self, state, config):
         self.state = state
@@ -456,19 +569,21 @@ class UsbGoogleDelivery:
     def stager(self, device, staged=None):
         def stage(note, captured, text):
             config = self.active_config()
-            if not config.get("google_routes"):
+            organize_calendar = bool(config.get("calendar")) and classify_transcript(text)[0] == "calendar"
+            if not config.get("google_routes") and not organize_calendar:
                 return None
             fallback = general_fallback_kinds(config)
             self.queue.stage(device, note, captured, text, ready=False, general_fallback=fallback)
 
             def acknowledge():
-                if not self.active_config().get("google_routes"):
+                active = self.active_config()
+                if not active.get("google_routes") and not (organize_calendar and active.get("calendar")):
                     return
                 keys = self.queue.stage(device, note, captured, text, general_fallback=fallback)
                 if staged is not None:
                     staged.extend(keys)
 
-            return acknowledge
+            return StagedGoogleDelivery(acknowledge, organize_calendar)
 
         return stage
 

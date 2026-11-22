@@ -30,3 +30,8 @@ constexpr bool displayPressHeldDuringRefreshDoesNotTurnPage() {
 }
 
 static_assert(displayPressHeldDuringRefreshDoesNotTurnPage());
+
+static_assert(nextDisplayPageIndex("tECnm", 2, true) == -1);
+static_assert(nextDisplayPageIndex("tECnm", 2, false) == 2);
+static_assert(nextDisplayPageIndex("tECnm", -1, false) == 1);
+static_assert(nextDisplayPageIndex("tecnm", -1, false) == -1);

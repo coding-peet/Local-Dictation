@@ -34,4 +34,5 @@ void showError(const char* message);
 void showSleepLocked();
 void showUltraSleepScreen();
 
+int chooseCalendarEventDate(const String& title, const String& first, const String& second);
 int confirmCalendarEvent(const String& title, const String& start, const String& end, int minutes);

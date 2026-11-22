@@ -13,6 +13,7 @@ static int cachedWifiCount = -1;
 static int cachedApiConfigured = -1;
 static int cachedIdleSleepMinutes = -1;
 static int cachedSyncTiming = -1;
+static int cachedPreferBluetooth = -1;
 
 static bool supportedLanguage(const String& language) {
   return language == "de" || language == "en" || language == "fr" ||
@@ -72,10 +73,12 @@ static bool validNoteName(const String& name) {
 
 bool palaNoteNameLocallyManaged() { return value("note_device").indexOf('|') > 0; }
 
-bool palaSaveLocalNoteSettings(const String& name, const String& language) {
+bool palaPrefersWeeklyCodexLimit() { return value("note_device").endsWith("|weekly"); }
+
+bool palaSaveLocalNoteSettings(const String& name, const String& language, bool weeklyCodexLimit) {
   palaSettingsBegin();
   if (!ready || !validNoteName(name) || !supportedLanguage(language)) return false;
-  const String settings = name + "|" + language;
+  const String settings = name + "|" + language + (weeklyCodexLimit ? "|weekly" : "");
   return storedString("note_device") == settings ||
       (prefs.putString("note_device", settings) == settings.length() && storedString("note_device") == settings);
 }
@@ -102,6 +105,14 @@ bool palaStoreDeliveryCounts(const String& counts) {
   if (palaStoredDeliveryCounts() == counts) return true;
   if (!ready || prefs.putString("home_delivery", counts) == 0) return false;
   return storedString("home_delivery") == counts;
+}
+
+String palaSavedHolidays() { return value("home_holidays"); }
+
+bool palaStoreHolidays(const String& snapshot) {
+  palaSettingsBegin();
+  return ready && prefs.putString("home_holidays", snapshot) == snapshot.length() &&
+      storedString("home_holidays") == snapshot;
 }
 
 int palaWifiProfileCount() {
@@ -238,7 +249,9 @@ bool palaSetIdleSleepMinutes(int minutes) {
 String palaDisplayPages() {
 #if PALA_BRIDGE_DISCOVERY
   palaSettingsBegin();
-  const String order = storedString("display_pages");
+  const String combined = storedString("display_v2");
+  const String order = combined.length() == kDisplayPageCount + 1
+      ? combined.substring(0, kDisplayPageCount) : storedString("display_pages");
   if (!validDisplayPages(order.c_str(), order.length())) return String(kDefaultDisplayPages);
   return order.length() == kLegacyDisplayPageCount ? order + 'm' : order;
 #else
@@ -247,13 +260,38 @@ String palaDisplayPages() {
 #endif
 }
 
-bool palaSetDisplayPages(const String& order) {
+bool palaDisplayPagesWrap() {
+  palaSettingsBegin();
+  const String combined = storedString("display_v2");
+  return combined.length() != kDisplayPageCount + 1 || combined[kDisplayPageCount] != '0';
+}
+
+bool palaSetDisplayPages(const String& order, bool wrap) {
   palaSettingsBegin();
   if (!ready || order.length() != kDisplayPageCount ||
       !validDisplayPages(order.c_str(), order.length())) return false;
-  if (storedString("display_pages") == order) return true;
-  return prefs.putString("display_pages", order) == order.length() &&
-         storedString("display_pages") == order;
+  const String combined = order + (wrap ? '1' : '0');
+  return storedString("display_v2") == combined ||
+         (prefs.putString("display_v2", combined) == combined.length() &&
+          storedString("display_v2") == combined);
+}
+
+bool palaPreferBluetooth() {
+  if (cachedPreferBluetooth < 0) {
+    palaSettingsBegin();
+    if (!ready) return false;
+    cachedPreferBluetooth = prefs.getBool("prefer_ble", false);
+  }
+  return cachedPreferBluetooth != 0;
+}
+
+bool palaSetPreferBluetooth(bool preferred) {
+  palaSettingsBegin();
+  if (!ready) return false;
+  if (palaPreferBluetooth() == preferred) return true;
+  if (prefs.putBool("prefer_ble", preferred) != 1) return false;
+  cachedPreferBluetooth = -1;
+  return palaPreferBluetooth() == preferred;
 }
 
 String palaSpeechVoice() {
@@ -263,13 +301,17 @@ String palaSpeechVoice() {
 String palaUiLanguage() {
   const String local = value("note_device");
   const int separator = local.indexOf('|');
-  const String language = separator > 0 ? local.substring(separator + 1) : value("ui_lang");
+  const int suffix = local.indexOf('|', separator + 1);
+  const String language = separator > 0
+      ? local.substring(separator + 1, suffix > separator ? suffix : local.length())
+      : value("ui_lang");
   return supportedLanguage(language) ? language : (PALA_MAC_BRIDGE ? "sk" : "en");
 }
 bool palaSetUiLanguage(const String& language) {
   palaSettingsBegin();
   if (!ready || !supportedLanguage(language)) return false;
-  if (palaNoteNameLocallyManaged()) return palaSaveLocalNoteSettings(palaNoteName(), language);
+  if (palaNoteNameLocallyManaged())
+    return palaSaveLocalNoteSettings(palaNoteName(), language, palaPrefersWeeklyCodexLimit());
   return prefs.putString("ui_lang", language) > 0;
 }
 int palaPlaybackVolume() {

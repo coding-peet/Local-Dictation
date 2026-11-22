@@ -17,6 +17,8 @@ import time
 import wave
 
 from bridge_activity import BridgeActivity, activity_step
+from holidays import holiday_snapshot
+from pala_google import StagedGoogleDelivery
 
 
 PREFIX = b"KUBO_USB_V1 "
@@ -42,6 +44,7 @@ REPLY_TYPES = {
     "COMMIT": ("SAVED",),
     "NAME": ("NAME-SAVED",),
     "DELIVERY": ("DELIVERY-SAVED",),
+    "HOLIDAYS": ("HOLIDAYS-SAVED",),
     "WEATHER": ("OK",),
     "WEATHER-COMMIT": ("OK",),
     "WEATHER-READ": ("FORECAST",),
@@ -49,7 +52,7 @@ REPLY_TYPES = {
 }
 
 
-FIRMWARE_ERRORS = {"AUTH", "BUSY", "COMMAND", "NOTE", "READ", "SAVE", "TEXT", "WEATHER", "NAME", "DELIVERY"}
+FIRMWARE_ERRORS = {"AUTH", "BUSY", "COMMAND", "NOTE", "READ", "SAVE", "TEXT", "WEATHER", "NAME", "DELIVERY", "HOLIDAYS"}
 BLOCK_COMMANDS = {"READ", "READTXT", "READWEATHER"}
 
 
@@ -307,7 +310,11 @@ def config_exchange(port, data):
     wire = encode_request(data)
     if len(wire) > getattr(port, "settings_frame_limit", MAX_LINE) or port.write(wire) != len(wire):
         raise SettingsError("The Note settings request could not be sent.")
-    deadline = time.monotonic() + 4
+    password_save = data.get("op") == "auth.save"
+    # A USB password change hashes the new password and commits it to flash
+    # before acknowledging. Keep listening on that session without resending.
+    usb_password_save = password_save and isinstance(port, BufferedSerial)
+    deadline = time.monotonic() + (12 if usb_password_save else 4)
     line = bytearray()
     while time.monotonic() < deadline:
         line.extend(port.read_until(b"\n", MAX_LINE - len(line)))
@@ -319,6 +326,8 @@ def config_exchange(port, data):
             raise SettingsError("The Note settings reply exceeded its size limit.")
         if not line:
             time.sleep(.01)
+    if password_save:
+        raise SettingsError("The Note did not confirm the password change. Keep the Note awake and try again.")
     raise SettingsError("The Note did not answer. Check that its firmware supports browser settings.")
 
 
@@ -338,7 +347,10 @@ def paired_config(port, token, request):
                     raise SettingsError("The Note settings list is too large.")
                 reply[section] = []
                 for index in range(count):
-                    page = config_exchange(port, {"op": "get", "section": section, "index": index})
+                    page_request = {"op": "get", "section": section, "index": index}
+                    if "session" in request:
+                        page_request["session"] = request["session"]
+                    page = config_exchange(port, page_request)
                     items = page.get(section)
                     if not page["ok"] or not isinstance(items, list) or len(items) != 1:
                         raise SettingsError("The Note settings list could not be read.")
@@ -401,16 +413,61 @@ def transfer_note_name(port, tokens, name):
             _expect_ok(port, "CLOSE")
 
 
-def transfer_delivery_counts(port, tokens, payload):
+def transfer_delivery_counts(port, tokens, payload, *, dashboard=None):
     if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2},[0-9]{1,9},[0-9]{1,9}", payload) is None:
         raise UsbSyncError("Invalid Google delivery counters.")
+    candidates = [payload]
+    if dashboard is not None:
+        fields = r"(?:-1|[0-9]{1,9}),[0-9]{1,9},(?:-|(?:[01][0-9]|2[0-3]):[0-5][0-9])"
+        epoch = r"[0-9]{10}"
+        window = rf"(-1|[0-9]{{1,3}}),(0|{epoch})"
+        windows = re.fullmatch(rf"h4,({fields}),({epoch}),{window},{window}", dashboard)
+        usage = re.fullmatch(rf"h3,({fields}),([0-9]{{1,3}}),({epoch})", dashboard)
+        if windows:
+            counts = windows[1]
+            sample_expires, short, short_reset, week, week_reset = map(int, windows.groups()[1:])
+            if not (1_704_067_200 <= sample_expires <= 0xffffffff and
+                    all(-1 <= percent <= 100 and (reset == 0 or
+                        percent >= 0 and 1_704_067_200 <= reset <= 0xffffffff)
+                        for percent, reset in ((short, short_reset), (week, week_reset)))):
+                raise UsbSyncError("Invalid Home dashboard.")
+            candidates[:0] = [dashboard, "h2," + counts]
+            legacy, reset = (short, short_reset) if short >= 0 else (week, week_reset)
+            if legacy >= 0:
+                candidates.insert(1, f"h3,{counts},{legacy},{reset or sample_expires}")
+        elif usage and int(usage[2]) <= 100 and 1_704_067_200 <= int(usage[3]) <= 0xffffffff:
+            candidates[:0] = [dashboard, "h2," + usage[1]]
+        elif re.fullmatch(rf"h2,{fields}", dashboard):
+            candidates.insert(0, dashboard)
+        else:
+            raise UsbSyncError("Invalid Home dashboard.")
     token, host, device = _paired_session(port, tokens)
     try:
-        signature = _proof(token, f"delivery {payload}", host, device)
-        response = _exchange(port, f"DELIVERY {payload} {signature}")
-        proof = _proof(token, f"delivery-saved {payload}", host, device)
-        if len(response) != 3 or response[1] != payload or not hmac.compare_digest(response[2], proof):
-            raise UsbSyncError("Pala did not verify the delivery counters.")
+        for candidate in candidates:
+            signature = _proof(token, f"delivery {candidate}", host, device)
+            try:
+                response = _exchange(port, f"DELIVERY {candidate} {signature}")
+            except UsbSyncError as error:
+                if candidate != payload and _failure(error).FirmwareCode == "DELIVERY":
+                    continue  # Older firmware accepts an earlier format.
+                raise
+            proof = _proof(token, f"delivery-saved {candidate}", host, device)
+            if len(response) != 3 or response[1] != candidate or not hmac.compare_digest(response[2], proof):
+                raise UsbSyncError("Pala did not verify the delivery counters.")
+            return
+    finally:
+        with contextlib.suppress(OSError, UsbSyncError):
+            _expect_ok(port, "CLOSE")
+
+
+def transfer_holidays(port, tokens, snapshot):
+    token, host, device = _paired_session(port, tokens)
+    try:
+        signature = _proof(token, f"holidays {snapshot}", host, device)
+        response = _exchange(port, f"HOLIDAYS {snapshot} {signature}")
+        expected = _proof(token, f"holidays-saved {snapshot}", host, device)
+        if len(response) != 2 or not hmac.compare_digest(response[1], expected):
+            raise UsbSyncError("Pala did not verify the saved holiday calendar.")
     finally:
         with contextlib.suppress(OSError, UsbSyncError):
             _expect_ok(port, "CLOSE")
@@ -528,7 +585,16 @@ def sync_one(port, tokens, transcribe_local, *, note=None, stop=None, stage_tran
                 _expect_ok(port, f"PUT {offset} {data[offset:offset + write_chunk].hex()}")
             _check_stop(stop)
             try:
-                receipt = _exchange(port, "COMMIT")
+                if isinstance(acknowledge, StagedGoogleDelivery) and acknowledge.organize_calendar:
+                    try:
+                        receipt = _exchange(port, "COMMIT CALENDAR")
+                    except UsbSyncError as error:
+                        if _failure(error).FirmwareCode != "COMMAND":
+                            raise
+                        # Older Notes reject the command before saving any text.
+                        receipt = _exchange(port, "COMMIT")
+                else:
+                    receipt = _exchange(port, "COMMIT")
             except (OSError, UsbReplyTimeout):
                 # A write can reach the Note even when its reply does not. Verify
                 # the exact recording on this session before releasing delivery.
@@ -708,6 +774,17 @@ def main():
             transfer_note_name(link, (token,), configured_name())
             print("Pala verified the saved display name.", flush=True)
 
+        def send_holidays(link, paired_tokens):
+            from weather import LOCATION_ZONE
+
+            country = bridge_preferences(STATE, {})["holidayCountry"]
+            snapshot = holiday_snapshot(country, datetime.now(LOCATION_ZONE).year)
+            try:
+                transfer_holidays(link, paired_tokens, snapshot)
+            except UsbSyncError as error:
+                if str(error) != "Pala reported COMMAND.":
+                    raise
+
         if args.name_only:
             from serial.tools.list_ports import comports
 
@@ -717,28 +794,31 @@ def main():
             return
         if args.delivery_only:
             from serial.tools.list_ports import comports
-            from pala_google import home_delivery_payload
+            from pala_google import general_open_count, home_dashboard_payload, home_delivery_payload
 
             device, token = paired_port(comports(), args.port, tokens)
             payload = home_delivery_payload(STATE, config, device)
+            dashboard = home_dashboard_payload(STATE, config, device, version=4)
             with paired_link(args.port, token) as link:
-                transfer_delivery_counts(link, (token,), payload)
+                transfer_delivery_counts(link, (token,), payload, dashboard=dashboard)
             print("Pala verified the Google delivery counters.", flush=True)
             return
         if args.weather_only or args.watch:
             from serial.tools.list_ports import comports
             from weather import ForecastCache, LOCATION_ZONE
-            from pala_google import home_delivery_payload
+            from pala_google import general_open_count, home_codex_usage, home_dashboard_payload, home_delivery_payload
 
             weather = ForecastCache(local_dictation_weather_location)
             weather_revision = 0
             delivery_path = STATE / "google-delivery.sqlite"
 
             def send_delivery(link, token):
-                payload = home_delivery_payload(STATE, config, token_device(token),
-                                                queue=router.queue if router is not None else None)
+                device = token_device(token)
+                queue = router.queue if router is not None else None
+                payload = home_delivery_payload(STATE, config, device, queue=queue)
+                dashboard = home_dashboard_payload(STATE, config, device, queue=queue, version=4)
                 try:
-                    transfer_delivery_counts(link, (token,), payload)
+                    transfer_delivery_counts(link, (token,), payload, dashboard=dashboard)
                 except UsbSyncError as error:
                     if str(error) != "Pala reported COMMAND.":
                         raise
@@ -756,11 +836,16 @@ def main():
                 try:
                     settings = local_dictation_settings()
                 except (OSError, ValueError):
-                    name = location = None
-                else:
-                    name = local_dictation_note_name(settings)
-                    location = bridge_preferences(STATE, settings)["weatherLocation"]
-                return name, current.date(), changed, location, weather_revision
+                    settings = None
+                preferences = bridge_preferences(STATE, settings or {})
+                name = local_dictation_note_name(settings) if settings is not None else None
+                location = preferences["weatherLocation"] if settings is not None else None
+                country = preferences["holidayCountry"]
+                known_usb = {ident.casefold() for ident in enrollments.tokens()}
+                connected = any((port.serial_number or "").casefold() in known_usb for port in comports())
+                open_count = general_open_count(STATE, config) if connected else -1
+                usage = home_codex_usage(STATE, config) if connected else None
+                return name, current.date(), changed, location, weather_revision, open_count, country, usage
 
             def send_forecast(link, token, forecast):
                 try:
@@ -787,6 +872,7 @@ def main():
                                 if str(error) != "Pala reported COMMAND.":
                                     raise
                             send_delivery(link, token)
+                            send_holidays(link, (token,))
                     forecast = weather.get()
                     if forecast is None:
                         if args.weather_only and not args.watch:
@@ -904,6 +990,11 @@ def main():
                             drain(link, device, token, bluetooth_activity)
                         if stop.is_set():
                             return
+                        with bluetooth_activity.step("settings"):
+                            try:
+                                send_holidays(link, (token,))
+                            except (UsbSyncError, ValueError) as error:
+                                bluetooth_error(error)
                         # Weather can take longer than the Note's idle BLE session.
                         with bluetooth_activity.step("weather"):
                             forecast = weather.get()
@@ -962,6 +1053,10 @@ def main():
         with _open_link(args.port) as link:
             result = sync_one(link, selected_tokens, bridge.transcribe_local, note=args.note,
                               stage_transcript=stage, activity=usb_activity)
+            try:
+                send_holidays(link, selected_tokens)
+            except (OSError, ValueError, UsbSyncError) as error:
+                report_usb_failure(STATE, error)
         if router is not None:
             router.flush(staged)
     except KeyboardInterrupt:

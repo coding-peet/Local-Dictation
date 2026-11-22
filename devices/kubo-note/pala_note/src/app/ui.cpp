@@ -10,6 +10,7 @@
 #include "calendar_week.h"
 #include "home_almanac.h"
 #include "home_weather.h"
+#include "home_holidays.h"
 #include "home_delivery.h"
 #include "home_bridge_status.h"
 #include "battery.h"
@@ -21,8 +22,10 @@ constexpr int kInset = 14;
 constexpr int kRight = W - kInset;
 constexpr int kContentWidth = W - 2 * kInset;
 constexpr int kHeaderY = 10;
+constexpr int kHomeHeaderCenterY = kHeaderY + 7;
 constexpr int kHomeSideSlotOffset = 62;
 constexpr int kBatteryBodyWidth = 23;
+constexpr int kBatteryHeight = 12;
 constexpr int kBatteryContactWidth = 2;
 constexpr int kBatteryWidth = kBatteryBodyWidth + kBatteryContactWidth;
 constexpr int kHomeBatteryX = kRight - kBatteryWidth;
@@ -175,11 +178,11 @@ void drawFooterCentered(const char* text, uint8_t color) {
   if (text && strlen(text)) drawStrC(W / 2, kFooterTextY, text, 1, color);
 }
 
-void drawBattery(int percent) {
+void drawBattery(int percent, int y) {
   const int bars = batteryBarCount(percent);
   if (bars < 0) return;
-  constexpr int x = kHomeBatteryX, y = 9, height = 12;
-  strokeRect(x, y, kBatteryBodyWidth, height, 1, BLACK);
+  constexpr int x = kHomeBatteryX;
+  strokeRect(x, y, kBatteryBodyWidth, kBatteryHeight, 1, BLACK);
   fillRect(x + kBatteryBodyWidth, y + 3, kBatteryContactWidth, 6, BLACK);
   for (int i = 0; i < bars; i++) fillRect(x + 3 + i * 6, y + 3, 5, 6, BLACK);
 }
@@ -189,7 +192,7 @@ void drawCompanionHeader(int batteryPercent) {
   const int nameWidth = W / 2 - textW(mode, 1) / 2 - kInset - 6;
   labelLeft(kHeaderY, palaNoteName().c_str(), 1, BLACK, nameWidth);
   drawStrC(W / 2, kHeaderY, mode, 1, BLACK);
-  drawBattery(batteryPercent);
+  drawBattery(batteryPercent, 9);
   hline(kInset, kHeaderRuleY, kContentWidth, BLACK);
 }
 
@@ -521,9 +524,10 @@ void drawHomeWeek(const String& todayKey, int64_t utc) {
   constexpr int dateY = dateHighlightTop + highlightPaddingTop;
   constexpr int weatherY = top + dividerGap;
   constexpr int weatherBottom = weatherY + kHomeWeatherHeight;
+  const int year = todayKey.substring(0, 4).toInt();
   const int month = todayKey.substring(5, 7).toInt();
-  const auto week = calendarWeek(todayKey.substring(0, 4).toInt(),
-      month, todayKey.substring(8, 10).toInt());
+  const int day = todayKey.substring(8, 10).toInt();
+  const auto week = calendarWeek(year, month, day);
   if (!week.number) {
     drawStrC(W / 2, top + (kHomeDeliveryRuleY - top - uiFontHeight(1)) / 2,
         uiText("DATUM FEHLT", "DATE NOT SET"), 1, BLACK);
@@ -562,8 +566,10 @@ void drawHomeWeek(const String& todayKey, int64_t utc) {
     const int x = weekX + i * cell + (i >= weekendStart ? weekendGap : 0);
     const bool today = i == week.today;
     if (today) fillRect(x + 1, dateHighlightTop, cell - 2, highlightHeight, BLACK);
-    const String date = String(week.days[i]);
-    drawStrC(x + cell / 2, dateY, date.c_str(), 1, today ? WHITE : BLACK);
+    const CalendarDate date = calendarDateInWeek(year, month, day, i - week.today);
+    const bool holiday = homeHolidayFor(date.year, date.month, date.day);
+    const String value = String(date.day);
+    drawStrC(x + cell / 2, dateY, value.c_str(), holiday ? -1 : 1, today ? WHITE : BLACK);
   }
   vline(weekX + weekendStart * cell + weekendGap / 2, dateY - 2, highlightHeight - 2, BLACK);
 }
@@ -598,46 +604,90 @@ void drawHomeBridgeStatus(HomeBridgeLink link) {
   for (int row = 0; row < kHomeStatusHeight; ++row) {
     for (int column = 0; column < kHomeStatusWidth; ++column) {
       if (glyph[row] & (1u << (kHomeStatusWidth - 1 - column))) {
-        px(kHomeStatusX + column, kHeaderY + row, BLACK);
+        px(kHomeStatusX + column, kHomeHeaderCenterY - kHomeStatusHeight / 2 + row, BLACK);
       }
     }
   }
 }
 
+constexpr int kHomeQuotaDigitWidth = 6;
+constexpr int kHomeQuotaSymbolWidth = 7;
+constexpr int kHomeQuotaHeight = 9;
+constexpr int kHomeQuotaAdvance = kHomeQuotaDigitWidth + 1;
+
+int homeQuotaWidth(int remaining) {
+  if (remaining < 0 || remaining > 100) return 0;
+  const int digits = remaining == 100 ? 3 : remaining >= 10 ? 2 : 1;
+  return digits * kHomeQuotaAdvance + kHomeQuotaSymbolWidth;
+}
+
+void drawHomeQuotaPercent(int center, int y, int remaining) {
+  // Black bitmap strokes keep the small numeric label readable on e-paper.
+  constexpr uint8_t digits[10][kHomeQuotaHeight] = {
+    {0x78, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0x78}, // 0
+    {0x30, 0x70, 0xb0, 0x30, 0x30, 0x30, 0x30, 0x30, 0xfc}, // 1
+    {0x78, 0xcc, 0x0c, 0x18, 0x30, 0x60, 0xc0, 0xc0, 0xfc}, // 2
+    {0x78, 0xcc, 0x0c, 0x18, 0x38, 0x0c, 0x0c, 0xcc, 0x78}, // 3
+    {0x18, 0x38, 0x58, 0x98, 0x98, 0xfc, 0x18, 0x18, 0x18}, // 4
+    {0xfc, 0xc0, 0xc0, 0xf8, 0x0c, 0x0c, 0x0c, 0xcc, 0x78}, // 5
+    {0x38, 0x60, 0xc0, 0xf8, 0xcc, 0xcc, 0xcc, 0xcc, 0x78}, // 6
+    {0xfc, 0x0c, 0x18, 0x30, 0x30, 0x60, 0x60, 0x60, 0x60}, // 7
+    {0x78, 0xcc, 0xcc, 0xcc, 0x78, 0xcc, 0xcc, 0xcc, 0x78}, // 8
+    {0x78, 0xcc, 0xcc, 0xcc, 0x7c, 0x0c, 0x0c, 0x18, 0x70}, // 9
+  };
+  constexpr uint8_t percent[] = {0x62, 0x94, 0x94, 0x68, 0x10, 0x2c, 0x52, 0x52, 0x8c};
+  static_assert(sizeof(percent) == kHomeQuotaHeight);
+
+  const int width = homeQuotaWidth(remaining);
+  if (!width) return;
+  char value[4];
+  snprintf(value, sizeof(value), "%d", remaining);
+  int x = center - width / 2;
+  for (const char* digit = value; *digit; ++digit) {
+    drawBitmap1BPP(x, y, digits[*digit - '0'], kHomeQuotaDigitWidth, kHomeQuotaHeight, BLACK);
+    x += kHomeQuotaAdvance;
+  }
+  drawBitmap1BPP(x, y, percent, kHomeQuotaSymbolWidth, kHomeQuotaHeight, BLACK);
+}
+
 int drawPendingRecordings(int count) {
-  if (count <= 0) return W / 2;
-  constexpr int barHeights[] = {3, 8, 15, 7, 12, 5, 3};
+  constexpr int right = kHomeStatusX - 6;
+  if (count <= 0) return right;
+  constexpr int barHeights[] = {3, 7, 11, 6, 3};
   constexpr int barCount = sizeof(barHeights) / sizeof(barHeights[0]);
   constexpr int barWidth = 2;
   constexpr int barGap = 1;
   constexpr int waveWidth = barCount * (barWidth + barGap) - barGap;
-  constexpr int waveY = kHeaderY + 6;
   constexpr int labelGap = 6;
-  constexpr int statusGap = 3;
-  constexpr int groupWidthLimit = 2 * (kHomeStatusX - W / 2 - statusGap);
+  constexpr int groupWidthLimit = 2 * (right - W / 2);
 
   String label(count);
   if (waveWidth + labelGap + textW(label.c_str(), 1) > groupWidthLimit) {
     label = "100k+";
   }
-  const int x = (W - waveWidth - labelGap - textW(label.c_str(), 1)) / 2;
+  const int groupWidth = waveWidth + labelGap + textW(label.c_str(), 1);
+  const int x = right - groupWidth;
   for (int i = 0; i < barCount; ++i) {
     const int height = barHeights[i];
-    fillRect(x + i * (barWidth + barGap), waveY - height / 2, barWidth, height, BLACK);
+    fillRect(x + i * (barWidth + barGap), kHomeHeaderCenterY - height / 2, barWidth, height, BLACK);
   }
   drawStr(x + waveWidth + labelGap, kHeaderY, label.c_str(), 1, BLACK);
   return x;
 }
 
-void drawHomeDeliveryCount(int center, const char* first, const char* second, int count) {
+void drawHomeDeliveryValue(int center, const char* first, const char* second, const char* value) {
   drawStrC(center, kHomeDeliveryLabelY, first, 1, BLACK);
   drawStrC(center, kHomeDeliverySecondLineY, second, 1, BLACK);
+  constexpr int width = (kContentWidth - kHomeDeliveryColumnGap) / 2;
+  drawStrC(center, kHomeDeliveryCountY, value, textW(value, 2) <= width ? 2 : 1, BLACK);
+}
+
+void drawHomeDeliveryCount(int center, const char* first, const char* second, int count) {
   char value[8];
   if (count < 0) strcpy(value, "-");
   else if (count > 999999) strcpy(value, "999999+");
   else snprintf(value, sizeof(value), "%d", count);
-  constexpr int width = (kContentWidth - kHomeDeliveryColumnGap) / 2;
-  drawStrC(center, kHomeDeliveryCountY, value, textW(value, 2) <= width ? 2 : 1, BLACK);
+  drawHomeDeliveryValue(center, first, second, value);
 }
 
 void drawDeliveryAccent(int x, int glyphTop, bool caron) {
@@ -653,14 +703,42 @@ void drawDeliveryAccent(int x, int glyphTop, bool caron) {
 
 void showIdle(int pendingCount, int batteryPercent) {
   clearWhite();
-  const int nameRight = drawPendingRecordings(pendingCount) - 4;
   const String name = palaNoteName();
+  const auto counts = homeDeliveryCounts();
+  const auto codex = counts.codexAt(time(nullptr), palaPrefersWeeklyCodexLimit());
+  constexpr int usageGap = 4;
+  constexpr int segmentWidth = 3;
+  constexpr int segmentHeight = 4;
+  constexpr int segmentStep = segmentWidth + 1;
+  constexpr int gaugeGap = 2;
+  const int percentWidth = homeQuotaWidth(codex.remaining);
+  const int gaugeWidth = codex.segments ? codex.segments * segmentStep - 1 : 0;
+  const int usageWidth = max(percentWidth, gaugeWidth);
+  const int usageSlot = usageWidth ? usageWidth + usageGap : 0;
   const int nameWidth = textW(name.c_str(), 1);
-  const int nameLeft = max(kInset, W / 2 - kHomeSideSlotOffset - nameWidth / 2);
-  drawStrFit(nameLeft, kHeaderY, nameRight - nameLeft, name.c_str(), 1, BLACK);
+  const int nameWithUsage = max(kInset, W / 2 - kHomeSideSlotOffset - (nameWidth + usageSlot) / 2);
+  const int queueGap = pendingCount > 0 ? 6 : 4;
+  const int requestedSpace = usageSlot ? nameWithUsage + nameWidth + usageSlot + queueGap : 0;
+  const int queueLeft = drawPendingRecordings(pendingCount);
+  const bool showUsage = usageSlot && queueLeft >= requestedSpace;
+  const int nameLeft = showUsage ? nameWithUsage : max(kInset, W / 2 - kHomeSideSlotOffset - nameWidth / 2);
+  const int availableName = showUsage ? nameWidth : queueLeft - 4 - nameLeft;
+  drawStrFit(nameLeft, kHeaderY, availableName, name.c_str(), 1, BLACK);
+  if (showUsage) {
+    const int center = nameLeft + nameWidth + usageGap + usageWidth / 2;
+    const int usageHeight = kHomeQuotaHeight + (codex.segments ? gaugeGap + segmentHeight : 0);
+    const int percentY = kHomeHeaderCenterY - usageHeight / 2;
+    drawHomeQuotaPercent(center, percentY, codex.remaining);
+    const int gaugeY = percentY + kHomeQuotaHeight + gaugeGap;
+    for (int i = 0; i < codex.segments; ++i) {
+      const int x = center - gaugeWidth / 2 + i * segmentStep;
+      if (i < codex.filled) fillRect(x, gaugeY, segmentWidth, segmentHeight, BLACK);
+      else hline(x, gaugeY + segmentHeight - 1, segmentWidth, BLACK);
+    }
+  }
   const HomeBridgeLink bridgeLink = homeBridgeStatus.latest();
   drawHomeBridgeStatus(bridgeLink);
-  drawBattery(batteryPercent);
+  drawBattery(batteryPercent, kHomeHeaderCenterY - kBatteryHeight / 2);
   hline(kInset, kHeaderRuleY, kContentWidth, BLACK);
   const String nowUtc = currentUtcIso();
   const String localNow = utcToLocalDeviceLabel(nowUtc);
@@ -670,16 +748,27 @@ void showIdle(int pendingCount, int batteryPercent) {
   vline(W / 2, kHomeDeliveryLabelY, 52, BLACK);
   constexpr int halfColumn = (kContentWidth - kHomeDeliveryColumnGap) / 4;
   constexpr int left = kInset + halfColumn, right = kRight - halfColumn;
-  const auto counts = homeDeliveryCounts(todayKey);
   const bool sk = palaUiLanguage() == "sk";
-  drawHomeDeliveryCount(left, sk ? "Dorucene" : "Delivered", sk ? "dnes" : "today", counts.deliveredToday);
-  drawHomeDeliveryCount(right, sk ? "Caka na" : "Awaiting", "Google", counts.waiting);
+  drawHomeDeliveryCount(left, "General", sk ? "otvorene" : "open", counts.generalOpen);
+  if (counts.waiting > 0) {
+    drawHomeDeliveryCount(right, sk ? "Caka na" : "Awaiting", "Google", counts.waiting);
+    if (sk) {
+      drawDeliveryAccent(right - 28, kHomeDeliveryLabelY, true);
+      drawDeliveryAccent(right - 16, kHomeDeliveryLabelY + 3, false);
+    }
+  } else {
+    drawHomeDeliveryValue(right, sk ? "Posledne" : "Last", sk ? "dorucenie" : "delivery",
+                          counts.lastDelivery[0] ? counts.lastDelivery : "-");
+    if (sk) {
+      drawDeliveryAccent(right + (textW("Posledne", 1) - textW("e", 1)) / 2,
+                         kHomeDeliveryLabelY + 3, false);
+      drawDeliveryAccent(right - textW("dorucenie", 1) / 2 + textW("doru", 1) + textW("c", 1) / 2,
+                         kHomeDeliverySecondLineY + 3, true);
+    }
+  }
   if (sk) {
-    // The FreeSans bitmap font is ASCII-only. Add marks above č, é, Č and á.
-    drawDeliveryAccent(left + 4, kHomeDeliveryLabelY + 3, true);
-    drawDeliveryAccent(left + 33, kHomeDeliveryLabelY + 3, false);
-    drawDeliveryAccent(right - 28, kHomeDeliveryLabelY, true);
-    drawDeliveryAccent(right - 16, kHomeDeliveryLabelY + 3, false);
+    drawDeliveryAccent(left + (textW("otvorene", 1) - textW("e", 1)) / 2,
+                       kHomeDeliverySecondLineY + 3, false);
   }
   refresh();
   homeBridgeStatus.drawn(bridgeLink);
@@ -775,9 +864,10 @@ void showCalendarMonth(int monthOffset, bool moreDisplayPages) {
         if (!day) continue;
         const int center = firstCenter + (column + 1) * columnWidth;
         const bool today = day == month.today;
+        const bool holiday = homeHolidayFor(month.year, month.month, day);
         if (today) fillRect(center - 10, y - 2, 21, 17, BLACK);
         snprintf(value, sizeof(value), "%d", day);
-        drawStrC(center, y, value, today ? -1 : 1, today ? WHITE : BLACK);
+        drawStrC(center, y, value, today || holiday ? -1 : 1, today ? WHITE : BLACK);
       }
     }
   }
@@ -1054,7 +1144,37 @@ void showUltraSleepScreen() {
   refreshClean();
 }
 
-// 1 accepts, 0 declines, -1 leaves the proposal pending on the Mac.
+static int calendarButtonChoice() {
+  bool armed = false;
+  const uint32_t since = millis();
+  while (millis() - since < 30000UL) {
+    const bool up = digitalRead(BTN_REC) == LOW, down = digitalRead(BTN_PWR) == LOW;
+    if (!up && !down) armed = true;
+    if (armed && (up != down)) {
+      delay(35);
+      const int pin = up ? BTN_REC : BTN_PWR;
+      if (digitalRead(pin) != LOW) continue;
+      while (digitalRead(pin) == LOW && millis() - since < 30000UL) delay(10);
+      return up ? 0 : 1;
+    }
+    delay(10);
+  }
+  return -1;
+}
+
+int chooseCalendarEventDate(const String& title, const String& first, const String& second) {
+  const bool sk = palaUiLanguage() == "sk";
+  clearWhite();
+  drawHeader(sk ? "VYBER DATUM" : "CHOOSE DATE", BLACK);
+  labelLeft(38, normalizeForDisplay(title).c_str(), 1, BLACK);
+  labelLeft(75, (String("1  ") + first).c_str(), 1, BLACK);
+  labelLeft(108, (String("2  ") + second).c_str(), 1, BLACK);
+  drawFooter(sk ? "HORE 1" : "UP 1", sk ? "DOLE 2" : "DOWN 2", BLACK);
+  refresh();
+  return calendarButtonChoice();
+}
+
+// 1 accepts, 0 declines, -1 leaves the proposal pending at the Bridge.
 int confirmCalendarEvent(const String& title, const String& start, const String& end, int minutes) {
   const bool sk = palaUiLanguage() == "sk";
   clearWhite();
@@ -1066,19 +1186,6 @@ int confirmCalendarEvent(const String& title, const String& start, const String&
   labelLeft(143, sk ? "Ulozit termin?" : "Save event?", 1, BLACK);
   drawFooter(sk ? "HORE ANO" : "UP YES", sk ? "DOLE NIE" : "DOWN NO", BLACK);
   refresh();
-  bool armed = false;
-  const uint32_t since = millis();
-  while (millis() - since < 30000UL) {
-    const bool up = digitalRead(BTN_REC) == LOW, down = digitalRead(BTN_PWR) == LOW;
-    if (!up && !down) armed = true;
-    if (armed && (up != down)) {
-      delay(35);
-      const int pin = up ? BTN_REC : BTN_PWR;
-      if (digitalRead(pin) != LOW) continue;
-      while (digitalRead(pin) == LOW && millis() - since < 30000UL) delay(10);
-      return up ? 1 : 0;
-    }
-    delay(10);
-  }
-  return -1;
+  const int button = calendarButtonChoice();
+  return button < 0 ? -1 : 1 - button;
 }

@@ -1,5 +1,7 @@
 #include "note_config.h"
 
+#include "note_access.h"
+
 #include "bluetooth_sync.h"
 #include "bridge_client.h"
 #include "display_pages.h"
@@ -110,11 +112,17 @@ void getSettings(JsonVariantConst request, NoteConfigTransport link, JsonDocumen
   JsonObject device = result["device"].to<JsonObject>();
   device["name"] = palaNoteName();
   device["language"] = palaUiLanguage();
+  device["weeklyCodexLimit"] = palaPrefersWeeklyCodexLimit();
   device["keepsWifiPassword"] = true;
   device["memoryTrash"] = true;
+  device["webPasswordConfigured"] = noteAccessConfigured();
   device["displayPages"] = palaDisplayPages();
   device["sleepMinutes"] = palaIdleSleepMinutes();
   device["syncTiming"] = static_cast<int>(palaSyncTiming());
+  device["pageWrap"] = palaDisplayPagesWrap();
+#if PALA_BRIDGE_DISCOVERY
+  device["preferBluetooth"] = palaPreferBluetooth();
+#endif
 #if PALA_BRIDGE_DISCOVERY
   device["bridgeAddress"] = palaBridgeAddress();
 #endif
@@ -299,6 +307,11 @@ void trashSettings(const String& op, JsonVariantConst request, JsonDocument& res
   }
 }
 
+String accessField(JsonVariantConst field) {
+  const JsonString value = field.as<JsonString>();
+  return value.isNull() || strlen(value.c_str()) != value.size() ? String() : String(value.c_str());
+}
+
 void dispatch(JsonVariantConst request, NoteConfigTransport link, bool authenticated,
               uint32_t attachment, bool enrollment, JsonDocument& result) {
   const String op = request["op"] | "";
@@ -315,7 +328,35 @@ void dispatch(JsonVariantConst request, NoteConfigTransport link, bool authentic
     return;
   }
   if (!authenticated) { fillResult(result, "Authenticate the Note connection first."); return; }
-  if (op == "get") getSettings(request, link, result);
+  if (link == NoteConfigTransport::Bluetooth) {
+    if (op == "auth.login") {
+      String token;
+      const char* error = noteAccessLogin(link, accessField(request["password"]), token);
+      fillResult(result, error);
+      if (!error) result["session"] = token;
+      return;
+    }
+    if (!noteAccessSessionValid(link, accessField(request["session"]))) {
+      const bool configured = noteAccessConfigured();
+      fillResult(result, configured ? "Enter the Note password." : "Set the Note password over USB.");
+      result["access"] = configured ? "locked" : "setup";
+      return;
+    }
+  }
+  if (op == "auth.save") {
+    const bool localUsb = link == NoteConfigTransport::Usb && usbPresent && attachment == usbAttachment && attachment;
+    if (link == NoteConfigTransport::Usb && !localUsb) {
+      fillResult(result, "Connect the Note by USB to change its password.");
+      return;
+    }
+    const char* error = noteAccessSave(localUsb, accessField(request["old"]),
+                                        accessField(request["password"]), accessField(request["repeat"]));
+    fillResult(result, error);
+    if (!error) csrf = "";
+  } else if (op == "auth.logout" && link != NoteConfigTransport::Usb) {
+    noteAccessLogout(link);
+    if (link == NoteConfigTransport::Web) csrf = "";
+  } else if (op == "get") getSettings(request, link, result);
   else if (op.startsWith("trash.")) trashSettings(op, request, result);
   else if (op == "pair.enableBle" && link == NoteConfigTransport::Web && bluetoothEnrollmentAvailable()) {
     bleEnableRequested = true;
@@ -373,16 +414,30 @@ void dispatch(JsonVariantConst request, NoteConfigTransport link, bool authentic
     } else {
       resetActivity();
     }
+#if PALA_BRIDGE_DISCOVERY
+  } else if (op == "wireless.save") {
+    const auto preferred = request["preferBluetooth"];
+    if (!preferred.is<bool>() || !palaSetPreferBluetooth(preferred.as<bool>())) {
+      fillResult(result, "Could not save wireless sync priority.");
+    }
+#endif
   } else if (op == "pages.save") {
     const JsonString order = request["pages"].as<JsonString>();
-    if (order.size() != kDisplayPageCount || !validDisplayPages(order.c_str(), order.size())) {
-      fillResult(result, "Invalid display page order.");
-    } else if (!palaSetDisplayPages(String(order.c_str()))) {
+    const auto wrap = request["wrap"];
+    if (order.size() != kDisplayPageCount || !validDisplayPages(order.c_str(), order.size()) ||
+        (request.containsKey("wrap") && !wrap.is<bool>())) {
+      fillResult(result, "Invalid display page settings.");
+    } else if (!palaSetDisplayPages(String(order.c_str()), wrap | palaDisplayPagesWrap())) {
       fillResult(result, "Could not save the display pages.");
     }
   } else if (op == "settings.save") {
-    if (!palaSaveLocalNoteSettings(request["name"] | "", request["language"] | ""))
-      fillResult(result, "Could not save the device name and language.");
+    const auto weekly = request["weeklyCodexLimit"];
+    if (!weekly.isNull() && !weekly.is<bool>()) {
+      fillResult(result, "Invalid Codex limit selection.");
+    } else if (!palaSaveLocalNoteSettings(request["name"] | "", request["language"] | "",
+                                          weekly | palaPrefersWeeklyCodexLimit())) {
+      fillResult(result, "Could not save the Note settings.");
+    }
   } else fillResult(result, "Unsupported Note settings operation.");
 }
 

@@ -11,11 +11,17 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from holidays import DEFAULT_HOLIDAY_COUNTRY, HOLIDAY_COUNTRIES
 from weather import _location_parts
 
 
 PAGE = Path(__file__).resolve().parents[1] / "pala_note" / "src" / "app" / "note_settings_page.inc"
 API = "/api/note-settings"
+NOTE_SESSION_HEADER = "X-Pala-Note-Session"
+
+
+def valid_note_session(value):
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{48}", value) is not None
 PREFERENCES = "note-bridge-preferences.json"
 PROCESSING = "bridge-processing.json"
 DISCOVERY = "note-settings-runtime.json"
@@ -105,10 +111,11 @@ def save_processing_preferences(state, mode, task_list, calendar_id):
 def bridge_preferences(state, legacy):
     value = read_object(state / PREFERENCES)
     return {"name": value.get("name", legacy.get("PalaBridgeName") or "Local Dictation"),
-            "weatherLocation": value.get("weatherLocation", legacy.get("PalaWeatherLocation") or "")}
+            "weatherLocation": value.get("weatherLocation", legacy.get("PalaWeatherLocation") or ""),
+            "holidayCountry": value.get("holidayCountry", DEFAULT_HOLIDAY_COUNTRY)}
 
 
-def save_bridge_preferences(state, name, weather_location):
+def save_bridge_preferences(state, name, weather_location, holiday_country=None):
     if not isinstance(name, str):
         raise ValueError("Enter a Bridge name.")
     name = name.strip()
@@ -116,7 +123,11 @@ def save_bridge_preferences(state, name, weather_location):
         raise ValueError("Enter a Bridge name of up to 24 bytes.")
     town, country = _location_parts(weather_location)
     location = f"{town}, {country}" if country else town
-    value = {"name": name, "weatherLocation": location}
+    if holiday_country is None:
+        holiday_country = bridge_preferences(state, {})["holidayCountry"]
+    if holiday_country not in HOLIDAY_COUNTRIES:
+        raise ValueError("Select a supported holiday country.")
+    value = {"name": name, "weatherLocation": location, "holidayCountry": holiday_country}
     atomic_write(state / PREFERENCES, value)
     return value
 
@@ -138,6 +149,7 @@ class SettingsHTTPServer(ThreadingHTTPServer):
         self.origin = f"http://{self.host}"
         self.nonces = {}
         self.nonce_lock = threading.Lock()
+        self.target_key = secrets.token_bytes(32)
         self.route = route
         self.page = page
 
@@ -170,6 +182,13 @@ class SettingsHandler(BaseHTTPRequestHandler):
 
     def _header(self, name, value):
         return self.headers.get_all(name, []) == [value]
+
+    def _note_session(self, data):
+        data.pop("session", None)
+        tokens = self.headers.get_all(NOTE_SESSION_HEADER, [])
+        if len(tokens) == 1 and valid_note_session(tokens[0]):
+            data["session"] = tokens[0]
+        return data
 
     def _same_site(self):
         origins = self.headers.get_all("Origin", [])
@@ -204,7 +223,7 @@ class SettingsHandler(BaseHTTPRequestHandler):
             self._send(200, self.server.page, "text/html; charset=utf-8")
         elif self.path == API:
             if self._header("X-Pala-Settings", "1"):
-                self._dispatch({"op": "get"}, include_csrf=True)
+                self._dispatch(self._note_session({"op": "get"}), include_csrf=True)
             else:
                 self._error(403, "Open Note settings from Local Dictation.")
         else:
@@ -251,7 +270,7 @@ class SettingsHandler(BaseHTTPRequestHandler):
             self._error(400, "Invalid settings request.")
             return
         data["_target"] = device
-        self._dispatch(data)
+        self._dispatch(self._note_session(data))
 
     def _dispatch(self, data, *, include_csrf=False):
         try:
@@ -264,6 +283,8 @@ class SettingsHandler(BaseHTTPRequestHandler):
         device = public.pop("_selectedDevice", None)
         if include_csrf:
             public["csrf"] = self.server.issue_nonce(device)
+            if isinstance(device, str) and device:
+                public["targetKey"] = hmac.digest(self.server.target_key, device.encode("utf-8"), "sha256").hex()
         self._json(200, public)
 
 

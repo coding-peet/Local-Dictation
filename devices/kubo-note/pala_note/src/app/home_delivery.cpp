@@ -22,22 +22,40 @@ bool parseCounts(const String& payload, char (&day)[11], unsigned& delivered, un
 }
 }
 
-HomeDeliveryCounts homeDeliveryCounts(const String& today) {
+HomeDeliveryCounts homeDeliveryCounts() {
+  HomeDeliveryCounts counts;
+  const String stored = palaStoredDeliveryCounts();
+  if (parseHomeDashboard({stored.c_str(), stored.length()}, counts)) return counts;
   char day[11]{};
   unsigned delivered = 0, waiting = 0;
-  if (!parseCounts(palaStoredDeliveryCounts(), day, delivered, waiting)) return {};
-  return {today.isEmpty() ? -1 : today == day ? static_cast<int>(delivered) : 0,
-          static_cast<int>(waiting)};
+  if (parseCounts(stored, day, delivered, waiting)) counts.waiting = waiting;
+  return counts;
 }
 
 bool storeHomeDelivery(const String& payload, bool& changed) {
   char day[11]{};
   unsigned delivered = 0, waiting = 0;
-  if (!parseCounts(payload, day, delivered, waiting)) return false;
-  changed = payload != palaStoredDeliveryCounts();
+  HomeDeliveryCounts dashboard;
+  const bool dashboardFormat = parseHomeDashboard({payload.c_str(), payload.length()}, dashboard);
+  if (dashboardFormat) waiting = dashboard.waiting;
+  else if (!parseCounts(payload, day, delivered, waiting)) return false;
+  const String stored = palaStoredDeliveryCounts();
+  changed = payload != stored;
+  HomeDeliveryCounts previous;
+  if (changed && dashboardFormat && parseHomeDashboard({stored.c_str(), stored.length()}, previous)) {
+    const auto now = time(nullptr);
+    const bool weekly = palaPrefersWeeklyCodexLimit();
+    changed = dashboard.generalOpen != previous.generalOpen || dashboard.waiting != previous.waiting ||
+              strcmp(dashboard.lastDelivery, previous.lastDelivery) != 0 ||
+              dashboard.codexAt(now, weekly) != previous.codexAt(now, weekly);
+  }
   if (!palaStoreDeliveryCounts(payload)) return false;
   refreshSchedule.received(millis(), waiting);
   return true;
+}
+
+void homeDeliveryRefreshAttempted(uint32_t now) {
+  refreshSchedule.attempted(now);
 }
 
 bool homeDeliveryNeedsRefresh(uint32_t now) {
@@ -58,17 +76,28 @@ bool refreshHomeDelivery() {
 #if PALA_BRIDGE_DISCOVERY
   ProviderClient client;
   client.setHandshakeTimeout(2);
-  HTTPClient http;
-  http.setConnectTimeout(1500);
-  http.setTimeout(2000);
-  const String url = client.url("/pala/delivery");
-  if (url.isEmpty() || !http.begin(client, url)) return false;
-  http.addHeader("Authorization", "Bearer " + client.bridge().token);
-  const int status = http.GET();
-  const int length = http.getSize();
-  const String payload = status == HTTP_CODE_OK && length > 0 && length <= 64 ? http.getString() : String();
-  http.end();
-  if (!payload.length() || payload.length() != static_cast<size_t>(length)) return false;
+  String payload;
+  const auto get = [&](const char* path) {
+    HTTPClient http;
+    http.setConnectTimeout(1500);
+    http.setTimeout(2000);
+    const String url = client.url(path);
+    if (url.isEmpty() || !http.begin(client, url)) return -1;
+    http.addHeader("Authorization", "Bearer " + client.bridge().token);
+    const int status = http.GET();
+    const int length = http.getSize();
+    if (status == HTTP_CODE_OK && length > 0 && length <= 96) {
+      payload = http.getString();
+      if (payload.length() != static_cast<size_t>(length)) payload = "";
+    }
+    http.end();
+    return status;
+  };
+  int status = get("/pala/home?v=4");
+  if (status == 403 || status == 404) status = get("/pala/home?v=3");
+  if (status == 403 || status == 404) status = get("/pala/home");
+  if (status == 403 || status == 404) get("/pala/delivery");
+  if (!payload.length()) return false;
   JsonDocument document;
   if (deserializeJson(document, payload) || !document["counts"].is<const char*>()) return false;
   bool changed = false;

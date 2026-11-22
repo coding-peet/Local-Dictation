@@ -34,6 +34,49 @@ five pairings and shows the list in the page. When Bridge is unavailable,
 the Note searches the remaining eligible bridges in order after trying
 the last one that worked.
 
+## Codex usage on Home
+
+When Kubo processing is enabled, Home shows the remaining Codex allowance
+next to the Note name. In **Note settings → Note**, choose **5 hours
+(weekly fallback)** or **Weekly** and save the Note settings. Bridge reads
+both available windows from the signed-in Codex CLI account status.
+
+The percentage is the remaining allowance. The small blocks underneath show
+the time until reset in approximate hours or days. A partially remaining hour
+or day counts as one block. The blocks appear when Codex reports a reset time.
+The pending recording count and waveform sit just left of the connection
+and battery indicators. The percentage and blocks stay visible as long as
+the name and recording count leave enough room in the header.
+
+## Note password
+
+Open the paired Note over local data USB in **Local Dictation → Connections →
+Open Note settings**. Set the password in **Note password** before first using
+Web Companion over Wi-Fi or Note settings over Bluetooth. Use 8 to 48
+printable ASCII characters. The Note has one password and no username.
+Use the eye beside a password field to show or hide its current entry.
+The strength meter for new passwords is informational. Save accepts
+supported passwords at every rating.
+
+On Wi-Fi, sign in before opening Web Companion pages, reading notes,
+playing audio or using settings and Trash. On Bluetooth, sign in from the
+Local Dictation settings page after the connection is paired. Sign out in
+the **Note password** section. A session expires after 15 minutes without
+a request.
+
+To change a password over Wi-Fi or Bluetooth, enter the current password
+and enter the new password twice. For initial setup or password recovery,
+connect by local data USB and open the same form. Enter the new password
+twice and leave the current password blank.
+
+Settings forms show an unsaved reminder after an edit. Note settings use the
+saved device name in that reminder. Save each form after reviewing its changes.
+
+The Note's Wi-Fi Web Companion uses HTTP. Traffic is unencrypted on the
+network. Use the Note's password-protected hotspot or a trusted private
+network for Wi-Fi browser access. SD-card recordings remain readable
+from the card. Paired Bridge transcription uses its machine authentication.
+
 ## Configure display pages
 
 Open **Display pages** in the shared Note settings. Set each checkbox,
@@ -46,7 +89,8 @@ its position in the saved order.
 
 On the awake Home screen, tap the upper button to open the first enabled
 page. Tap it again to page through Tasks or Events and continue to the
-following enabled views. After the last view, the next upper tap returns Home.
+following enabled views. **Return to Home after the top page** controls the
+next upper tap at the end. Clear it to stay on the last enabled page.
 On any display page, the lower button returns Home and holding the upper
 button starts a recording. With every page disabled, a short upper tap on
 Home leaves Home visible.
@@ -185,6 +229,11 @@ sync starts and select **Save sync timing**.
 
 The upper-button triple press works in every mode.
 
+Open **Sync connection priority** and select **Wi-Fi first** or
+**Bluetooth first** for recording sync. USB always has priority. A
+Bluetooth-first attempt gives a paired PC a short window to pick up audio,
+then tries Wi-Fi. Processing that requires a Wi-Fi Bridge still uses Wi-Fi.
+
 1. When an active USB data connection is present, Pala first gives the
    paired Windows client time to authenticate over USB.
 2. Otherwise Pala tries its paired HTTPS Bridge over Wi-Fi. Bridge must
@@ -294,17 +343,17 @@ py -B devices/kubo-note/mac-bridge/usb_sync.py --port COM24 --name-only
 Use the actual paired port. A successful response verifies that the Note
 saved the name. The existing pairing and DNS identity stay in use.
 
-## Google delivery counters
+## Home delivery status
 
-The Home display counts dictations whose Google Tasks or Docs writes were
-all confirmed today and transcribed dictations still waiting for a required
-confirmation. The first count follows the device's Central European date.
-After submitting a note over Wi-Fi, the Note fetches the counters on the same
-connection and briefly checks again while Google delivery is still pending.
-A dictation that creates several shopping entries counts once. The Bridge
-keeps the date of the final confirmation and the device shows its last
-received waiting count while offline. Deliveries recorded before the Bridge
-stored a device ID and confirmation time cannot be assigned to a past date.
+**General open** shows unfinished items in the configured Google Tasks
+General list. The Bridge reads statuses for that list. A dash means the
+count is unavailable. The Note keeps its latest snapshot while offline.
+
+**Last delivery** shows the local time of the last confirmed Google
+delivery. While confirmed delivery is pending, this column shows
+**Awaiting Google** and the number of waiting dictations. After submitting
+a note over Wi-Fi, the Note fetches an update on the same connection and
+briefly checks again while delivery is pending.
 
 Connect the paired Note by USB to transfer and verify only the counters:
 
@@ -343,6 +392,25 @@ and verifies the values selected for the device's local date.
 Weather data by [Open-Meteo](https://open-meteo.com/). The Moon phase
 estimate uses the January 2000 epoch from
 [NASA's Moon phase tables](https://eclipse.gsfc.nasa.gov/phase/phases1901.html).
+
+## Calendar holidays
+
+In the shared Pala Note configuration page, set **Holiday country** next to
+**Weather location** in the Bridge section. Slovakia is the default.
+Czechia is also available. The setting applies to the paired Bridge.
+
+During USB, Wi-Fi, or Bluetooth sync, Bridge sends the selected country's
+nationwide statutory days of rest for the current and following calendar
+year. It also includes dates in the preceding December 26–31 so the Home
+week can cross New Year. The Note saves the calendar locally and displays
+holiday day numbers in bold on Home and in each monthly view. Today keeps
+its black background.
+
+The Slovak calendar follows [Act 241/1993 Coll., sections 2 and 4b](https://www.slov-lex.sk/ezbierky/pravne-predpisy/SK/ZZ/1993/241/20261029).
+May 8 and September 15 are excluded for 2026 and resume in 2027 under the
+current law. The Czech calendar follows [Act 245/2000 Coll., sections 1–3](https://e-sbirka.gov.cz/sb/2000/245).
+Bridge computes Easter-related dates locally. Future changes to holiday laws
+require updating the Bridge rules.
 
 ## Transcription on Windows
 

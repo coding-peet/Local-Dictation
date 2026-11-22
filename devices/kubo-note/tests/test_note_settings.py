@@ -109,7 +109,7 @@ class LoopbackSettingsTests(unittest.TestCase):
         self.assertEqual(self.calls, [{"op": "get"}, {**operation, "_target": None}])
 
     def test_two_browser_tabs_keep_separate_confirmed_device_bindings(self):
-        targets = iter(["known-note-a", "known-note-b"])
+        targets = iter(["known-note-a", "known-note-b", "known-note-a"])
 
         def route(data):
             if data["op"] == "get":
@@ -123,6 +123,10 @@ class LoopbackSettingsTests(unittest.TestCase):
         tab_b = json.loads(self.request("GET", API, headers)[1])
         self.assertNotEqual(tab_a["csrf"], tab_b["csrf"])
         self.assertNotIn("_selectedDevice", tab_a)
+        refreshed_a = json.loads(self.request("GET", API, headers)[1])
+        self.assertEqual(refreshed_a["targetKey"], tab_a["targetKey"])
+        self.assertNotEqual(tab_b["targetKey"], tab_a["targetKey"])
+        self.assertNotIn("known-note-a", json.dumps(tab_a))
         for tab in (tab_a, tab_b):
             auth = {**headers, "Content-Type": "application/json", "Origin": self.server.origin,
                     "X-Pala-CSRF": tab["csrf"]}
@@ -138,15 +142,36 @@ class LoopbackSettingsTests(unittest.TestCase):
 
 
 class NoteSettingsTests(unittest.TestCase):
+    def test_note_settings_keep_optional_codex_window_selection(self):
+        from note_settings import note_request, note_response
+
+        base = {"op": "settings.save", "name": "Kubo", "language": "sk"}
+        self.assertEqual(note_request(base), base)
+        for weekly in (True, False):
+            request = {**base, "weeklyCodexLimit": weekly}
+            self.assertEqual(note_request(request), request)
+            reply = {"ok": True, "device": {"name": "Kubo", "language": "sk", "weeklyCodexLimit": weekly},
+                     "wifi": [], "peers": []}
+            self.assertIs(note_response(reply, "USB")["device"]["weeklyCodexLimit"], weekly)
+        with self.assertRaises(SettingsError):
+            note_request({**base, "weeklyCodexLimit": "weekly"})
+
     def test_preferences_do_not_rewrite_live_legacy_settings(self):
         with tempfile.TemporaryDirectory() as folder:
             state = Path(folder)
             legacy = {"PalaBridgeName": "Legacy", "PalaWeatherLocation": "Trnava, SK", "Endpoint": "unchanged"}
             route = SettingsRoute(state, lambda: legacy, lambda data: ({"ok": False}, "USB"), None)
             self.assertEqual(route({"op": "get"})["bridge"]["weatherLocation"], "Trnava, SK")
-            self.assertEqual(route({"op": "bridge.save", "name": "Desk Bridge", "weatherLocation": "Wien, at"})["bridge"],
-                             {"name": "Desk Bridge", "weatherLocation": "Wien, AT"})
+            self.assertEqual(route({"op": "get"})["bridge"]["holidayCountry"], "SK")
+            self.assertEqual(route({"op": "bridge.save", "name": "Desk Bridge",
+                                    "weatherLocation": "Wien, at", "holidayCountry": "CZ"})["bridge"],
+                             {"name": "Desk Bridge", "weatherLocation": "Wien, AT", "holidayCountry": "CZ"})
             self.assertEqual(bridge_preferences(state, legacy)["weatherLocation"], "Wien, AT")
+            saved = route({"op": "bridge.save", "name": "Desk Bridge", "weatherLocation": ""})
+            self.assertEqual(saved["bridge"]["holidayCountry"], "CZ")
+            with self.assertRaises(SettingsError):
+                route({"op": "bridge.save", "name": "Desk Bridge", "weatherLocation": "",
+                       "holidayCountry": "XX"})
             self.assertEqual(legacy["PalaWeatherLocation"], "Trnava, SK")
             self.assertEqual(legacy["Endpoint"], "unchanged")
 
@@ -436,6 +461,7 @@ class ManagedWatcherSettingsTests(unittest.TestCase):
                         side_effect=lambda _device, _exchange, *, keep_open: actions.append(("settings", keep_open))),
                   patch("usb_sync.transfer_note_name", side_effect=lambda *_: actions.append("metadata")),
                   patch("usb_sync.transfer_delivery_counts"),
+                  patch("usb_sync.transfer_holidays", side_effect=lambda *_: actions.append("holidays")),
                   patch("weather.ForecastCache.get",
                         side_effect=lambda: actions.append("weather lookup") or forecast),
                   patch("usb_sync.transfer_forecast",
@@ -450,9 +476,10 @@ class ManagedWatcherSettingsTests(unittest.TestCase):
                 main()
 
         self.assertEqual(actions, [("settings", True), "ordinary advertisement",
-                                   ("settings", False), "metadata", "recording", "weather lookup", "weather transfer",
+                                   ("settings", False), "metadata", "recording", "holidays",
+                                   "weather lookup", "weather transfer",
                                    "ordinary advertisement while ASR is busy", ("settings", False),
-                                   "metadata", "weather lookup", "weather transfer"])
+                                   "metadata", "holidays", "weather lookup", "weather transfer"])
         self.assertEqual(bridge.return_value.local_transcription_ready.call_count, 2)
 
     def test_managed_watcher_first_run_serves_page_until_its_owner_stops(self):
@@ -510,3 +537,15 @@ class SyncTimingSettingsTests(unittest.TestCase):
                 note_request({"op": "sync.save", "mode": mode})
         device = {"name": "Willow", "language": "en"}
         self.assertNotIn("syncTiming", note_response({"ok": True, "device": device}, "BLE")["device"])
+
+class NavigationAndPriorityTests(unittest.TestCase):
+    def test_wrap_and_wireless_priority_are_strict_booleans(self):
+        ops = ({"op": "pages.save", "pages": "TECNm", "wrap": False},
+               {"op": "wireless.save", "preferBluetooth": True})
+        for op in ops:
+            self.assertEqual(note_request(op), op)
+            field = "wrap" if op["op"] == "pages.save" else "preferBluetooth"
+            with self.assertRaises(SettingsError):
+                note_request(dict(op, **{field: 1}))
+        device = {"name": "Willow", "language": "en", "pageWrap": False, "preferBluetooth": True}
+        self.assertEqual(note_response({"ok": True, "device": device}, "USB")["device"], device)

@@ -29,6 +29,31 @@ constexpr int numberOfCalendarWeeks(int year) {
   return januaryFirst == 3 || (januaryFirst == 2 && weekLeapYear(year)) ? 53 : 52;
 }
 
+struct CalendarDate {
+  int year;
+  int month;
+  int day;
+};
+
+// The Home strip has at most six days on either side of the anchor date.
+constexpr CalendarDate calendarDateInWeek(int year, int month, int day, int offset) {
+  day += offset;
+  if (day < 1) {
+    if (--month < 1) {
+      month = 12;
+      --year;
+    }
+    day += weekMonthDays(year, month);
+  } else if (day > weekMonthDays(year, month)) {
+    day -= weekMonthDays(year, month);
+    if (++month > 12) {
+      month = 1;
+      ++year;
+    }
+  }
+  return {year, month, day};
+}
+
 constexpr CalendarWeek calendarWeek(int year, int month, int day) {
   if (year < 2020 || year > 2100 || month < 1 || month > 12 ||
       day < 1 || day > weekMonthDays(year, month)) return {};
@@ -41,10 +66,7 @@ constexpr CalendarWeek calendarWeek(int year, int month, int day) {
 
   CalendarWeek week{number, today, {}};
   for (int index = 0; index < 7; index++) {
-    int value = day + index - today;
-    if (value < 1) value += weekMonthDays(month == 1 ? year - 1 : year, month == 1 ? 12 : month - 1);
-    else if (value > weekMonthDays(year, month)) value -= weekMonthDays(year, month);
-    week.days[index] = value;
+    week.days[index] = calendarDateInWeek(year, month, day, index - today).day;
   }
   return week;
 }

@@ -6,7 +6,8 @@ import secrets
 import threading
 import time
 
-from note_web import SettingsError, atomic_write, bridge_preferences, read_object, save_bridge_preferences
+from note_web import (SettingsError, atomic_write, bridge_preferences, read_object,
+                      save_bridge_preferences, valid_note_session)
 
 PREFIX = b"PALA_CONFIG_V1 "
 PEER_ID = r"[A-Za-z0-9_-]{1,32}"
@@ -59,9 +60,25 @@ def valid_display_pages(value):
     return set(value.upper()) == expected
 
 
+def note_password(value):
+    if not valid(value, r"[ -~]{8,48}"):
+        raise SettingsError("Use 8 to 48 printable ASCII characters for the password.")
+    return value
+
+
 def note_request(data):
     op = data["op"]
-    if op in ("get", "trash.status"):
+    if op == "auth.login":
+        return {"op": op, "password": note_password(data.get("password"))}
+    if op == "auth.save":
+        password = note_password(data.get("password"))
+        repeat = note_password(data.get("repeat"))
+        if repeat != password:
+            raise SettingsError("Enter the new password twice.")
+        old = data.get("old")
+        return {"op": op, "old": old if valid(old, r"[ -~]{0,48}") else "",
+                "password": password, "repeat": repeat}
+    if op in ("get", "trash.status", "auth.logout"):
         return {"op": op}
     if op == "trash.entry" and bounded_integer(data.get("index"), 0, NOTE_NUMBER_MAX):
         return {"op": op, "index": data["index"]}
@@ -85,7 +102,14 @@ def note_request(data):
     if op == "sync.save" and bounded_integer(data.get("mode"), 0, 3):
         return {"op": op, "mode": data["mode"]}
     if op == "pages.save" and valid_display_pages(data.get("pages")):
-        return {"op": op, "pages": data["pages"]}
+        request = {"op": op, "pages": data["pages"]}
+        if "wrap" in data:
+            if type(data["wrap"]) is not bool:
+                raise SettingsError("Invalid display page settings.")
+            request["wrap"] = data["wrap"]
+        return request
+    if op == "wireless.save" and type(data.get("preferBluetooth")) is bool:
+        return {"op": op, "preferBluetooth": data["preferBluetooth"]}
     if op == "bridge.order":
         ids = data.get("ids")
         if (isinstance(ids, list) and len(ids) <= 8 and all(valid(value, PEER_ID) for value in ids)
@@ -93,7 +117,12 @@ def note_request(data):
             return {"op": op, "ids": ids}
     if (op == "settings.save" and valid(data.get("name"), r"[A-Za-z0-9][A-Za-z0-9 -]{0,9}")
             and isinstance(data.get("language"), str) and data["language"] in NOTE_LANGUAGES):
-        return {"op": op, "name": data["name"].rstrip(), "language": data["language"]}
+        request = {"op": op, "name": data["name"].rstrip(), "language": data["language"]}
+        if "weeklyCodexLimit" in data:
+            if type(data["weeklyCodexLimit"]) is not bool:
+                raise SettingsError("Invalid Codex limit selection.")
+            request["weeklyCodexLimit"] = data["weeklyCodexLimit"]
+        return request
     raise SettingsError("The requested Note setting is invalid or unsupported.")
 
 
@@ -121,8 +150,21 @@ def trash_response(reply, op):
 
 def note_response(reply, transport, op="get"):
     if not reply["ok"]:
+        access = reply.get("access")
+        if transport == "BLE" and access in ("locked", "setup"):
+            return {"ok": False, "transport": transport, "access": access,
+                    "error": "Enter the Note password." if access == "locked"
+                    else "Set the Note password over USB."}
+        error = reply.get("error")
+        if op.startswith("auth.") and error in (
+                "Incorrect password.", "Wait before trying again.", "Could not save the Note password."):
+            return {"ok": False, "error": error, "transport": transport}
         return {"ok": False, "error": "The Note rejected the settings request.", "transport": transport}
     result = {"ok": True, "transport": transport}
+    if op == "auth.login":
+        if transport != "BLE" or not valid_note_session(reply.get("session")):
+            raise SettingsError("The Note returned an invalid sign-in session.")
+        return {**result, "session": reply["session"]}
     if op.startswith("trash."):
         return {**result, **trash_response(reply, op)}
     if "device" not in reply:
@@ -133,12 +175,17 @@ def note_response(reply, transport, op="get"):
     result["device"] = {"name": text(device.get("name"), 24), "language": text(device.get("language"), 8)}
     if type(device.get("memoryTrash")) is bool:
         result["device"]["memoryTrash"] = device["memoryTrash"]
+    if type(device.get("webPasswordConfigured")) is bool:
+        result["device"]["webPasswordConfigured"] = device["webPasswordConfigured"]
     if device.get("keepsWifiPassword") is True:
         result["device"]["keepsWifiPassword"] = True
     if bounded_integer(device.get("sleepMinutes"), 0, IDLE_SLEEP_MINUTES_MAX):
         result["device"]["sleepMinutes"] = device["sleepMinutes"]
     if bounded_integer(device.get("syncTiming"), 0, 3):
         result["device"]["syncTiming"] = device["syncTiming"]
+    for field in ("pageWrap", "preferBluetooth", "weeklyCodexLimit"):
+        if type(device.get(field)) is bool:
+            result["device"][field] = device[field]
     if valid_display_pages(device.get("displayPages")):
         result["device"]["displayPages"] = device["displayPages"]
     if "bridgeAddress" in device:
@@ -354,7 +401,8 @@ class SettingsRoute:
             return self.pairing.route(data)
         if op == "bridge.save":
             try:
-                saved = save_bridge_preferences(self.state, data.get("name"), data.get("weatherLocation"))
+                saved = save_bridge_preferences(self.state, data.get("name"), data.get("weatherLocation"),
+                                                data.get("holidayCountry"))
             except ValueError as error:
                 raise SettingsError(str(error)) from error
             return {"ok": True, "bridge": saved}
@@ -378,12 +426,14 @@ class SettingsRoute:
                 return {"ok": False, "error": "Codex CLI is unavailable or signed out. Run codex login, then check again."}
             return {"ok": True}
         request = note_request(data)
+        if valid_note_session(data.get("session")):
+            request["session"] = data["session"]
         if op != "get" and "_target" in data:
             request["_target"] = data["_target"]
         try:
             reply, link = self.transport(request)
             result = note_response(reply, link, op)
-            if op == "get" and result["ok"]:
+            if op == "get" and (result["ok"] or "access" in result):
                 result["_selectedDevice"] = reply.get("_selectedDevice")
         except SettingsError as error:
             result = {"ok": False, "error": str(error), "transport": ""}

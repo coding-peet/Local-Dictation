@@ -1,5 +1,6 @@
 """Recording-based date calculations shared by the Bridge's date routes."""
 import datetime as dt
+import re
 
 
 def recording_time(value, zone):
@@ -52,6 +53,23 @@ def resolve_yearless(value, captured, *, timed):
         if reference.date() <= wall.date() <= end.date():
             return _local_value(wall, captured.tzinfo)
     return None
+
+
+def early_tomorrow_choices(action, captured, wording):
+    """Resolve the overnight Slovak 'zajtra' from the original capture day."""
+    if (captured is None or captured.hour >= 4 or
+            not re.search(r"\bzajtra\b", wording, re.IGNORECASE)):
+        return []
+    due = dt.datetime.fromisoformat(action["due"])
+    end = dt.datetime.fromisoformat(action["end"])
+    if due.date() != captured.date() + dt.timedelta(days=1):
+        return []
+    previous = dt.timedelta(days=1)
+    return [
+        {"due": (due - previous).isoformat(timespec="minutes"),
+         "end": (end - previous).isoformat(timespec="minutes")},
+        {"due": action["due"], "end": action["end"]},
+    ]
 
 
 def valid_future_start(value, zone, now):

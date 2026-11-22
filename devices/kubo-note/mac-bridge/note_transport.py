@@ -30,7 +30,7 @@ class SettingsTransport:
         if payload.get("op") != "get" and payload.pop("_target", self.device) != device:
             raise SettingsError("Refresh Note settings before changing this device.")
         reply = exchange(payload)
-        if body["op"] == "get" and reply["ok"]:
+        if body["op"] == "get" and (reply["ok"] or reply.get("access") in ("locked", "setup")):
             self.device = device
             return {**reply, "_selectedDevice": device}
         return reply
@@ -40,9 +40,15 @@ class SettingsTransport:
             raise SettingsError("The local Note watcher is stopping.")
         port = self.connected_usb()
         if port is not None:
-            if not self.lock.acquire(timeout=.3):
+            timeout = 10 if body["op"] in ("get", "auth.save") else .3
+            if not self.lock.acquire(timeout=timeout):
                 raise SettingsError("The current Note transfer is busy. Try again shortly.")
             try:
+                if self.stop.is_set():
+                    raise SettingsError("The local Note watcher is stopping.")
+                port = self.connected_usb()
+                if port is None:
+                    raise SettingsError("The USB connection changed. Reconnect the Note and refresh its settings.")
                 reply = self._exchange(body, port[1], lambda data: self.read_usb(port, data))
                 return reply, "USB"
             finally:

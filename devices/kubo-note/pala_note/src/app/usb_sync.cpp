@@ -32,6 +32,8 @@ void reply(const String& message) {
 #include "date_validation.h"
 #include "home_weather.h"
 #include "home_delivery.h"
+#include "home_holidays.h"
+#include "holiday_calendar.h"
 #include "home_bridge_status.h"
 #include "rtc.h"
 #include "settings.h"
@@ -314,16 +316,17 @@ void appendTranscript(const String& first, const String& data) {
   reply(transcript.concat(decoded, bytes) ? "OK" : "ERROR TEXT");
 }
 
-void commitTranscript() {
+void commitTranscript(bool organizeCalendar) {
   if (!selectedNote || receivingWeather || !textBytes ||
       transcript.length() != textBytes || !transcriptDigestMatches()) {
     reply("ERROR TEXT");
     return;
   }
   const int note = selectedNote;
-  // Persist the route before the text so background Wi-Fi processing can
-  // recognize an explicitly USB-only transcript after a reboot.
-  if (noteHasCommittedTranscript(note) || !writeNoteQueueState(note, "usb-local", nullptr, false, true) ||
+  // Calendar commands still need a proposal from the paired Wi-Fi Bridge.
+  // Persist that route before the text so a reboot cannot skip organization.
+  const char* route = organizeCalendar ? "organizing" : "usb-local";
+  if (noteHasCommittedTranscript(note) || !writeNoteQueueState(note, route, nullptr, false, true) ||
       !saveNoteTranscript(note, transcript)) {
     reply("ERROR SAVE");
     resetTransfer();
@@ -392,13 +395,25 @@ void storeNoteName(const String& encoded, const String& signature) {
 
 void storeDeliveryCounts(const String& payload, const String& signature) {
   bool changed = false;
-  if (payload.length() > 30 || !sameDigest(proof(String("delivery ") + payload), signature) ||
+  if (payload.length() > 72 || !sameDigest(proof(String("delivery ") + payload), signature) ||
       !storeHomeDelivery(payload, changed)) {
     reply("ERROR DELIVERY");
     return;
   }
   homeChanged |= changed;
   reply(String("DELIVERY-SAVED ") + payload + " " + proof(String("delivery-saved ") + payload));
+}
+
+void storeHolidayCalendar(const String& payload, const String& signature) {
+  bool changed = false;
+  if (payload.length() > kHolidaySnapshotMaxBytes ||
+      !sameDigest(proof(String("holidays ") + payload), signature) ||
+      !storeHomeHolidays(payload, changed)) {
+    reply("ERROR HOLIDAYS");
+    return;
+  }
+  homeChanged |= changed;
+  reply(String("HOLIDAYS-SAVED ") + proof(String("holidays-saved ") + payload));
 }
 
 void expireSession() {
@@ -472,9 +487,11 @@ void handleCommand(const String& command, const String& first, const String& sec
   else if (command == "READTXT" && !readingWeather) readDownload(first, second, true);
   else if (command == "TEXT") beginPayload(first, second, false);
   else if (command == "PUT") appendTranscript(first, second);
-  else if (command == "COMMIT" && !first.length()) commitTranscript();
+  else if (command == "COMMIT" && !second.length() && (!first.length() || first == "CALENDAR"))
+    commitTranscript(first == "CALENDAR");
   else if (command == "NAME") storeNoteName(first, second);
   else if (command == "DELIVERY") storeDeliveryCounts(first, second);
+  else if (command == "HOLIDAYS") storeHolidayCalendar(first, second);
   else if (command == "WEATHER") beginPayload(first, second, true);
   else if (command == "WEATHER-COMMIT" && !first.length()) commitWeather();
   else if (command == "WEATHER-READ" && !first.length()) readWeather();
@@ -511,6 +528,7 @@ static bool handleLine(const String& line, bool idle, Link link, const String& p
     const bool authorized = syncActive(link) && (link == Link::Usb || sessionPeer == peer);
     const String oldName = palaNoteName();
     const String oldLanguage = palaUiLanguage();
+    const bool oldWeeklyCodexLimit = palaPrefersWeeklyCodexLimit();
     const String response = idle
         ? noteConfigRequest(line.substring(sizeof(kNoteConfigPrefix) - 1),
              link == Link::Usb ? NoteConfigTransport::Usb : NoteConfigTransport::Bluetooth, authorized,
@@ -519,7 +537,8 @@ static bool handleLine(const String& line, bool idle, Link link, const String& p
     // Separate the config response from unrelated serial diagnostics.
     send(String("\n") + kNoteConfigPrefix + response + "\n");
     if (authorized) activityAt = millis();
-    homeChanged |= oldName != palaNoteName() || oldLanguage != palaUiLanguage();
+    homeChanged |= oldName != palaNoteName() || oldLanguage != palaUiLanguage() ||
+                   oldWeeklyCodexLimit != palaPrefersWeeklyCodexLimit();
     return true;
   }
   if (!line.startsWith(kPrefix)) return false;

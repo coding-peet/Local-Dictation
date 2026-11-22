@@ -92,6 +92,66 @@ public static class GeneralStartupChecks
                 "The accessible Note settings action must open the common local browser page.");
             Require(shell.Navigation.SelectedIndex==(int)MainSection.Connections,
                 "Bridge settings search did not open Connections.");
+            service.IsExpanded = false;
+            Layout(shell, 640);
+            var title = Find<TextBlock>(shell.PageHost).Single(text => text.Text == "Pala Note Configuration");
+            var model = Get<ComboBox>(window, "palaBridgeModel");
+            var bridgeStart = Get<Button>(window, "palaStart");
+            var bridgeRestart = Get<Button>(window, "palaRestart");
+            var bridgeStop = Get<Button>(window, "palaStop");
+            var networkStatus = Get<TextBlock>(window, "palaBridgeStatus");
+            var bridgeHeading = Find<TextBlock>(shell.PageHost).Single(text => text.Text == "Bridge");
+            var track = Get<FrameworkElement>(window, "palaActivityIndicator");
+            var activityLine = Get<TextBlock>(window, "palaActivityText");
+            Point Center(FrameworkElement element) => element.TranslatePoint(
+                new Point(element.ActualWidth / 2, element.ActualHeight / 2), shell.PageHost);
+            Require(Center(title).Y < Center(syncToggle).Y &&
+                Math.Abs(Center(syncToggle).Y - Center(settingsButton).Y) < 1 &&
+                Center(syncToggle).X < Center(settingsButton).X &&
+                Center(syncToggle).Y < Center(model).Y && Center(model).Y < Center(bridgeHeading).Y &&
+                Math.Abs(Center(bridgeHeading).Y - Center(networkStatus).Y) < 1 &&
+                networkStatus.TextAlignment == TextAlignment.Right &&
+                Center(bridgeHeading).Y < Center(bridgeStart).Y && Center(bridgeStart).Y < Center(track).Y &&
+                Center(track).Y < Center(activityLine).Y && activityLine.TextAlignment == TextAlignment.Right,
+                "Connections must align the network status with Bridge and put sync status below the persistent track.");
+            var bridgeButtons = new[] { bridgeStart, bridgeRestart, bridgeStop };
+            Require(bridgeButtons.Select(button => button.Content as string).SequenceEqual(new[] { "Start", "Restart", "Stop" }) &&
+                bridgeButtons.Select(AutomationProperties.GetName).SequenceEqual(new[] { "Start Bridge", "Restart Bridge", "Stop Bridge" }) &&
+                bridgeButtons.All(button => Math.Abs(Center(button).Y - Center(bridgeStart).Y) < 1),
+                "Short Bridge actions must fit in one row at 640 DIP and keep descriptive accessible names.");
+
+            const string endpoint = "HTTPS 192.0.2.1:8443";
+            var bridgeStatusType = typeof(AppController).Assembly.GetType("LocalDictation.App.Services.PalaBridgeController+Status")!;
+            var applyBridgeStatus = typeof(SettingsWindow).GetMethod("ApplyPalaBridgeStatus", Fields)!;
+            var contact = DateTimeOffset.UtcNow;
+            var standalone = Activator.CreateInstance(bridgeStatusType, [$"Standalone Bridge · {endpoint}", null, contact, false, false, endpoint, true]);
+            applyBridgeStatus.Invoke(window, [standalone]);
+            Require(networkStatus.Text == $"{endpoint} · Standalone" && !bridgeStart.IsEnabled &&
+                !bridgeRestart.IsEnabled && !bridgeStop.IsEnabled &&
+                networkStatus.ToolTip is string contactHelp && contactHelp.Contains("Last HTTPS contact"),
+                "A standalone Bridge must be identified beside the endpoint, keep its contact tooltip, and disable managed actions.");
+            var managed = Activator.CreateInstance(bridgeStatusType, [endpoint, null, contact, false, true, endpoint, false]);
+            applyBridgeStatus.Invoke(window, [managed]);
+            Require(networkStatus.Text == endpoint && !bridgeStart.IsEnabled && bridgeRestart.IsEnabled && bridgeStop.IsEnabled,
+                "A managed Bridge must show its endpoint and allow Restart and Stop.");
+            Call(window, "RefreshPalaBridgeStatus");
+            checks.Add("Short Bridge actions fit at 640 DIP and the heading identifies a standalone Bridge.");
+
+            Require(!Find<TextBlock>(shell.PageHost).Any(text => text.Text.StartsWith("Pairing profile found")),
+                "A healthy pairing profile must not occupy a status row.");
+            var wasEnabled = owner.Settings.PalaIntegrationEnabled;
+            owner.Settings.PalaIntegrationEnabled = false;
+            Call(window, "Refresh");
+            Require(!settingsButton.IsEnabled && ToolTipService.GetShowOnDisabled(settingsButton) &&
+                settingsButton.ToolTip is string explanation && explanation.Contains("Enable Pala sync"),
+                "The unavailable Note settings action must explain how to enable it.");
+            owner.Settings.PalaIntegrationEnabled = true;
+            Call(window, "Refresh");
+            Require(settingsButton.IsEnabled, "Enabling Pala sync must enable the Note settings action.");
+            owner.Settings.PalaIntegrationEnabled = wasEnabled;
+            Call(window, "Refresh");
+            checks.Add("Pala sync and Note settings share a row and the button follows the switch.");
+
             var activityDirectory = Path.Combine(output, "bridge-activity-fixture");
             Directory.CreateDirectory(activityDirectory);
             File.WriteAllText(Path.Combine(activityDirectory, "bridge-activity-usb-fixture.json"),
@@ -104,18 +164,100 @@ public static class GeneralStartupChecks
                 .GetMethod("ReadCurrent")!;
             var current = (string?)activityReader.Invoke(null, [activityDirectory]);
             Require(current=="Transcribing on this PC · USB","Bridge activity must accept the live worker and ignore a dead one.");
+            // Keep the windowless fixture's phase independent of the running Bridge.
+            Get<System.Windows.Threading.DispatcherTimer>(window, "palaActivityPoll").Stop();
             var activity = typeof(SettingsWindow).GetMethod("ApplyPalaActivity",Fields)!;
             var statusLine = Get<TextBlock>(window,"palaActivityText");
             var statusProgress = Get<ProgressBar>(window,"palaActivityProgress");
-            activity.Invoke(window, [current, true]);
+            activity.Invoke(window, [current, true, SystemParameters.ClientAreaAnimation]);
+            var activityIndicator = (FrameworkElement)statusProgress.Parent;
+            var activityTrack = Find<Border>(activityIndicator).Single(border => border.Parent == activityIndicator);
             Require(statusLine.Text=="Transcribing on this PC · USB" &&
                 statusProgress.IsIndeterminate==SystemParameters.ClientAreaAnimation &&
-                statusProgress.Visibility==(SystemParameters.ClientAreaAnimation?Visibility.Visible:Visibility.Hidden),
+                activityIndicator.Visibility == Visibility.Visible &&
+                statusProgress.Visibility == (SystemParameters.ClientAreaAnimation ? Visibility.Visible : Visibility.Collapsed) &&
+                activityIndicator.Height == 10 && statusProgress.Height == activityIndicator.Height,
                 "Active Bridge status or reduced-motion behavior is incorrect.");
-            activity.Invoke(window, ["Bridge idle", false]);
-            Require(statusLine.Text=="Bridge idle" && statusProgress.Visibility==Visibility.Hidden &&
-                !statusProgress.IsIndeterminate,"Idle Bridge activity left an animated progress bar.");
-            checks.Add("Bridge activity reports the phase in text, animates only when active, and honors reduced motion.");
+            foreach (var theme in new[] { "Light", "Dark" })
+            {
+                ThemeManager.Apply(theme);
+                Layout(shell, 1040);
+                var helpButton = Find<Button>(shell.PageHost)
+                    .Single(button => AutomationProperties.GetName(button) == "About Enable Pala sync");
+                // Model a newly opened tooltip in this theme. A disconnected WPF tooltip
+                // caches resource lookups until it is attached to a popup again.
+                var hoverHelp = SettingsHelp.Create("Enable Pala sync", AutomationProperties.GetHelpText(helpButton));
+                var tooltip = (ToolTip)hoverHelp.ToolTip;
+                tooltip.Measure(new Size(360, double.PositiveInfinity));
+                tooltip.Arrange(new Rect(tooltip.DesiredSize));
+                tooltip.UpdateLayout();
+                var tooltipImage = new RenderTargetBitmap((int)Math.Ceiling(tooltip.ActualWidth),
+                    (int)Math.Ceiling(tooltip.ActualHeight), 96, 96, PixelFormats.Pbgra32);
+                tooltipImage.Render(tooltip);
+                var tooltipPng = new PngBitmapEncoder();
+                tooltipPng.Frames.Add(BitmapFrame.Create(tooltipImage));
+                using (var tooltipFile = File.Create(Path.Combine(output, $"pala-sync-tooltip-{theme}.png")))
+                    tooltipPng.Save(tooltipFile);
+
+                var surface = Find<Border>(tooltip).First().Background as SolidColorBrush;
+                var text = Find<TextBlock>(tooltip).Single().Foreground as SolidColorBrush;
+                var expectedSurface = ((SolidColorBrush)Application.Current.FindResource("SurfaceContainerHigh")).Color;
+                var expectedText = ((SolidColorBrush)Application.Current.FindResource("Ink")).Color;
+                Require(surface?.Color == expectedSurface && text?.Color == expectedText &&
+                    (tooltip.Foreground as SolidColorBrush)?.Color == expectedText,
+                    $"Pala sync hover help in {theme} used {surface?.Color}/{text?.Color}, expected {expectedSurface}/{expectedText}.");
+                checks.Add($"Pala sync hover help uses matching theme colors in {theme}.");
+
+                activity.Invoke(window, [current, true, false]);
+                Layout(shell, 1040);
+                var accent = ((SolidColorBrush)Application.Current.FindResource("Accent")).Color;
+                Require(activityTrack.BorderThickness == new Thickness(2) &&
+                    (activityTrack.BorderBrush as SolidColorBrush)?.Color == accent &&
+                    activityIndicator.Visibility == Visibility.Visible &&
+                    statusProgress.Visibility == Visibility.Collapsed && !statusProgress.IsIndeterminate && statusProgress.Effect == null &&
+                    statusLine.Text == current,
+                    $"Active Bridge in {theme} with reduced motion must use only the static accent outline and status text.");
+                var staticBitmap = new RenderTargetBitmap(1040, 820, 96, 96, PixelFormats.Pbgra32);
+                staticBitmap.Render(shell);
+                var staticPng = new PngBitmapEncoder();
+                staticPng.Frames.Add(BitmapFrame.Create(staticBitmap));
+                using (var staticFile = File.Create(Path.Combine(output, $"pala-connections-reduced-motion-{theme}.png")))
+                    staticPng.Save(staticFile);
+
+                activity.Invoke(window, [current, true, SystemParameters.ClientAreaAnimation]);
+                Layout(shell, 1040);
+                var glow = statusProgress.Effect as System.Windows.Media.Effects.DropShadowEffect;
+                if (SystemParameters.ClientAreaAnimation && !SystemParameters.HighContrast)
+                    Require(glow?.Color == ((SolidColorBrush)Application.Current.FindResource("Accent")).Color,
+                        "Active Bridge progress did not use the current theme's accent for its glow.");
+                else
+                    Require(glow == null, "Bridge progress used a glow with reduced motion or high contrast.");
+                if (SystemParameters.ClientAreaAnimation)
+                {
+                    // The detached control does not get WPF's native IsVisible update.
+                    Require(VisualStateManager.GoToState(statusProgress, "Indeterminate", false),
+                        "Bridge progress has no indeterminate state.");
+                    var templateRoot = (FrameworkElement)VisualTreeHelper.GetChild(statusProgress, 0);
+                    var state = VisualStateManager.GetVisualStateGroups(templateRoot)
+                        .OfType<VisualStateGroup>().Single(group => group.Name == "CommonStates").CurrentState;
+                    state.Storyboard.SeekAlignedToLastTick(templateRoot, TimeSpan.FromSeconds(1),
+                        System.Windows.Media.Animation.TimeSeekOrigin.BeginTime);
+                }
+
+                var bitmap = new RenderTargetBitmap(1040, 820, 96, 96, PixelFormats.Pbgra32);
+                bitmap.Render(shell);
+                var png = new PngBitmapEncoder();
+                png.Frames.Add(BitmapFrame.Create(bitmap));
+                using var file = File.Create(Path.Combine(output, $"pala-connections-active-{theme}.png"));
+                png.Save(file);
+            }
+            activity.Invoke(window, ["No sync in progress", false, false]);
+            var idleBorder = ((SolidColorBrush)Application.Current.FindResource("Border")).Color;
+            Require(statusLine.Text=="No sync in progress" && activityIndicator.Visibility==Visibility.Visible &&
+                activityTrack.BorderThickness == new Thickness(1) && (activityTrack.BorderBrush as SolidColorBrush)?.Color == idleBorder &&
+                statusProgress.Visibility == Visibility.Collapsed && !statusProgress.IsIndeterminate && statusProgress.Effect == null,
+                "Idle Bridge must restore the standard track.");
+            checks.Add("Bridge shows a static accent outline with reduced motion, animates when appropriate, and restores the idle track.");
             Search(window,shell,"dictionary-hints","recognition hints","Dictation");Require(dictation.IsExpanded&&shell.Navigation.SelectedIndex==(int)MainSection.Dictation,"Dictionary search failed to reveal Dictation Advanced.");
             dictation.IsExpanded=false;Search(window,shell,"compatibility","application compatibility","Dictation");Require(dictation.IsExpanded,"Compatibility search did not reveal its current target.");
             Require(JsonSerializer.Serialize(owner.Settings)==settings&&store.Writes+store.Deletes==mutations,"Search applied settings or startup registration.");

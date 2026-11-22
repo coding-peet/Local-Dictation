@@ -39,6 +39,7 @@ extern "C" {
 #include "src/app/bridge_client.h"
 #include "src/app/bluetooth_sync.h"
 #include "src/app/home_weather.h"
+#include "src/app/home_holidays.h"
 #include "src/app/home_delivery.h"
 #include "src/app/home_bridge_status.h"
 #if PALA_BRIDGE_DISCOVERY
@@ -88,6 +89,7 @@ struct BacklogScreen {
 #if PALA_BRIDGE_DISCOVERY
 bool usbDataConnected = false;
 bool usbQueueChecked = false;
+bool triedPreferredBluetooth = false;
 RTC_DATA_ATTR int64_t retryHomeWeatherAfter = 0;
 uint32_t nextHomeWeatherCheckAt = 0;
 #endif
@@ -117,6 +119,7 @@ uint32_t nextCompanionNetworkCheckAt = 0;
 String companionNetworkName;
 String companionApPassword;
 String displayedHomeDay;
+HomeCodexDisplay displayedHomeUsage;
 String activeDisplayPages;
 int displayPageIndex = -1;  // Events open separately from the lower button.
 uint32_t agendaShownAt = 0;
@@ -364,6 +367,7 @@ void requestBacklogSync() {
   nextBackgroundAttemptAt = 0;
 #if PALA_BRIDGE_DISCOVERY
   usbQueueChecked = false;
+  triedPreferredBluetooth = false;
 #endif
 }
 
@@ -428,6 +432,7 @@ void renderReadyHome() {
   // is already searchable and must not leave a permanent "waiting" badge.
   showIdle(pendingTranscriptionCount(), battery.valid ? battery.percent : -1);
   displayedHomeDay = localDayKey();
+  displayedHomeUsage = homeDeliveryCounts().codexAt(time(nullptr), palaPrefersWeeklyCodexLimit());
   nextHomeClockCheckAt = millis() + 60000UL;
 }
 
@@ -951,7 +956,10 @@ void advanceDisplayPage(bool fromHome) {
     displayPageIndex = -1;
   }
 
-  displayPageIndex = nextDisplayPageIndex(activeDisplayPages.c_str(), displayPageIndex);
+  const int next = nextDisplayPageIndex(activeDisplayPages.c_str(), displayPageIndex,
+                                       palaDisplayPagesWrap());
+  if (next == displayPageIndex) return;
+  displayPageIndex = next;
   if (displayPageIndex < 0) {
     if (!fromHome) returnToReady();
     return;
@@ -1162,6 +1170,18 @@ bool yieldBacklogToUsb() {
 }
 #endif
 
+#if PALA_BRIDGE_DISCOVERY
+bool startBacklogBluetooth(int completed, uint32_t retryDelay) {
+  if (!startBluetoothSync()) return false;
+  const int total = backlogSyncTotal;
+  backlogSyncActive = false;
+  backlogSyncTotal = 0;
+  nextBackgroundAttemptAt = millis() + retryDelay;
+  showBacklogLink(BacklogLink::Bluetooth, completed, total);
+  return true;
+}
+#endif
+
 void handleBackgroundBrain(const IdleSleepPolicy& sleep) {
   // Do not launch another network stage after the sleep budget has expired.
   // A stage already running is allowed to finish and save its result safely.
@@ -1270,6 +1290,14 @@ void handleBackgroundBrain(const IdleSleepPolicy& sleep) {
   };
   // Association and an authenticated Bridge readiness reply are separate.
 #if PALA_BRIDGE_DISCOVERY
+  if (tryPreferredBluetooth(palaPreferBluetooth(), triedPreferredBluetooth, hasQueuedAudio())) {
+    pollUsbBacklog();
+    if (yieldBacklogToUsb() || deferForSleep()) return;
+    triedPreferredBluetooth = true;
+    stopWifi();
+    // An unused preferred Bluetooth window falls through to Wi-Fi immediately.
+    if (startBacklogBluetooth(completedBefore, 0)) return;
+  }
   WifiBacklog wifi = WifiBacklog::Unavailable;
   if (palaHasWifi()) {
     showBacklogLink(BacklogLink::Wifi, completedBefore, backlogSyncTotal);
@@ -1280,18 +1308,12 @@ void handleBackgroundBrain(const IdleSleepPolicy& sleep) {
   if (yieldBacklogToUsb()) return;
   if (!sleepDue() && wifi != WifiBacklog::Unavailable && homeNoteNameNeedsRefresh()) refreshHomeNoteName();
   if (deferForSleep()) return;
-  const bool audioForBluetooth = wifi == WifiBacklog::Unavailable && (waitingAudio || hasQueuedAudio());
+  const bool audioForBluetooth = !triedPreferredBluetooth && (waitingAudio || hasQueuedAudio());
   const BacklogLink link = pairedBacklogAfterWifi(wifi, visibleNote >= 0, audioForBluetooth);
   if (link != BacklogLink::Wifi) {
     stopWifi();
-    if (link == BacklogLink::Bluetooth && startBluetoothSync()) {
-      const int total = backlogSyncTotal;
-      backlogSyncActive = false;
-      backlogSyncTotal = 0;
-      nextBackgroundAttemptAt = millis() + BACKGROUND_RETRY_MS;
-      showBacklogLink(BacklogLink::Bluetooth, completedBefore, total);
-      return;
-    }
+    if (link == BacklogLink::Bluetooth &&
+        startBacklogBluetooth(completedBefore, BACKGROUND_RETRY_MS)) return;
 #else
   showBacklogLink(BacklogLink::Wifi, completedBefore, backlogSyncTotal);
   const bool connected = !sleepDue() && connectConfiguredWifi(8);
@@ -1311,6 +1333,7 @@ void handleBackgroundBrain(const IdleSleepPolicy& sleep) {
   if (transcribeOnly) {
     pendingBefore = pendingTranscriptionCount();
     if (pendingBefore == 0) {
+      if (!sleepDue()) refreshHomeHolidays();
       recordingSync.finish();
       stopWifi();
       backlogSyncActive = false;
@@ -1358,6 +1381,10 @@ void handleBackgroundBrain(const IdleSleepPolicy& sleep) {
   const int pendingAfter = transcribeOnly ? pendingTranscriptionCount() :
       indexingNote >= 0 ? (processed > 0 ? 0 : 1) : pendingBrainMemoryCount();
   if (pendingAfter == 0) {
+#if PALA_BRIDGE_DISCOVERY
+    // The recording is durable. Use this paired link before closing it.
+    if (!sleepDue()) refreshHomeHolidays();
+#endif
     recordingSync.finish();
     stopWifi();
     showBacklogProcessing(backlogSyncTotal, backlogSyncTotal, "DONE");
@@ -1391,19 +1418,24 @@ void refreshHomeMetadataWhenIdle(uint32_t homeSleepMs) {
       !bothButtonsUp() || upperButton.pressLatched || lowerButton.pressLatched) return;
   nextHomeWeatherCheckAt = now + 15000;
   const int64_t utc = time(nullptr);
-  const bool weatherDue = homeForecastNeedsRefresh(localDayKey(), utc);
+  const String day = localDayKey();
+  const bool weatherDue = homeForecastNeedsRefresh(day, utc);
+  const bool holidayDue = homeHolidaysNeedRefresh(day.substring(0, 4).toInt());
   const bool nameDue = homeNoteNameNeedsRefresh();
   const bool deliveryDue = homeDeliveryNeedsRefresh(now);
   const bool deliveryFollowup = homeDeliveryNeedsFollowup(now);
   const bool onCooldown = utc < retryHomeWeatherAfter && retryHomeWeatherAfter - utc <= 300;
-  const bool routineDue = !onCooldown && (weatherDue || nameDue || deliveryDue);
-  if ((!routineDue && !deliveryFollowup) || (recordingSyncAllowed() && hasQueuedAudio())) return;
+  const bool routineDue = !onCooldown && (weatherDue || nameDue || holidayDue);
+  if ((!routineDue && !deliveryDue && !deliveryFollowup) ||
+      (recordingSyncAllowed() && hasQueuedAudio())) return;
   if (routineDue) retryHomeWeatherAfter = utc + 300;
+  if (deliveryDue) homeDeliveryRefreshAttempted(now);
   bool updated = false;
   if (connectConfiguredWifi(8, 4500)) {
     if (routineDue && nameDue) updated = refreshHomeNoteName();
     if (routineDue && weatherDue) updated = refreshHomeForecast() || updated;
-    if (deliveryFollowup || (routineDue && deliveryDue)) updated = refreshHomeDelivery() || updated;
+    if (deliveryFollowup || deliveryDue) updated = refreshHomeDelivery() || updated;
+    if (deliveryDue || (routineDue && holidayDue)) updated = refreshHomeHolidays() || updated;
   }
   stopWifi();
   if (updated && bothButtonsUp() && !upperButton.pressLatched && !lowerButton.pressLatched) renderReadyHome();
@@ -1550,6 +1582,7 @@ void setup() {
 
   releasePeripheralPowerHolds();
   palaSettingsBegin();
+  loadHomeHolidays();
   importFlashSetup();
   noteConfigSeedEntropy();
   batteryBegin();
@@ -1729,7 +1762,8 @@ void loop() {
         static_cast<int32_t>(millis() - nextHomeClockCheckAt) >= 0) {
       nextHomeClockCheckAt = millis() + 60000UL;
       const String day = localDayKey();
-      if (day != displayedHomeDay) renderReadyHome();
+      const auto usage = homeDeliveryCounts().codexAt(time(nullptr), palaPrefersWeeklyCodexLimit());
+      if (day != displayedHomeDay || usage != displayedHomeUsage) renderReadyHome();
     }
     // A verified link may have closed without changing any other Home data.
     if (state == STATE_IDLE && backlogScreen.link == BacklogLink::Deferred &&

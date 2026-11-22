@@ -110,6 +110,65 @@ class FakePala:
 
 
 class UsbSyncTests(unittest.TestCase):
+    def test_usb_password_save_accepts_a_late_reply_without_resending(self):
+        from note_settings import PREFIX as CONFIG, SettingsError
+
+        class SlowNote:
+            now = 0
+            writes = 0
+
+            def write(self, raw):
+                self.writes += 1
+                return len(raw)
+
+            @property
+            def in_waiting(self):
+                return 0
+
+            def read(self, _size):
+                self.now += .1
+                if self.now >= 5:
+                    return CONFIG + b'{"ok":true}\n'
+                return b""
+
+        for operation in ("auth.save", "get"):
+            with self.subTest(operation=operation):
+                note = SlowNote()
+                link = usb_sync.BufferedSerial(note)
+                with patch("usb_sync.time.monotonic", lambda: note.now), patch("usb_sync.time.sleep"):
+                    if operation == "auth.save":
+                        self.assertEqual(usb_sync.config_exchange(link, {"op": operation}), {"ok": True})
+                    else:
+                        with self.assertRaises(SettingsError):
+                            usb_sync.config_exchange(link, {"op": operation})
+                self.assertEqual(note.writes, 1)
+
+    def test_holiday_sync_verifies_signed_receipt_for_exact_dates(self):
+        from holidays import holiday_snapshot
+        snapshot = holiday_snapshot("SK", 2026)
+
+        class HolidayNote(FakePala):
+            def write(self, raw):
+                if not raw.startswith(PREFIX + b"HOLIDAYS "):
+                    return super().write(raw)
+                self.assert_frame(raw)
+                verb, payload, proof = raw[len(PREFIX):].decode().split()
+                self.calls.append((verb, [payload]))
+                assert payload == snapshot and len(raw) <= 256
+                assert hmac.compare_digest(self.proof("holidays " + payload), proof)
+                receipt_date = payload.replace("2026", "2027") if self.fail_commit else payload
+                self.reply("HOLIDAYS-SAVED " + self.proof("holidays-saved " + receipt_date))
+                return len(raw)
+
+        note = HolidayNote()
+        usb_sync.transfer_holidays(note, (TOKEN,), snapshot)
+        self.assertEqual([command for command, _ in note.calls], ["HELLO", "AUTH", "HOLIDAYS", "CLOSE"])
+
+        wrong_receipt = HolidayNote(fail_commit=True)
+        with self.assertRaisesRegex(UsbSyncError, "did not verify the saved holiday calendar"):
+            usb_sync.transfer_holidays(wrong_receipt, (TOKEN,), snapshot)
+        self.assertEqual(wrong_receipt.calls[-1][0], "CLOSE")
+
     def test_watcher_waits_for_local_api_and_drains_once_per_paired_attachment(self):
         paired = SimpleNamespace(vid=0x303A, pid=0x1001, serial_number="ABC", device="COM24")
         moved = SimpleNamespace(vid=0x303A, pid=0x1001, serial_number="ABC", device="COM25")
@@ -134,6 +193,29 @@ class UsbSyncTests(unittest.TestCase):
             stop, self.fail,
         )
         self.assertEqual(synced, [("COM24", TOKEN, 2), ("COM25", TOKEN, 5)])
+
+    def test_usb_and_ble_keep_an_explicit_calendar_command_for_wifi_processing(self):
+        from pala_google import UsbGoogleDelivery
+        text = "Zapíš mi do kalendára kontrolu zajtra o tretej."
+        for supported in (False, True):
+            class CalendarPala(FakePala):
+                def write(self, raw):
+                    if raw == PREFIX + b"COMMIT CALENDAR\n" and not supported:
+                        self.calls.append(("COMMIT", ["CALENDAR"]))
+                        self.reply("ERROR COMMAND")
+                        return len(raw)
+                    return super().write(raw)
+
+            with self.subTest(supported=supported), tempfile.TemporaryDirectory() as folder:
+                router = UsbGoogleDelivery(Path(folder), {"destination": "google", "calendar": "primary"})
+                device = CalendarPala()
+                result = sync_one(device, [TOKEN], lambda _: {"text": text}, stage_transcript=router.stager("fixture"))
+                self.assertEqual(result.note, 42)
+                self.assertIn(("COMMIT", ["CALENDAR"]), device.calls)
+                self.assertEqual(("COMMIT", []) in device.calls, not supported)
+                with router.queue.database() as db:
+                    self.assertEqual(db.execute("SELECT kind,status FROM google_actions").fetchall(),
+                                     [("calendar", "needs-confirmation")])
 
     def test_watcher_rechecks_new_firmware_while_the_data_cable_stays_attached(self):
         paired = SimpleNamespace(vid=0x303A, pid=0x1001, serial_number="ABC", device="COM24")

@@ -36,6 +36,10 @@
  <Style TargetType="TextBlock" BasedOn="{StaticResource MaterialDesignBodyMediumTextBlock}">
   <Setter Property="TextWrapping" Value="Wrap"/>
  </Style>
+ <Style TargetType="ToolTip" BasedOn="{StaticResource MaterialDesignToolTip}">
+  <Setter Property="Background" Value="{DynamicResource SurfaceContainerHigh}"/>
+  <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
+ </Style>
  <!-- The native overlay must not inherit the toolkit Window's opaque background layer. -->
  <Style x:Key="CloudBannerWindow" TargetType="Window" BasedOn="{StaticResource {x:Type Window}}">
   <Setter Property="Background" Value="Transparent"/><Setter Property="BorderThickness" Value="0"/>

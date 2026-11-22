@@ -15,8 +15,14 @@ class Element {
     this.dataset = {};
     this.value = '';
   }
-  addEventListener(type, handler) { this.listeners.set(type, handler); }
-  dispatch(type, event = {}) { return this.listeners.get(type)?.(event); }
+  addEventListener(type, handler) {
+    const handlers = this.listeners.get(type) ?? [];
+    handlers.push(handler);
+    this.listeners.set(type, handlers);
+  }
+  dispatch(type, event = {}) {
+    return Promise.all((this.listeners.get(type) ?? []).map(handler => handler(event)));
+  }
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children = children; }
   showModal() { this.open = true; }
@@ -24,17 +30,20 @@ class Element {
   scrollIntoView() { this.scrolled = true; }
 }
 
-function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, hash = '', name = 'Willow', displayPages, sleepMinutes, syncTiming } = {}) {
+function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, hash = '', name = 'Willow', displayPages, sleepMinutes, syncTiming, pageWrap, preferBluetooth, bridge, webPasswordConfigured, weeklyCodexLimit } = {}) {
   const elements = new Map();
   const buttons = [];
   for (const match of settings.matchAll(/<([a-z][a-z0-9]*)\b[^<>]*\bid="([^"]+)"[^<>]*>/g)) {
     const element = new Element(match[1]);
     element.hidden = /\shidden[\s>]/.test(match[0]);
+    element.type = /\btype="([^"]+)"/.exec(match[0])?.[1] || '';
     if (element.tag === 'button') buttons.push(element);
     elements.set(match[2], element);
   }
 
   let connected = true;
+  let targetKey = 'note-a';
+  let writePermission = 'synthetic-nonce';
   let retention = 90;
   let trash = Array.from({ length: count }, (_, index) =>
     ({ num: index + 1, tag: 'Recording', capturedUtc: '', trashedAt: 0 }));
@@ -54,18 +63,31 @@ function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, ha
     fetch: async (_url, options) => {
       assert.equal(options.headers['X-Pala-Settings'], '1');
       const data = options.body ? JSON.parse(options.body) : { op: 'get' };
-      if (options.body) assert.equal(options.headers['X-Pala-CSRF'], 'synthetic-nonce');
+      if (options.body && options.headers['X-Pala-CSRF'] !== writePermission) {
+        return { ok: false, headers: { get: () => 'application/json' },
+          json: async () => ({ ok: false, error: 'Refresh the Note settings page.' }) };
+      }
       calls.push(data);
       let reply = { ok: true };
       switch (data.op) {
         case 'get':
           reply = {
-            ...reply, ok: connected, csrf: 'synthetic-nonce', transport, capabilities: { devicePortal: portal },
-            device: connected ? { name, language: 'en', memoryTrash, displayPages, sleepMinutes, syncTiming } : undefined, wifi: [], peers: [],
+            ...reply, ok: connected, csrf: writePermission, transport, capabilities: { devicePortal: portal },
+            targetKey: connected ? targetKey : undefined,
+            device: connected ? { name, language: 'en', memoryTrash, displayPages, sleepMinutes, syncTiming,
+              pageWrap, preferBluetooth, webPasswordConfigured, weeklyCodexLimit } : undefined,
+            wifi: [], peers: [], bridge,
           };
+          break;
+        case 'bridge.save':
+          bridge = { name: data.name, weatherLocation: data.weatherLocation, holidayCountry: data.holidayCountry };
           break;
         case 'settings.save':
           name = data.name;
+          if ('weeklyCodexLimit' in data) weeklyCodexLimit = data.weeklyCodexLimit;
+          break;
+        case 'auth.save':
+          webPasswordConfigured = true;
           break;
         case 'sleep.save':
           sleepMinutes = data.minutes;
@@ -75,6 +97,10 @@ function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, ha
           break;
         case 'pages.save':
           displayPages = data.pages;
+          if ('wrap' in data) pageWrap = data.wrap;
+          break;
+        case 'wireless.save':
+          preferBluetooth = data.preferBluetooth;
           break;
         case 'trash.status':
           reply = { ...reply, days: retention, count: trash.length };
@@ -105,6 +131,8 @@ function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, ha
     calls, el,
     title: () => vm.runInContext('document.title', context),
     disconnect() { connected = false; },
+    selectOtherNote() { targetKey = 'note-b'; },
+    expireWritePermission() { writePermission = 'renewed-nonce'; },
     refresh: () => vm.runInContext('refresh()', context),
     async setTrashOpen(open) {
       el('trash-disclosure').open = open;
@@ -118,6 +146,147 @@ function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, ha
     },
   };
 }
+
+test('unsaved display edits stay through another form save and use the saved Note name', async () => {
+  const page = fixture({ name: 'Wren-8', displayPages: 'TECNM', pageWrap: true });
+  const notice = id => page.el(id).children.find(child => child.className === 'unsaved');
+  await page.refresh();
+  const list = page.el('display-pages-list');
+  list.children[0].children[1].children[0].dispatch('click');
+  assert.equal(notice('display-pages-form').textContent, 'Changes are not saved to Wren-8. Select Save.');
+  page.el('note-name').value = 'Fern-2';
+  await page.dispatch('note-form', 'input');
+  assert.match(notice('note-form').textContent, /Wren-8/);
+  await page.dispatch('note-form', 'submit');
+  assert.equal(notice('note-form').hidden, true);
+  assert.match(notice('display-pages-form').textContent, /Fern-2/);
+  assert.equal(list.children[1].children[0].children[1], 'Month after next');
+  await page.dispatch('display-pages-form', 'submit');
+  assert.equal(notice('display-pages-form').hidden, true);
+  assert.equal(page.calls.find(call => call.op === 'pages.save').pages, 'TECMN');
+  page.el('page-wrap').checked = false;
+  await page.dispatch('display-pages-form', 'change');
+  assert.equal(notice('display-pages-form').hidden, false);
+  page.el('page-wrap').checked = true;
+  await page.dispatch('display-pages-form', 'change');
+  assert.equal(notice('display-pages-form').hidden, true);
+});
+
+test('Note form saves the selected Codex limit and hides the selector on older firmware', async () => {
+  for (const weeklyCodexLimit of [false, undefined]) {
+    const page = fixture({ name: 'Kubo', weeklyCodexLimit });
+    await page.refresh();
+    assert.equal(page.el('note-codex-limit-row').hidden, weeklyCodexLimit === undefined);
+    assert.equal(page.el('note-codex-limit').value, '5h');
+    page.el('note-codex-limit').value = 'weekly';
+    await page.dispatch('note-form', 'change');
+    await page.dispatch('note-form', 'submit');
+    const write = page.calls.find(call => call.op === 'settings.save');
+    assert.equal(write.weeklyCodexLimit, weeklyCodexLimit === undefined ? undefined : true);
+    assert.equal(page.el('note-codex-limit').value, weeklyCodexLimit === undefined ? '5h' : 'weekly');
+  }
+});
+
+test('saved Note identity, not its name, separates drafts and password entries', async () => {
+  const page = fixture({ name: 'Same name', displayPages: 'TECNM', webPasswordConfigured: false });
+  await page.refresh();
+  page.el('note-name').value = 'Unsaved';
+  await page.dispatch('note-form', 'input');
+  page.el('note-password-new').value = 'local test password';
+  await page.dispatch('note-password-new-eye', 'click');
+  page.selectOtherNote();
+  await page.refresh();
+  assert.equal(page.el('note-name').value, 'Same name');
+  assert.equal(page.el('note-password-new').value, '');
+  assert.equal(page.el('note-password-new').type, 'password');
+});
+
+test('new password fields highlight only an exact nonempty match', async () => {
+  const page = fixture({ transport: 'USB', webPasswordConfigured: false });
+  await page.refresh();
+  const form = page.el('note-password-form');
+  const password = page.el('note-password-new');
+  const repeat = page.el('note-password-repeat');
+  assert.notEqual(form.dataset.passwordsMatch, 'true');
+
+  password.value = 'Modrý test';
+  await page.dispatch('note-password-new', 'input');
+  assert.notEqual(form.dataset.passwordsMatch, 'true');
+  repeat.value = 'Modrý test';
+  await page.dispatch('note-password-repeat', 'input');
+  assert.equal(form.dataset.passwordsMatch, 'true');
+
+  password.value = 'modrý test';
+  await page.dispatch('note-password-new', 'input');
+  assert.notEqual(form.dataset.passwordsMatch, 'true');
+  repeat.value = 'modrý test';
+  await page.dispatch('note-password-repeat', 'change');
+  assert.equal(form.dataset.passwordsMatch, 'true');
+
+  await page.dispatch('note-password-form', 'submit');
+  assert.equal(password.value, '');
+  assert.equal(repeat.value, '');
+  assert.notEqual(form.dataset.passwordsMatch, 'true');
+});
+
+test('USB password save renews an expired permission and stays bound to the original Note', async () => {
+  const password = 'synthetic password';
+  for (const differentNote of [false, true]) {
+    const page = fixture({ transport: 'USB', webPasswordConfigured: true });
+    await page.refresh();
+    page.el('note-password-new').value = page.el('note-password-repeat').value = password;
+    await page.dispatch('note-password-form', 'input');
+    page.expireWritePermission();
+    if (differentNote) page.selectOtherNote();
+    await page.dispatch('note-password-form', 'submit');
+
+    const writes = page.calls.filter(call => call.op === 'auth.save');
+    if (differentNote) {
+      assert.equal(writes.length, 0);
+      assert.match(page.el('status').textContent, /connection changed/);
+    } else {
+      assert.deepEqual(writes, [{ op: 'auth.save', old: '', password, repeat: password }]);
+      assert.equal(page.el('status').textContent, 'Note password saved.');
+    }
+  }
+});
+
+test('each password eye is independent and a weak supported password can be saved', async () => {
+  const page = fixture({ transport: 'USB', webPasswordConfigured: false });
+  await page.refresh();
+  for (const id of ['access-password', 'note-password-old', 'note-password-new', 'note-password-repeat', 'wifi-secret']) {
+    await page.dispatch(id + '-eye', 'click');
+    assert.equal(page.el(id).type, 'text');
+    assert.equal(page.el(id + '-eye').ariaPressed, 'true');
+    await page.dispatch(id + '-eye', 'click');
+    assert.equal(page.el(id).type, 'password');
+  }
+  for (const [password, label] of [['12345678', 'Weak'], ['Taco-62andTea', 'Fair'], ['Opera wanders beyond blue hills', 'Strong']]) {
+    page.el('note-password-new').value = password;
+    await page.dispatch('note-password-new', 'input');
+    assert.equal(page.el('note-password-new-strength-label').textContent, label);
+  }
+  page.el('note-password-new').value = page.el('note-password-repeat').value = '12345678';
+  await page.dispatch('note-password-form', 'input');
+  await page.dispatch('note-password-form', 'submit');
+  assert.deepEqual(page.calls.find(call => call.op === 'auth.save'),
+    { op: 'auth.save', old: '', password: '12345678', repeat: '12345678' });
+  assert.equal(page.el('note-password-new').value, '');
+  assert.equal(page.el('note-password-new-strength').dataset.strength, '0');
+});
+
+test('holiday country defaults to Slovakia and persists independently of weather', async () => {
+  const page = fixture({ bridge: { name: 'Desk Bridge', weatherLocation: '' } });
+  await page.refresh();
+  assert.equal(page.el('holiday-country').value, 'SK');
+  assert.equal(page.el('weather-location').value, '');
+  page.el('holiday-country').value = 'CZ';
+  await page.dispatch('bridge-form', 'submit');
+  assert.deepEqual(page.calls.find(call => call.op === 'bridge.save'), {
+    op: 'bridge.save', name: 'Desk Bridge', weatherLocation: '', holidayCountry: 'CZ',
+  });
+  assert.equal(page.el('holiday-country').value, 'CZ');
+});
 
 test('settings uses the connected Note name and changes only after saving', async () => {
   const page = fixture({ name: 'Wren-8', portal: true, transport: 'Wi-Fi' });
@@ -343,4 +512,25 @@ test('sync timing saves and reads back and is hidden with older firmware', async
   const old = fixture();
   await old.refresh();
   assert.equal(old.el('sync-timing').hidden, true);
+});
+
+test('end-of-pages setting and wireless priority round-trip independently', async () => {
+  const page = fixture({ displayPages: 'TECNM', pageWrap: true, preferBluetooth: false });
+  await page.refresh();
+  assert.equal(page.el('page-wrap-field').hidden, false);
+  assert.equal(page.el('page-wrap').checked, true);
+  page.el('page-wrap').checked = false;
+  await page.dispatch('display-pages-form', 'submit');
+  assert(page.calls.some(call => call.op === 'pages.save' && call.wrap === false));
+  assert.equal(page.el('page-wrap').checked, false);
+
+  assert.equal(page.el('wireless-choice').value, 'wifi');
+  page.el('wireless-choice').value = 'bluetooth';
+  await page.dispatch('wireless-form', 'submit');
+  assert(page.calls.some(call => call.op === 'wireless.save' && call.preferBluetooth === true));
+  assert.equal(page.el('wireless-choice').value, 'bluetooth');
+  const old = fixture({ displayPages: 'TECNM' });
+  await old.refresh();
+  assert.equal(old.el('page-wrap-field').hidden, true);
+  assert.equal(old.el('wireless-priority').hidden, true);
 });

@@ -25,13 +25,14 @@ from urllib.parse import urlsplit
 
 from zoneinfo import ZoneInfo
 
-from appointment_dates import recording_time, resolve_yearless, valid_future_start
+from appointment_dates import early_tomorrow_choices, recording_time, resolve_yearless, valid_future_start
 from bridge_activity import BridgeActivity, activity_step
 from bridge_discovery import authorized_device, BridgeServer, serve
+from holidays import holiday_snapshot
 from note_settings import EnrollmentStore
 from note_web import bridge_preferences, processing_config
 from pair import STATE, WINDOWS_DICTATION_MODEL
-from weather import ForecastCache
+from weather import ForecastCache, LOCATION_ZONE
 
 MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 LOCAL_DICTATION_DEFAULT_ENDPOINT = "http://127.0.0.1:48125"
@@ -249,8 +250,9 @@ class Bridge:
         with contextlib.closing(sqlite3.connect(self.state / "bridge.sqlite")) as db, db:
             yield db
 
-    def deliver(self, action, key):
-        config = processing_config(self.state, self.config)
+    def deliver(self, action, key, *, config=None):
+        if config is None:
+            config = processing_config(self.state, self.config)
         if config.get("destination") == "google":
             if config["processing_mode"] != "kubo":
                 raise ProcessingDisabled("Bridge is set to transcription only.")
@@ -289,7 +291,11 @@ class Bridge:
                 zone = ZoneInfo(self.config.get("timezone", "Europe/Bratislava"))
                 reference = recording_time(doc.get("pala_created"), zone)
                 action_schema["properties"]["yearless"] = YEARLESS
-                action_schema["required"].append("yearless")
+                action_schema["properties"]["originalTimeText"] = {
+                    "type": "string",
+                    "description": "Exact spoken start phrase for an appointment, including zajtra when spoken. Empty for non-events.",
+                }
+                action_schema["required"].extend(["yearless", "originalTimeText"])
                 if "tasks" in schema["properties"]:
                     task = schema["properties"]["tasks"]["items"]
                     task["properties"]["yearless"] = YEARLESS
@@ -309,12 +315,20 @@ class Bridge:
                     "For a shopping-list-only note use kind=reference, tasks=[], and a descriptive title. "
                     "In mixed notes keep independent tasks, events, and explicitly requested timed reminders. "
                     "Never export the list-entry instruction as a work task.")
+                explicit_calendar = False
                 if config.get("destination") == "google":
+                    from pala_google import classify_transcript
+
+                    explicit_calendar = classify_transcript(doc["pala_transcript"])[0] == "calendar"
                     action_schema["properties"]["kind"]["enum"] += ["work_event", "work_note", "keep"]
                     prompt += (" Use work_event only for explicitly work-related appointments, otherwise event. "
                                "Use work_note for an explicitly requested OneNote entry only, with its text in title. "
                                "Use keep for an explicitly dictated Google Keep note, preserving its contents in title. "
                                "Work actions go to the organization's Planner, so include only explicit work commitments.")
+                    if explicit_calendar:
+                        prompt += (" This is an explicit calendar command. Emit an event for every stated "
+                                   "appointment with a concrete start. Use the date after the local capture day "
+                                   "for zajtra. The Bridge will ask about overnight ambiguity.")
                 else:
                     action_schema["properties"]["kind"]["enum"].append("apple_note")
                     action_schema["properties"]["body"] = {"type": "string"}
@@ -346,6 +360,9 @@ class Bridge:
                 if len(actions) > 64 or not result.get("title") or not result.get("summary"):
                     raise ValueError("Neplatná poznámka")
                 for i, a in enumerate(actions):
+                    time_wording = a.pop("originalTimeText", "")
+                    if explicit_calendar and config["personal_note_collection"] and a["kind"] == "work_event":
+                        a["kind"] = "event"
                     if config["personal_note_collection"] and a["kind"] in ("work", "work_note", "work_event"):
                         continue
                     if not resolve_action_yearless(a, reference):
@@ -357,6 +374,10 @@ class Bridge:
                             isinstance(a.get("body"), str) and a["body"].strip()):
                         raise ValueError("Neplatný obsah poznámky")
                     validate_action(a)
+                    if a["kind"] in ("event", "work_event"):
+                        choices = early_tomorrow_choices(a, reference, time_wording)
+                        if choices:
+                            a["choices"] = choices
                     db.execute("INSERT INTO actions VALUES(?,?,?)",
                                (key + "-" + str(i), json.dumps(a), "pending" if a["kind"] in ("event", "work_event") else "auto"))
                 if arrival:
@@ -373,14 +394,28 @@ class Bridge:
             if status == "auto":
                 self.deliver(action, "arrival" if action["kind"] == "arrival" else ident)
                 self.mark(ident, "done")
+            elif status == "accepted":
+                self.deliver_accepted_event(ident, action)
             elif status == "pending":
                 if not config["personal_note_collection"] or action["kind"] != "work_event":
                     pending.append(dict(id=ident, **action))
         return json.dumps(result, ensure_ascii=False), pending
 
-    def mark(self, ident, status):
+    def mark(self, ident, status, *, expected=None):
         with self.database() as db:
-            db.execute("UPDATE actions SET status=? WHERE id=?", (status, ident))
+            return db.execute("UPDATE actions SET status=? WHERE id=? AND status=COALESCE(?,status)",
+                              (status, ident, expected)).rowcount
+
+    def deliver_accepted_event(self, ident, action):
+        # A failed provider reply can arrive after creating the event. Reuse
+        # the approved interval and target so the event ID stays idempotent.
+        config = processing_config(self.state, self.config)
+        timezone = config.get("timezone", "Europe/Bratislava")
+        if (config.get("destination") != "google" or config.get("calendar") != action["accepted_calendar"] or
+                timezone != action["accepted_timezone"]):
+            raise ValueError("Potvrdený termín čaká na pôvodný kalendár a časové pásmo.")
+        self.deliver(action, ident, config=config)
+        self.mark(ident, "done", expected="accepted")
 
     def confirm(self, doc):
         with self.database() as db:
@@ -389,16 +424,43 @@ class Bridge:
             raise ValueError("Neplatné potvrdenie")
         if row[1] == "needs-date":
             raise ValueError("Termín potrebuje konkrétny dátum.")
+        if row[1] == "accepted":
+            if not doc["accept"]:
+                raise ValueError("Termín už bol potvrdený.")
+            self.deliver_accepted_event(doc["id"], json.loads(row[0]))
         if row[1] == "pending":
             if doc["accept"]:
                 action = json.loads(row[0])
-                if self.config.get("destination") == "google":
-                    zone = ZoneInfo(self.config.get("timezone", "Europe/Bratislava"))
-                    if not valid_future_start(action["due"], zone, dt.datetime.now(dt.timezone.utc)):
-                        self.mark(doc["id"], "needs-date")
+                choices = action.pop("choices", [])
+                if choices:
+                    choice = doc.get("choice")
+                    if type(choice) is not int or not 0 <= choice < len(choices):
+                        raise ValueError("Vyber konkrétny dátum termínu.")
+                    action.update(choices[choice])
+                config = processing_config(self.state, self.config)
+                if config.get("destination") == "google":
+                    zone = ZoneInfo(config.get("timezone", "Europe/Bratislava"))
+                    now = dt.datetime.now(dt.timezone.utc)
+                    if not all(valid_future_start(action[field], zone, now) for field in ("due", "end")):
+                        if not choices:
+                            self.mark(doc["id"], "needs-date", expected="pending")
                         raise ValueError("Termín uplynul alebo potrebuje nový dátum.")
-                self.deliver(action, doc["id"])
-            self.mark(doc["id"], "done" if doc["accept"] else "declined")
+                    if action["kind"] == "event":
+                        if not config.get("calendar"):
+                            raise ValueError("Nastav osobný kalendár v nastaveniach Bridge.")
+                        action["accepted_calendar"] = config["calendar"]
+                        action["accepted_timezone"] = zone.key
+                        with self.database() as db:
+                            claimed = db.execute(
+                                "UPDATE actions SET data=?,status='accepted' WHERE id=? AND status='pending'",
+                                (json.dumps(action), doc["id"])).rowcount
+                        if not claimed:
+                            raise ValueError("Potvrdenie termínu sa už spracúva.")
+                        self.deliver_accepted_event(doc["id"], action)
+                        return {"ok": True}
+                self.deliver(action, doc["id"], config=config)
+            if not self.mark(doc["id"], "done" if doc["accept"] else "declined", expected="pending"):
+                raise ValueError("Potvrdenie termínu sa už spracúva.")
         return {"ok": True}
 
     def transcribe(self, body, content_type):
@@ -546,8 +608,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         bridge = self.server.bridge
-        if self.path == "/pala/delivery":
-            from pala_google import home_delivery_payload
+        if self.path in ("/pala/delivery", "/pala/home", "/pala/home?v=3", "/pala/home?v=4"):
+            from pala_google import home_dashboard_payload, home_delivery_payload
 
             header = self.headers.get("Authorization", "")
             device = paired_device(bridge, header)
@@ -555,13 +617,17 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(401)
                 return
             try:
-                payload = home_delivery_payload(bridge.state, bridge.config, device)
+                if self.path == "/pala/delivery":
+                    payload = home_delivery_payload(bridge.state, bridge.config, device)
+                else:
+                    version = int(self.path[-1]) if "?v=" in self.path else 2
+                    payload = home_dashboard_payload(bridge.state, bridge.config, device, version=version)
             except (OSError, sqlite3.Error, ValueError):
                 self.send_error(503)
                 return
             self.send_json(200, {"counts": payload})
             return
-        if self.path in ("/pala/ready", "/pala/weather", "/pala/name"):
+        if self.path in ("/pala/ready", "/pala/weather", "/pala/name", "/pala/holidays"):
             if not authorize_bridge_device(bridge, self.headers.get("Authorization", "")):
                 self.send_error(401)
                 return
@@ -577,6 +643,14 @@ class Handler(BaseHTTPRequestHandler):
                 with activity_step(getattr(bridge, "activity", None), "weather"):
                     forecast = bridge.weather.get()
                 self.send_json(200 if forecast is not None else 503, forecast or {})
+            elif self.path == "/pala/holidays":
+                try:
+                    country = bridge_preferences(bridge.state, {})["holidayCountry"]
+                    snapshot = holiday_snapshot(country, dt.datetime.now(LOCATION_ZONE).year)
+                except (OSError, ValueError):
+                    self.send_error(503)
+                    return
+                self.send_json(200, {"holidays": snapshot})
             else:
                 # The Note waits on a busy API and tries another link if the API is unavailable.
                 status = bridge.local_transcription_status()

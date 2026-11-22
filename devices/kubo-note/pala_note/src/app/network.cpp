@@ -8,6 +8,7 @@
 #include "bridge_client.h"
 #include "home_delivery.h"
 #include "note_config.h"
+#include "note_access.h"
 #include "notes.h"
 #include "rtc.h"
 #include "ui.h"
@@ -624,9 +625,24 @@ bool understandNote(int noteNum) {
   }
 #if PALA_MAC_BRIDGE
   for (JsonObjectConst event : envelope["pala_pending"].as<JsonArrayConst>()) {
-    int result = confirmCalendarEvent(event["title"] | "", event["due"] | "", event["end"] | "", event["minutes"] | -1);
-    if (result < 0) continue;
+    const String title = event["title"] | "";
+    const auto choices = event["choices"].as<JsonArrayConst>();
+    JsonObjectConst proposed = event;
     JsonDocument decision;
+    if (choices.size() == 2) {
+      const int choice = chooseCalendarEventDate(title, choices[0]["due"] | "", choices[1]["due"] | "");
+      if (choice < 0) {
+        lastOrganizationError = "calendar: awaiting date choice";
+        return false;
+      }
+      decision["choice"] = choice;
+      proposed = choices[choice].as<JsonObjectConst>();
+    }
+    const int result = confirmCalendarEvent(title, proposed["due"] | "", proposed["end"] | "", event["minutes"] | -1);
+    if (result < 0) {
+      lastOrganizationError = "calendar: awaiting confirmation";
+      return false;
+    }
     decision["id"] = event["id"].as<String>();
     decision["accept"] = result == 1;
     String serialized, ack;
@@ -2518,13 +2534,15 @@ void handleKeyClear() {
 void setupTransferServer() {
 #if PALA_BRIDGE_DISCOVERY
   noteSettingsBegin();
+  noteAccessLogout(NoteConfigTransport::Web);
 #endif
   static bool activityMiddlewareInstalled = false;
   if (!activityMiddlewareInstalled) {
-    const char* collected[] = {"Origin", "Referer", "Sec-Fetch-Site", "X-Pala-Settings", "X-Pala-CSRF"};
+    const char* collected[] = {"Origin", "Referer", "Sec-Fetch-Site", "X-Pala-Settings", "X-Pala-CSRF", "Cookie"};
     transferServer.collectHeaders(collected, sizeof(collected) / sizeof(collected[0]));
 #if PALA_BRIDGE_DISCOVERY
     noteSettingsHttp(transferServer);
+    noteAccessHttp(transferServer);
 #endif
     transferServer.addMiddleware([](WebServer& server, Middleware::Callback next) {
       const String uri = server.uri();
@@ -2534,11 +2552,11 @@ void setupTransferServer() {
 #else
       const bool settings = false;
 #endif
-      if (trash || settings) {
+      if (PALA_BRIDGE_DISCOVERY || trash || settings) {
         const String host = server.hostHeader();
         const bool correctHost = !transferUrl.isEmpty() &&
                                  (host == transferUrl || host == transferUrl + ":80");
-        const bool checkOrigin = server.method() == HTTP_POST && (settings || PALA_BRIDGE_DISCOVERY);
+        const bool checkOrigin = server.method() == HTTP_POST && (settings || (trash && PALA_BRIDGE_DISCOVERY));
         if (!correctHost || (checkOrigin && server.header("Origin") != "http://" + host)) {
           if (settings) {
             server.send(403, "application/json", F("{\"ok\":false,\"error\":\"Open the address shown on the Note.\"}"));
@@ -2548,17 +2566,20 @@ void setupTransferServer() {
           return true;
         }
       }
+      if (server.method() == HTTP_POST && !viewerWriteAllowed(server.hostHeader().c_str(),
+            server.header("Origin").c_str(), server.header("Referer").c_str(),
+            server.header("Sec-Fetch-Site").c_str())) {
+        server.send(403, "text/plain", "Open Web Companion directly to change settings or memories.");
+        return true;
+      }
+#if PALA_BRIDGE_DISCOVERY
+      if (!noteAccessGuardHttp(server)) return true;
+#endif
       if (server.method() == HTTP_GET && uri == "/settings" && server.hasArg("trashPage")) {
         int page = 0;
         server.sendHeader("Location", positiveFormValue("trashPage", page)
                                          ? String("/trash?page=") + String(page) : String("/trash"));
         server.send(303);
-        return true;
-      }
-      if (server.method() == HTTP_POST && !viewerWriteAllowed(server.hostHeader().c_str(),
-            server.header("Origin").c_str(), server.header("Referer").c_str(),
-            server.header("Sec-Fetch-Site").c_str())) {
-        server.send(403, "text/plain", "Open Web Companion directly to change settings or memories.");
         return true;
       }
       resetActivity();

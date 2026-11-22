@@ -1,12 +1,10 @@
 #pragma once
 #include <Arduino.h>
 
-struct HomeDeliveryCounts {
-  int deliveredToday = -1;
-  int waiting = -1;
-};
+#include "home_dashboard.h"
 
-HomeDeliveryCounts homeDeliveryCounts(const String& today);
+HomeDeliveryCounts homeDeliveryCounts();
+void homeDeliveryRefreshAttempted(uint32_t now);
 bool storeHomeDelivery(const String& payload, bool& changed);
 bool homeDeliveryNeedsRefresh(uint32_t now);
 bool homeDeliveryNeedsFollowup(uint32_t now);

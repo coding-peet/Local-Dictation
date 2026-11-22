@@ -11,7 +11,7 @@ internal sealed class PalaBridgeController : IDisposable
         string[] Listeners, DateTimeOffset? LastContact, string? Error);
 
     internal sealed record Status(string Summary, string? Error, DateTimeOffset? LastContact,
-        bool CanStart, bool CanStop);
+        bool CanStart, bool CanStop, string? HttpsStatus = null, bool IsStandalone = false);
 
     Process? process;
     string? owner;
@@ -41,12 +41,13 @@ internal sealed class PalaBridgeController : IDisposable
         if (runtime != null && IsLive(runtime))
         {
             var managed = owned && runtime.Owner == owner;
-            var description = runtime.State == "starting" ? "Starting Bridge…" :
-                runtime.Listeners is { Length: > 0 }
-                    ? "HTTPS " + string.Join(", ", runtime.Listeners.Select(address => address + ":8443"))
-                    : "Running. Waiting for an approved network.";
+            var https = runtime.State != "starting" && runtime.Listeners is { Length: > 0 }
+                ? "HTTPS " + string.Join(", ", runtime.Listeners.Select(address => address + ":8443"))
+                : null;
+            var description = https ?? (runtime.State == "starting"
+                ? "Starting Bridge…" : "Running. Waiting for an approved network.");
             if (!managed) description = "Standalone Bridge · " + description;
-            return new(description, runtime.Error ?? lastError, runtime.LastContact, false, managed);
+            return new(description, runtime.Error ?? lastError, runtime.LastContact, false, managed, https, IsStandalone: !managed);
         }
         if (owned) return new("Starting Bridge or waiting for status…", lastError, null, false, true);
         if (PortInUse()) return new("Port 8443 is in use. Check the standalone Bridge.",
