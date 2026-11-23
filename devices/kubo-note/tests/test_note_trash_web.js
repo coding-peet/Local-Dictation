@@ -180,7 +180,10 @@ test('BLE lock exposes only password authentication until successful sign-in', a
   await page.dispatch('access-login-form', 'submit');
   assert.equal(page.el('settings-content').hidden, true);
   page.el('access-password').value = 'correct-fixture-password';
-  await page.dispatch('access-login-form', 'submit');
+  const signingIn = page.dispatch('access-login-form', 'submit');
+  assert.equal(page.el('status').textContent, 'Signing in…');
+  await signingIn;
+  assert.equal(page.el('status').textContent, 'Signed in.');
   assert.equal(page.el('access-login').hidden, true);
   assert.equal(page.el('refresh').hidden, false);
   assert.equal(page.el('settings-content').hidden, false);

@@ -53,17 +53,41 @@ static class SettingsContextHelpChecks
                     var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(image));using var file=File.Create(Path.Combine(output,$"dictation-help-{theme}-{width}.png"));encoder.Save(file);
                 }
                 var shell=(MainWindowShell)window.Content;
+                // Keep layout checks independent of the signed-in Codex catalog.
+                Set(window,"kuboCatalogRequested",true);
                 Get<Expander>(window,"dictationAdvanced").IsExpanded=true;Get<Expander>(window,"serviceAdvanced").IsExpanded=true;
-                foreach(var page in new[]{(int)MainSection.Dictation,(int)MainSection.General})foreach(var width in new[]{640,1040})
+                foreach(var page in new[]{MainSection.Dictation,MainSection.General,MainSection.Connections})foreach(var width in new[]{640,1040})
                 {
-                    shell.Navigation.SelectedIndex=page;
+                    shell.Navigation.SelectedIndex=(int)page;
                     root.Measure(new Size(width,760));root.Arrange(new Rect(0,0,width,760));root.UpdateLayout();SettingsHelpChecks.SettleForRender(root);
                     Rect Bounds(FrameworkElement element)=>element.TransformToAncestor(root).TransformBounds(new Rect(element.RenderSize));
-                    var icons=Find<Button>(shell.PageHost).Where(button=>AutomationProperties.GetName(button).StartsWith("About ")).ToArray();
+                    FrameworkElement helpScope=shell.PageHost;
+                    if(page==MainSection.Connections)
+                    {
+                        var transcriptionRow=(FrameworkElement)Get<ComboBox>(window,"palaBridgeModel").Parent;
+                        helpScope=(FrameworkElement)transcriptionRow.Parent;
+                    }
+                    var icons=Find<Button>(helpScope).Where(button=>AutomationProperties.GetName(button).StartsWith("About ")).ToArray();
                     Require(icons.Length>=3,"Settings page lost its contextual help controls.");
                     var helpLeft=icons.Min(icon=>Bounds(icon).Left);
-                    Require(icons.All(icon=>Math.Abs(Bounds(icon).Left-helpLeft)<1),"Settings help icons do not share one rightmost column.");
-                    var fields=page==(int)MainSection.Dictation?new[]{"microphone","primary","language","afterRecording","preferredLanguages","live","insert","privateNext","verify","dictionaryHints","dictionaryCorrections","resetCompatibility"}:new[]{"startWithWindows","theme","shortcutEnabled","shortcutKeys","historyRetention"};
+                    Require(icons.All(icon=>Math.Abs(Bounds(icon).Left-helpLeft)<1),$"Settings help icons do not share one rightmost column on {page} at {width} DIPs: {string.Join(", ",icons.Select(icon=>$"{AutomationProperties.GetName(icon)}={Bounds(icon).Left:F1}"))}");
+                    var fields=page switch
+                    {
+                        MainSection.Dictation=>new[]{"microphone","primary","language","afterRecording","preferredLanguages","live","insert","privateNext","verify","dictionaryHints","dictionaryCorrections","resetCompatibility"},
+                        MainSection.General=>new[]{"startWithWindows","theme","shortcutEnabled","shortcutKeys","historyRetention"},
+                        _=>new[]{"palaOpenSettings","palaBridgeModel","palaKuboModel","palaKuboEffort","palaBridgeAutoStart"}
+                    };
+                    if(page==MainSection.Connections)
+                    {
+                        var model=Get<ComboBox>(window,"palaKuboModel");
+                        var effort=Get<ComboBox>(window,"palaKuboEffort");
+                        var sharedHelp=icons.Where(icon=>AutomationProperties.GetName(icon).StartsWith("About Kubo ")).ToArray();
+                        Require(icons.Length==4&&sharedHelp.Length==1,"Kubo model and reasoning effort must share a single help button.");
+                        var text=AutomationProperties.GetHelpText(sharedHelp[0]);
+                        Require(text.Contains("model")&&text.Contains("reasoning")&&text.Contains("High"),"Shared Kubo help must explain both choices.");
+                        Require(Math.Abs(Bounds(model).Top-Bounds(effort).Top)<1&&Bounds(model).Right<Bounds(effort).Left,
+                            "Kubo model and reasoning effort must stay side by side.");
+                    }
                     foreach(var field in fields)
                     {
                         var element=Get<FrameworkElement>(window,field);
@@ -71,9 +95,9 @@ static class SettingsContextHelpChecks
                         Require(Bounds(element).Right<=helpLeft-7.9,"Setting content extends into the help column: "+field);
                     }
                     var bitmap=new RenderTargetBitmap(width,760,96,96,PixelFormats.Pbgra32);bitmap.Render(root);
-                    var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(bitmap));using var file=File.Create(Path.Combine(output,$"settings-help-column-{page}-{theme}-{width}.png"));encoder.Save(file);
+                    var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(bitmap));using var file=File.Create(Path.Combine(output,$"settings-help-column-{(int)page}-{theme}-{width}.png"));encoder.Save(file);
                 }
-                checks.Add("Aligned rightmost help column and content boundaries on Dictation/General, narrow/wide "+theme);
+                checks.Add("Aligned rightmost help column and content boundaries on Dictation, General and Pala Note Configuration, narrow/wide "+theme);
                 Require(new System.Windows.Interop.WindowInteropHelper(window).Handle==0,"Context help checks created a native window.");
                 checks.Add("local Auto/language/latency help, quiet qualifier and Record/Stop copy "+theme);
             }

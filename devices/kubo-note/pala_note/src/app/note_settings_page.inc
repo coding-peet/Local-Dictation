@@ -1134,7 +1134,7 @@ function refresh() {
 
 function save(op, fields, message, disconnect = false) {
   return run(async () => {
-    status('Saving…');
+    status(op === 'auth.login' ? 'Signing in…' : 'Saving…');
     const revision = drafts.get(op)?.revision;
     if (op === 'auth.save' && savedTransport === 'USB') {
       // Renew the page's write permission before sending the password.
