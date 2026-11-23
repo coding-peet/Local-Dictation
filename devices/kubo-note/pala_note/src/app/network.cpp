@@ -467,7 +467,7 @@ bool organizationBridge(int note, String& owner) {
 
 static String lastOrganizationError;
 
-bool understandNote(int noteNum) {
+static bool understandNoteWithPost(int noteNum, OrganizationPost post, bool (*serviceConnection)()) {
   lastOrganizationError = "organization: transcript unavailable";
   char transcriptPath[64];
   snprintf(transcriptPath, sizeof(transcriptPath), "%s/note_%03d.txt", NOTES_DIR, noteNum);
@@ -607,12 +607,12 @@ bool understandNote(int noteNum) {
   String response;
   String bridgeId;
 #if PALA_BRIDGE_DISCOVERY
-  if (!organizationBridge(noteNum, bridgeId)) {
+  if (!serviceConnection && !organizationBridge(noteNum, bridgeId)) {
     lastOrganizationError = "organization: no verified Bridge for this recording";
     return false;
   }
 #endif
-  if (!openAiJsonPost("/v1/responses", payload, response, kMemoryTimeoutMs, &lastOrganizationError, bridgeId)) return false;
+  if (!post("/v1/responses", payload, response, kMemoryTimeoutMs, &lastOrganizationError, bridgeId)) return false;
   JsonDocument envelope;
   if (deserializeJson(envelope, response)) {
     lastOrganizationError = "organization: invalid response JSON";
@@ -630,7 +630,9 @@ bool understandNote(int noteNum) {
     JsonObjectConst proposed = event;
     JsonDocument decision;
     if (choices.size() == 2) {
-      const int choice = chooseCalendarEventDate(title, choices[0]["due"] | "", choices[1]["due"] | "");
+      const int choice = chooseCalendarEventDate(title,
+          {choices[0]["due"] | "", choices[0]["end"] | ""},
+          {choices[1]["due"] | "", choices[1]["end"] | ""}, serviceConnection);
       if (choice < 0) {
         lastOrganizationError = "calendar: awaiting date choice";
         return false;
@@ -638,7 +640,8 @@ bool understandNote(int noteNum) {
       decision["choice"] = choice;
       proposed = choices[choice].as<JsonObjectConst>();
     }
-    const int result = confirmCalendarEvent(title, proposed["due"] | "", proposed["end"] | "", event["minutes"] | -1);
+    const int result = confirmCalendarEvent(title, {proposed["due"] | "", proposed["end"] | ""},
+                                            event["minutes"] | -1, serviceConnection);
     if (result < 0) {
       lastOrganizationError = "calendar: awaiting confirmation";
       return false;
@@ -647,7 +650,7 @@ bool understandNote(int noteNum) {
     decision["accept"] = result == 1;
     String serialized, ack;
     serializeJson(decision, serialized);
-    if (!openAiJsonPost("/pala/event", serialized, ack, 0, nullptr, bridgeId)) {
+    if (!post("/pala/event", serialized, ack, 0, nullptr, bridgeId)) {
       lastOrganizationError = "calendar confirmation: retry";
       return false;
     }
@@ -684,10 +687,18 @@ bool understandNote(int noteNum) {
   // A usable structured memory is the priority. Its semantic vector is added
   // by a later background pass and never delays the first usable result.
 #if PALA_BRIDGE_DISCOVERY
-  if (selectedWifiBridge().id == bridgeId) refreshHomeDeliveryAfterSubmission();
+  if (!serviceConnection && selectedWifiBridge().id == bridgeId) refreshHomeDeliveryAfterSubmission();
 #endif
   Serial.printf("[Brain] understood #%d\n", noteNum);
   return true;
+}
+
+bool understandNote(int noteNum) {
+  return understandNoteWithPost(noteNum, openAiJsonPost, nullptr);
+}
+
+bool understandNoteOverBluetooth(int noteNum, OrganizationPost post, bool (*serviceConnection)()) {
+  return understandNoteWithPost(noteNum, post, serviceConnection);
 }
 
 bool answerFromBrain(const String& question, String& answer, std::vector<int>& sourceNotes) {

@@ -79,6 +79,7 @@ public sealed partial class AppController : IDisposable
     readonly Func<CancellationToken,ITextDelivery> captureInsertionTarget=token=>WindowsTextDelivery.Capture(token);
     readonly Func<nint,CancellationToken,ITextDelivery>? captureHistoryInsertionTarget;
     readonly GlobalInput input;
+    readonly ReadAloudPlayback readAloud;
     readonly Forms.NotifyIcon tray;
     readonly DispatcherTimer timer=new() {Interval=TimeSpan.FromMilliseconds(80)};
     readonly BannerWindow banner;
@@ -357,15 +358,24 @@ public sealed partial class AppController : IDisposable
         historyInsertionDestination=()=>historyWindowTracker.Current;
         captureHistoryInsertionTarget=(window,token)=>WindowsTextDelivery.CaptureAtWindow(token,window);
         input=new GlobalInput();
+        readAloud=new(SynthesizeReadAloud,wave=>new HistoryAudioOutput(wave));
         input.UserEdited+=DestinationChanged;
         input.Cancel+=()=>System.Windows.Application.Current.Dispatcher.InvokeAsync(Cancel);
         input.Toggle+=()=>System.Windows.Application.Current.Dispatcher.InvokeAsync(Toggle);
         input.HoldStart+=()=>System.Windows.Application.Current.Dispatcher.InvokeAsync(StartHeldShortcut);
         input.HoldStop+=()=>System.Windows.Application.Current.Dispatcher.InvokeAsync(StopHeldShortcut);
+        input.ReadAloud+=()=>
+        {
+            var window=WindowsTextDelivery.ForegroundWindow;
+            System.Windows.Application.Current.Dispatcher.InvokeAsync(()=>ToggleReadSelection(window));
+        };
         RecheckShortcut();
         banner=new BannerWindow(this);
         var menu=new Forms.ContextMenuStrip();
         menu.Items.Add("Start / stop dictation",null,(_,_)=>Toggle());
+        var readClipboard=new Forms.ToolStripMenuItem("Read from clipboard");
+        readClipboard.Click+=async (_,_)=>await ToggleReadClipboard();
+        menu.Items.Add(readClipboard);
         menu.Items.Add("Open Local Dictation",null,(_,_)=>ShowSettings());
         menu.Items.Add("History",null,(_,_)=>ShowHistory());
         var bridgeStatus = new Forms.ToolStripMenuItem { Enabled = false };
@@ -376,6 +386,8 @@ public sealed partial class AppController : IDisposable
         menu.Items.Add(bridgeRestart);
         menu.Opening += (_, _) =>
         {
+            readClipboard.Text=readAloud.IsActive?"Stop reading":"Read from clipboard";
+            readClipboard.Enabled=readAloud.IsActive||!IsBusy;
             var status = PalaBridge.ReadStatus();
             bridgeStatus.Text = "Pala Bridge · " + status.Summary;
             bridgeRestart.Enabled = status.CanStop;
@@ -388,6 +400,8 @@ public sealed partial class AppController : IDisposable
         ClipboardRecovery.Changed+=ClipboardRecoveryChanged;
         timer.Tick+=(_,_) =>
         {
+            try{readAloud.Refresh();}
+            catch(Exception){NotifyReadAloud("The audio output stopped unexpectedly.");}
             // Neither showing nor hiding our UI may change focus before the
             // initial external element and cursor have been captured.
             if(active is {DestinationChecked:false})return;
@@ -865,10 +879,52 @@ public sealed partial class AppController : IDisposable
         input.Shortcut=ShortcutSpec.Parse(Settings.Shortcut);input.Mode=Settings.ShortcutMode;
         var collision=GlobalInput.TypeWhisperRunning()&&Settings.Shortcut=="Ctrl+Shift";
         input.ShortcutEnabled=Settings.EnableShortcut&&!noHotkey&&!collision;
+        input.ReadAloudEnabled=!noHotkey;
         ShortcutMessage=noHotkey?"Shortcut disabled for this test launch (--no-hotkey).":
             collision?"TypeWhisper is running. Quit it, then Recheck shortcut before using Ctrl+Shift here.":
             !Settings.EnableShortcut?"Shortcut disabled in Settings.":Settings.ShortcutMode==ShortcutMode.Hold?"Hold "+Settings.Shortcut+" to record; release to finish.":Settings.Shortcut+" starts and stops dictation.";
+        if(input.ShortcutEnabled&&input.Shortcut==InputCommands.ReadAloudShortcut)
+            ShortcutMessage+=" Read from clipboard is available in the tray menu.";
         Changed?.Invoke();
+    }
+
+    async Task<SynthesisAudio> SynthesizeReadAloud(string text,CancellationToken token)
+    {
+        using var api=new ApiClient(Settings);
+        return await api.Synthesize(text,token);
+    }
+
+    Task ToggleReadClipboard() => ToggleReadAloud(_=>Task.FromResult<string?>(System.Windows.Clipboard.GetText()),
+        "Copy text to the clipboard and choose Read from clipboard.");
+
+    Task ToggleReadSelection(nint window) => ToggleReadAloud(async token=>
+    {
+        try { return await automation.Run(t=>ReadAloudSelection.Capture(window,t)).WaitAsync(token); }
+        catch (ReadAloudSelection.SelectionTooLongException) { throw; }
+        catch (Exception) when (!token.IsCancellationRequested) { return null; }
+    },"Select accessible text in the focused app, or choose Read from clipboard.");
+
+    async Task ToggleReadAloud(Func<CancellationToken,Task<string?>> source,string emptyMessage)
+    {
+        if(exiting||disposed)return;
+        if(IsBusy&&!readAloud.IsActive){NotifyReadAloud("Finish the current dictation before reading aloud.");return;}
+        try
+        {
+            await readAloud.ToggleAsync(async token=>
+            {
+                var text=await source(token);
+                if(string.IsNullOrWhiteSpace(text))throw new InvalidOperationException(emptyMessage);
+                return text;
+            });
+        }
+        catch(InvalidOperationException error){NotifyReadAloud(error.Message);}
+        catch(System.Runtime.InteropServices.ExternalException){NotifyReadAloud("The clipboard or audio output is busy. Try again.");}
+        catch(Exception){NotifyReadAloud("Could not read aloud. Check the local speech API and audio output.");}
+    }
+
+    void NotifyReadAloud(string message)
+    {
+        if(!disposed&&!exiting)tray.ShowBalloonTip(3000,"Read aloud",message,Forms.ToolTipIcon.Info);
     }
 
     internal bool OpenPalaNoteSettings()
@@ -1091,6 +1147,8 @@ public sealed partial class AppController : IDisposable
         catch(ArgumentException error){ConnectionMessage=error.Message;ShowSettings();Changed?.Invoke();return;}
         if(snapshot.VerifyAfterRecording&&!Models.Any(m=>m.Id==snapshot.VerificationModel&&ModelEligibility.CanVerify(m,snapshot.Language,model,snapshot.PreferredLanguages)&&m.Id!=model.Id))
         {ConnectionMessage="Choose an installed, runtime-tested verification model distinct from Dictation.";ShowSettings();Changed?.Invoke();return;}
+        try { readAloud.Stop(); }
+        catch (Exception) { NotifyReadAloud("Wait for the audio output to stop before recording."); return; }
         languageWindow?.Close();
         if(active?.Verifying==true)active.Cancel.Cancel();
         var destination=input.Epoch.Capture((long)WindowsTextDelivery.ForegroundWindow);
@@ -1590,6 +1648,7 @@ public sealed partial class AppController : IDisposable
         if (!stoppingPalaWatcher) palaUsbWatcher?.Dispose();
         palaBridge?.Dispose();
         disposed=true;ClipboardRecovery.Changed-=ClipboardRecoveryChanged;
+        try { readAloud.Dispose(); } catch (Exception) { /* The output completes its own retirement. */ }
         timer.Stop();reconnectTimer.Stop();historyRetentionTimer.Stop();resumeTimer.Stop();historyWindowTracker?.Dispose();input.Dispose();tray.Visible=false;tray.Dispose();active?.Cancel.Cancel();automation.Dispose();
     }
 }

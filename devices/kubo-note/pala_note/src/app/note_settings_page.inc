@@ -225,7 +225,7 @@ dialog .actions { justify-content: end; }
     <h1 id="settings-title">Note settings</h1>
     <div id="connection" class="muted"></div>
   </div>
-  <button id="refresh" type="button">Refresh</button>
+  <button id="refresh" type="button" hidden>Refresh</button>
 </header>
 <p id="status" role="status" aria-live="polite"></p>
 
@@ -244,46 +244,46 @@ dialog .actions { justify-content: end; }
   </form>
 </section>
 
-<section id="note-password" hidden>
-  <h2>Note password</h2>
-  <form id="note-password-form">
+<div id="settings-content" hidden>
+<section id="wireless-radios" hidden>
+  <h2>Wireless connections</h2>
+  <form id="radios-form">
+    <label class="bridge-switch-label setting-row">
+      <span>Enable Wi-Fi</span>
+      <span class="bridge-switch">
+        <input id="wifi-enabled" type="checkbox" role="switch" aria-describedby="radios-hint">
+        <span class="bridge-switch-track" aria-hidden="true"></span>
+      </span>
+    </label>
+    <label class="bridge-switch-label setting-row">
+      <span>Enable Bluetooth</span>
+      <span class="bridge-switch">
+        <input id="bluetooth-enabled" type="checkbox" role="switch" aria-describedby="radios-hint">
+        <span class="bridge-switch-track" aria-hidden="true"></span>
+      </span>
+    </label>
+    <p id="radios-hint" class="muted">Turning off the current connection closes it. USB can turn either radio back on.</p>
+    <div class="actions"><button type="submit" class="primary">Save wireless connections</button></div>
+  </form>
+</section>
+
+<section id="wireless-priority" hidden>
+  <h2>Sync connection priority</h2>
+  <form id="wireless-form">
     <div class="setting-row">
-      <label for="note-password-old">Current password</label>
-      <div class="password-entry">
-        <input id="note-password-old" type="password" maxlength="48" autocomplete="current-password">
-        <button id="note-password-old-eye" type="button" class="password-eye" aria-controls="note-password-old" aria-label="Show password" title="Show password" aria-pressed="false"><span aria-hidden="true">&#128065;&#65038;</span></button>
-      </div>
-    </div>
-    <div class="setting-row">
-      <label for="note-password-new">New password</label>
-      <div class="password-entry">
-        <input id="note-password-new" type="password" minlength="8" maxlength="48" autocomplete="new-password" aria-describedby="note-password-new-strength-label" required>
-        <button id="note-password-new-eye" type="button" class="password-eye" aria-controls="note-password-new" aria-label="Show password" title="Show password" aria-pressed="false"><span aria-hidden="true">&#128065;&#65038;</span></button>
-      </div>
-    </div>
-    <div class="setting-row">
-      <label for="note-password-repeat">Repeat new password</label>
-      <div class="password-entry">
-        <input id="note-password-repeat" type="password" minlength="8" maxlength="48" autocomplete="new-password" required>
-        <button id="note-password-repeat-eye" type="button" class="password-eye" aria-controls="note-password-repeat" aria-label="Show password" title="Show password" aria-pressed="false"><span aria-hidden="true">&#128065;&#65038;</span></button>
-      </div>
-    </div>
-    <div class="form-footer">
-      <div class="actions">
-        <button class="primary" type="submit">Save password</button>
-        <button id="note-password-logout" type="button">Sign out</button>
-      </div>
-      <div class="password-feedback">
-        <div id="note-password-new-strength" class="password-strength" data-strength="0">
-          <span class="strength-track" aria-hidden="true"></span>
-          <span class="strength-caption">Strength <strong id="note-password-new-strength-label" role="status"></strong></span>
-        </div>
+      <label for="wireless-choice">Preferred wireless connection</label>
+      <div class="setting-with-help">
+        <select id="wireless-choice" aria-describedby="wireless-hint">
+          <option value="wifi">Wi-Fi first</option>
+          <option value="bluetooth">Bluetooth first</option>
+        </select>
         <details class="context-help">
-          <summary aria-label="How password strength is estimated">&#9432;</summary>
-          <p id="note-password-new-strength-help" class="help-popup"></p>
+          <summary aria-label="About sync priority">&#9432;</summary>
+          <p id="wireless-hint" class="help-popup">USB has first priority. This setting controls wireless recording sync.</p>
         </details>
       </div>
     </div>
+    <div class="actions"><button type="submit" class="primary">Save priority</button></div>
   </form>
 </section>
 
@@ -320,20 +320,16 @@ dialog .actions { justify-content: end; }
   </form>
 </section>
 
-<section id="display-pages" hidden>
-  <h2>Display pages</h2>
-  <p class="muted">Tap the upper button to move up through enabled pages.
-    Tap the lower button to return to Home from any display page.</p>
-  <form id="display-pages-form">
-    <fieldset id="display-pages-fields">
-      <ul id="display-pages-list"></ul>
-      <div class="row display-home"><strong>Home</strong><span class="muted">Always on bottom</span></div>
-      <label class="page-toggle" id="page-wrap-field" hidden>
-        <input id="page-wrap" type="checkbox"> Return to Home after the top page
-      </label>
-      <div class="actions"><button type="submit" class="primary">Save display pages</button></div>
-    </fieldset>
-  </form>
+<section id="pairing" hidden>
+  <h2>Paired devices</h2>
+  <p id="peer-empty" class="muted" hidden>No paired devices.</p>
+  <ul id="peer-list"></ul>
+  <p id="pair-help" class="muted">Follow the confirmation shown on the Note.</p>
+  <div id="pair-actions" class="actions">
+    <button id="pair-usb" type="button">Pair over USB</button>
+    <button id="pair-ble" type="button">Pair over Bluetooth</button>
+  </div>
+  <button id="pair-enable" type="button" hidden>Enable Bluetooth pairing</button>
 </section>
 
 <section id="sync-timing" hidden>
@@ -355,42 +351,6 @@ dialog .actions { justify-content: end; }
       </div>
     </div>
     <div class="actions"><button type="submit" class="primary">Save sync timing</button></div>
-  </form>
-</section>
-
-<section id="wireless-priority" hidden>
-  <h2>Sync connection priority</h2>
-  <form id="wireless-form">
-    <div class="setting-row">
-      <label for="wireless-choice">Preferred wireless connection</label>
-      <div class="setting-with-help">
-        <select id="wireless-choice" aria-describedby="wireless-hint">
-          <option value="wifi">Wi-Fi first</option>
-          <option value="bluetooth">Bluetooth first</option>
-        </select>
-        <details class="context-help">
-          <summary aria-label="About sync priority">&#9432;</summary>
-          <p id="wireless-hint" class="help-popup">USB has first priority. This setting controls wireless recording sync.</p>
-        </details>
-      </div>
-    </div>
-    <div class="actions"><button type="submit" class="primary">Save priority</button></div>
-  </form>
-</section>
-
-<section id="sleep-timeout" hidden>
-  <h2>Sleep timeout</h2>
-  <form id="sleep-form">
-    <fieldset id="sleep-fields">
-      <label class="setting-row" for="sleep-minutes">Idle minutes
-        <input id="sleep-minutes" type="number" min="1" max="99" step="1" required aria-describedby="sleep-status">
-      </label>
-      <p id="sleep-status" class="muted"></p>
-      <div class="actions">
-        <button type="submit" class="primary">Save timeout</button>
-        <button type="button" id="sleep-default">Default</button>
-      </div>
-    </fieldset>
   </form>
 </section>
 
@@ -418,16 +378,36 @@ dialog .actions { justify-content: end; }
   </form>
 </section>
 
-<section id="pairing" hidden>
-  <h2>Paired devices</h2>
-  <p id="peer-empty" class="muted" hidden>No paired devices.</p>
-  <ul id="peer-list"></ul>
-  <p id="pair-help" class="muted">Follow the confirmation shown on the Note.</p>
-  <div id="pair-actions" class="actions">
-    <button id="pair-usb" type="button">Pair over USB</button>
-    <button id="pair-ble" type="button">Pair over Bluetooth</button>
-  </div>
-  <button id="pair-enable" type="button" hidden>Enable Bluetooth pairing</button>
+<section id="display-pages" hidden>
+  <h2>Display pages</h2>
+  <p class="muted">Tap the upper button to move up through enabled pages.
+    Tap the lower button to return to Home from any display page.</p>
+  <form id="display-pages-form">
+    <fieldset id="display-pages-fields">
+      <ul id="display-pages-list"></ul>
+      <div class="row display-home"><strong>Home</strong><span class="muted">Always on bottom</span></div>
+      <label class="page-toggle" id="page-wrap-field" hidden>
+        <input id="page-wrap" type="checkbox"> Return to Home after the top page
+      </label>
+      <div class="actions"><button type="submit" class="primary">Save display pages</button></div>
+    </fieldset>
+  </form>
+</section>
+
+<section id="sleep-timeout" hidden>
+  <h2>Sleep timeout</h2>
+  <form id="sleep-form">
+    <fieldset id="sleep-fields">
+      <label class="setting-row" for="sleep-minutes">Idle minutes
+        <input id="sleep-minutes" type="number" min="1" max="99" step="1" required aria-describedby="sleep-status">
+      </label>
+      <p id="sleep-status" class="muted"></p>
+      <div class="actions">
+        <button type="submit" class="primary">Save timeout</button>
+        <button type="button" id="sleep-default">Default</button>
+      </div>
+    </fieldset>
+  </form>
 </section>
 
 <section id="bridge" hidden>
@@ -486,6 +466,49 @@ dialog .actions { justify-content: end; }
   </div>
 </section>
 
+<section id="note-password" hidden>
+  <h2>Note password</h2>
+  <form id="note-password-form">
+    <div class="setting-row">
+      <label for="note-password-old">Current password</label>
+      <div class="password-entry">
+        <input id="note-password-old" type="password" maxlength="48" autocomplete="current-password">
+        <button id="note-password-old-eye" type="button" class="password-eye" aria-controls="note-password-old" aria-label="Show password" title="Show password" aria-pressed="false"><span aria-hidden="true">&#128065;&#65038;</span></button>
+      </div>
+    </div>
+    <div class="setting-row">
+      <label for="note-password-new">New password</label>
+      <div class="password-entry">
+        <input id="note-password-new" type="password" minlength="8" maxlength="48" autocomplete="new-password" aria-describedby="note-password-new-strength-label" required>
+        <button id="note-password-new-eye" type="button" class="password-eye" aria-controls="note-password-new" aria-label="Show password" title="Show password" aria-pressed="false"><span aria-hidden="true">&#128065;&#65038;</span></button>
+      </div>
+    </div>
+    <div class="setting-row">
+      <label for="note-password-repeat">Repeat new password</label>
+      <div class="password-entry">
+        <input id="note-password-repeat" type="password" minlength="8" maxlength="48" autocomplete="new-password" required>
+        <button id="note-password-repeat-eye" type="button" class="password-eye" aria-controls="note-password-repeat" aria-label="Show password" title="Show password" aria-pressed="false"><span aria-hidden="true">&#128065;&#65038;</span></button>
+      </div>
+    </div>
+    <div class="form-footer">
+      <div class="actions">
+        <button class="primary" type="submit">Save password</button>
+        <button id="note-password-logout" type="button">Sign out</button>
+      </div>
+      <div class="password-feedback">
+        <div id="note-password-new-strength" class="password-strength" data-strength="0">
+          <span class="strength-track" aria-hidden="true"></span>
+          <span class="strength-caption">Strength <strong id="note-password-new-strength-label" role="status"></strong></span>
+        </div>
+        <details class="context-help">
+          <summary aria-label="How password strength is estimated">&#9432;</summary>
+          <p id="note-password-new-strength-help" class="help-popup"></p>
+        </details>
+      </div>
+    </div>
+  </form>
+</section>
+
 <section id="trash" hidden>
   <details id="trash-disclosure">
     <summary><h2>Trash</h2></summary>
@@ -514,6 +537,7 @@ dialog .actions { justify-content: end; }
     <div class="actions"><button class="danger" type="submit">Move all to Trash</button></div>
   </form>
 </section>
+</div>
 
 <dialog id="trash-dialog" aria-labelledby="trash-dialog-title">
   <form id="trash-empty-form">
@@ -555,6 +579,7 @@ const el = id => document.getElementById(id);
 const endpoint = '/api/note-settings';
 let csrf = '';
 let noteSession = '';
+let passwordAccess = '';
 let busy = false;
 let bridgeOrder = [];
 let displayPages = [];
@@ -682,7 +707,10 @@ async function request(op, fields) {
   const result = await response.json();
   if (typeof result.csrf === 'string') csrf = result.csrf;
   if (op === 'auth.login' && result.ok) noteSession = result.session;
-  if (result.ok && (op === 'auth.logout' || op === 'auth.save')) noteSession = '';
+  if (result.ok && (op === 'auth.logout' || op === 'auth.save')) {
+    noteSession = '';
+    if (savedTransport === 'BLE') show({ access: 'locked', transport: 'BLE' });
+  }
   if (result.access === 'locked' || result.access === 'setup') {
     noteSession = '';
     if (result.transport === 'Wi-Fi') window.location.assign('/login');
@@ -789,24 +817,45 @@ function drawDisplayPages() {
 function show(data) {
   const caps = data.capabilities || {};
   const attached = Boolean(data.ok && data.device);
-  const locked = data.access === 'locked' || data.access === 'setup';
+  // A temporary BLE disconnect must not reveal settings from a locked page.
+  if (data.access === 'locked' || data.access === 'setup') passwordAccess = data.access;
+  else if (attached) passwordAccess = '';
+
+  const locked = passwordAccess !== '';
+  el('access-login').hidden = !locked;
+  el('access-login-form').hidden = passwordAccess === 'setup';
+  el('access-login-help').hidden = passwordAccess !== 'setup';
+  el('settings-content').hidden = locked;
+  el('refresh').hidden = locked;
+  if (locked) {
+    document.title = 'Note settings';
+    el('settings-title').textContent = 'Note settings';
+    el('connection').textContent = 'Note locked';
+    el('viewer').hidden = true;
+    clearPasswords('access-password', 'wifi-secret', ...newPasswordFields);
+    el('wifi-name').value = '';
+    for (const [op, draft] of drafts) if (draft.onNote) acceptDraft(op);
+    for (const id of ['confirm', 'trash-dialog', 'pair-dialog']) {
+      if (el(id).open) el(id).close();
+    }
+    el('trash-disclosure').open = false;
+    trashRead = false;
+    return;
+  }
+
   const usb = data.transport === 'USB';
   const passwordSupported = attached && typeof data.device.webPasswordConfigured === 'boolean';
-  el('access-login').hidden = !locked;
-  el('access-login-form').hidden = data.access === 'setup';
-  el('access-login-help').hidden = data.access !== 'setup';
   el('note-password').hidden = !passwordSupported;
   el('note-password-old').required = !usb;
   el('note-password-logout').hidden = usb;
-  el('wifi').hidden = locked;
   const wifiAvailable = attached && Array.isArray(data.wifi);
   const wifi = wifiAvailable ? data.wifi : [];
   const peers = Array.isArray(data.peers) ? data.peers : [];
-  const canPair = !locked && caps.pair === true;
+  const canPair = caps.pair === true;
   const canManagePeers = attached && caps.peers !== false && Array.isArray(data.peers);
   const name = attached && typeof data.device.name === 'string' ? data.device.name.trim() : '';
   const target = attached ? (data.targetKey || (caps.devicePortal === true ? 'local' : null)) : null;
-  if (locked || (attached && (!target || target !== savedTarget))) {
+  if (attached && (!target || target !== savedTarget)) {
     clearPasswords('access-password', 'wifi-secret', ...newPasswordFields);
     el('wifi-name').value = '';
     for (const [op, draft] of drafts) if (draft.onNote) acceptDraft(op);
@@ -820,7 +869,7 @@ function show(data) {
   document.title = title;
   el('settings-title').textContent = title;
   el('viewer').textContent = 'Back to ' + (name || 'Note');
-  el('connection').textContent = locked ? 'Note locked' : 'Note disconnected';
+  el('connection').textContent = 'Note disconnected';
   if (attached) el('connection').textContent = data.transport ? 'Connected via ' + data.transport : 'Connected';
   el('note').hidden = !attached;
   const pages = attached ? data.device.displayPages : null;
@@ -834,6 +883,14 @@ function show(data) {
   if (hasPages) showFormValues('pages.save', () => {
     displayPages = Array.from(pages);
     el('page-wrap').checked = pageWrap === true;
+  });
+  const wifiEnabled = attached ? data.device.wifiEnabled : null;
+  const bluetoothEnabled = attached ? data.device.bluetoothEnabled : null;
+  const hasRadioSettings = typeof wifiEnabled === 'boolean' && typeof bluetoothEnabled === 'boolean';
+  el('wireless-radios').hidden = !hasRadioSettings;
+  if (hasRadioSettings) showFormValues('radios.save', () => {
+    el('wifi-enabled').checked = wifiEnabled;
+    el('bluetooth-enabled').checked = bluetoothEnabled;
   });
   const preferBluetooth = attached ? data.device.preferBluetooth : null;
   el('wireless-priority').hidden = typeof preferBluetooth !== 'boolean';
@@ -875,7 +932,7 @@ function show(data) {
   el('pair-enable').hidden = !canEnableBle;
   el('pair-actions').hidden = !canPair;
   el('pair-usb').hidden = caps.pairUsb === false;
-  el('pair-ble').hidden = caps.pairBle === false;
+  el('pair-ble').hidden = caps.pairBle === false || bluetoothEnabled === false;
   el('pair-help').hidden = !canPair;
   el('pair-help').textContent = attached ? 'Follow the confirmation shown on the Note.'
     : 'To connect over Bluetooth, briefly press both buttons on the Note, then select Refresh.';
@@ -946,11 +1003,11 @@ function trashLabel(entry) {
 }
 
 function trashIsOpen() {
-  return !el('trash').hidden && el('trash-disclosure').open;
+  return !el('settings-content').hidden && !el('trash').hidden && el('trash-disclosure').open;
 }
 
 function openLinkedTrash() {
-  if (el('trash').hidden || location.hash !== '#trash') return;
+  if (el('settings-content').hidden || el('trash').hidden || location.hash !== '#trash') return;
   el('trash-disclosure').open = true;
   el('trash').scrollIntoView();
 }
@@ -1036,7 +1093,7 @@ function emptyTrash() {
 async function showSettings(data) {
   const wasHidden = el('trash').hidden;
   show(data);
-  if (el('trash').hidden) {
+  if (el('settings-content').hidden || el('trash').hidden) {
     el('trash-disclosure').open = false;
     trashRead = false;
     return;
@@ -1055,6 +1112,7 @@ async function run(action) {
   try {
     await action();
   } catch (error) {
+    if (!passwordAccess) el('refresh').hidden = false;
     status(error.message || 'Could not reach Note.', true);
   } finally {
     busy = false;
@@ -1074,7 +1132,7 @@ function refresh() {
   });
 }
 
-function save(op, fields, message) {
+function save(op, fields, message, disconnect = false) {
   return run(async () => {
     status('Saving…');
     const revision = drafts.get(op)?.revision;
@@ -1093,6 +1151,11 @@ function save(op, fields, message) {
       if (op === 'wifi.save') clearPasswords('wifi-secret');
       if (op === 'auth.save') clearPasswords(...newPasswordFields);
       acceptDraft(op);
+    }
+    if (disconnect) {
+      await showSettings({ ok: false, capabilities: {} });
+      status(message);
+      return;
     }
     try {
       await showSettings(await request());
@@ -1184,6 +1247,17 @@ el('wireless-form').addEventListener('submit', event => {
   if (!el('wireless-priority').hidden && ['wifi', 'bluetooth'].includes(choice)) {
     save('wireless.save', { preferBluetooth: choice === 'bluetooth' }, 'Sync priority saved.');
   }
+});
+el('radios-form').addEventListener('submit', event => {
+  event.preventDefault();
+  if (el('wireless-radios').hidden) return;
+  const wifiEnabled = el('wifi-enabled').checked;
+  const bluetoothEnabled = el('bluetooth-enabled').checked;
+  const disconnect = (!wifiEnabled && savedTransport.startsWith('Wi-Fi')) ||
+    (!bluetoothEnabled && savedTransport === 'BLE');
+  save('radios.save', { wifiEnabled, bluetoothEnabled }, disconnect
+    ? 'Wireless connections saved. Reconnect by USB to turn the radio back on.'
+    : 'Wireless connections saved.', disconnect);
 });
 el('sync-timing-form').addEventListener('submit', event => {
   event.preventDefault();
@@ -1301,6 +1375,7 @@ trackDraft('auth.save', 'note-password-form', () => newPasswordFields.map(id => 
 trackDraft('pages.save', 'display-pages-form', () => [displayPages.join(''), el('page-wrap').checked === true]);
 trackDraft('sync.save', 'sync-timing-form', values('sync-mode'));
 trackDraft('wireless.save', 'wireless-form', values('wireless-choice'));
+trackDraft('radios.save', 'radios-form', () => [el('wifi-enabled').checked, el('bluetooth-enabled').checked]);
 trackDraft('sleep.save', 'sleep-form', values('sleep-minutes'));
 trackDraft('bridge.save', 'bridge-form', values('bridge-name', 'weather-location', 'holiday-country'), false);
 trackDraft('bridge.processing.save', 'bridge-processing-form', () =>

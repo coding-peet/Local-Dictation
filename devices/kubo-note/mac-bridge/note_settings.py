@@ -110,6 +110,10 @@ def note_request(data):
         return request
     if op == "wireless.save" and type(data.get("preferBluetooth")) is bool:
         return {"op": op, "preferBluetooth": data["preferBluetooth"]}
+    if op == "radios.save":
+        wifi, bluetooth = data.get("wifiEnabled"), data.get("bluetoothEnabled")
+        if type(wifi) is bool and type(bluetooth) is bool:
+            return {"op": op, "wifiEnabled": wifi, "bluetoothEnabled": bluetooth}
     if op == "bridge.order":
         ids = data.get("ids")
         if (isinstance(ids, list) and len(ids) <= 8 and all(valid(value, PEER_ID) for value in ids)
@@ -183,7 +187,7 @@ def note_response(reply, transport, op="get"):
         result["device"]["sleepMinutes"] = device["sleepMinutes"]
     if bounded_integer(device.get("syncTiming"), 0, 3):
         result["device"]["syncTiming"] = device["syncTiming"]
-    for field in ("pageWrap", "preferBluetooth", "weeklyCodexLimit"):
+    for field in ("pageWrap", "preferBluetooth", "weeklyCodexLimit", "wifiEnabled", "bluetoothEnabled"):
         if type(device.get(field)) is bool:
             result["device"][field] = device[field]
     if valid_display_pages(device.get("displayPages")):
@@ -439,7 +443,8 @@ class SettingsRoute:
             result = {"ok": False, "error": str(error), "transport": ""}
         except (OSError, ValueError, RuntimeError):
             result = {"ok": False, "error": "The paired Note could not be reached or authenticated.", "transport": ""}
-        if op == "get":
+        # Keep Bridge preferences out of the pre-authentication response.
+        if op == "get" and result.get("access") not in ("locked", "setup"):
             capabilities = result.setdefault("capabilities", {"pair": True, "peers": False, "bridgeOrder": False})
             if self.pairing is not None:
                 capabilities["pairBle"] = self.pairing.ble_available

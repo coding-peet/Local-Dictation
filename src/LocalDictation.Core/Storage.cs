@@ -124,6 +124,10 @@ public sealed class Settings
     public bool PalaBridgeAutoStart { get; set; }
     // Null preserves the Bridge profile. An empty string follows the main Dictation model.
     public string? PalaBridgeModel { get; set; }
+    public string? PalaKuboModel { get; set; }
+    public string PalaKuboReasoningEffort { get; set; } = "high";
+    public static IReadOnlyList<string> KuboReasoningEfforts { get; } =
+        Array.AsReadOnly(new[] { "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra" });
     public bool VerifyAfterRecording { get; set; }
     [System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<AfterRecordingAction>))]
     public AfterRecordingAction AfterRecording { get; set; } = AfterRecordingAction.InsertDirectly;
@@ -196,6 +200,12 @@ public sealed class Settings
         if (PalaBridgeModel is { Length: > 0 } model &&
             (model.Length > 256 || model.Any(char.IsWhiteSpace) || model.Any(char.IsControl)))
             throw new ArgumentException("Choose a valid Bridge model.");
+        if (PalaKuboModel is { } kuboModel &&
+            (kuboModel.Length is < 1 or > 128 || !char.IsAsciiLetterOrDigit(kuboModel[0]) ||
+             kuboModel.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not ('.' or '_' or '/' or '-'))))
+            throw new ArgumentException("Choose a valid Kubo processing model.");
+        if (!KuboReasoningEfforts.Contains(PalaKuboReasoningEffort))
+            throw new ArgumentException("Choose a valid Kubo reasoning effort.");
         if(!Enum.IsDefined(AfterRecording))throw new ArgumentException("Choose Insert directly or Preview first.");
         if(!Enum.IsDefined(ShortcutMode))throw new ArgumentException("Choose Toggle or Hold to record.");
         if(AudioRetentionDays is <0 or >3650)throw new ArgumentException("Choose 0 (Forever) or 1 to 3650 days for recordings.");

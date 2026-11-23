@@ -7,7 +7,11 @@ import socket
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port",type=int,default=48125)
+    parser.add_argument("--application-key-registry")
+    parser.add_argument("--piper-profile")
     args=parser.parse_args()
+    if args.piper_profile and not args.application_key_registry:
+        parser.error("Piper synthesis requires an application key registry.")
     logging.basicConfig(level=logging.INFO,format="%(asctime)s %(levelname)s %(message)s")
     from local_dictation.config import RuntimeConfig
     config=RuntimeConfig.from_env()
@@ -31,7 +35,11 @@ def main():
         runtime.prepare_runtime(cache_fast=any(m["id"]==model_engine.FAST_MODEL_ID for m in installed))
         return EngineAdapter(runtime)
     engine=PreparingEngine(load)
-    app=create_app(config,engine)
+    speech = None
+    if args.piper_profile:
+        from local_dictation.speech import PiperCpuSpeech
+        speech = PiperCpuSpeech(args.piper_profile)
+    app=create_app(config,engine,application_keys=args.application_key_registry,speech=speech)
     engine.start()
     import uvicorn
     server=uvicorn.Server(uvicorn.Config(app,host="127.0.0.1",port=args.port,

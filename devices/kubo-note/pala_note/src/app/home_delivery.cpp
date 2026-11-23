@@ -32,6 +32,11 @@ HomeDeliveryCounts homeDeliveryCounts() {
   return counts;
 }
 
+void restoreHomeDeliveryRefresh() {
+  const unsigned waiting = homeDeliveryCounts().waiting;
+  if (waiting > 0) refreshSchedule.received(millis(), waiting);
+}
+
 bool storeHomeDelivery(const String& payload, bool& changed) {
   char day[11]{};
   unsigned delivered = 0, waiting = 0;
@@ -64,6 +69,18 @@ bool homeDeliveryNeedsRefresh(uint32_t now) {
 
 bool homeDeliveryNeedsFollowup(uint32_t now) {
   return refreshSchedule.needsFollowup(now);
+}
+
+bool homeDeliveryNeedsBluetoothFollowup(uint32_t now) {
+  return refreshSchedule.needsBluetoothFollowup(now);
+}
+
+void homeDeliveryBluetoothAttempted(uint32_t now) {
+  refreshSchedule.bluetoothAttempted(now);
+}
+
+bool homeDeliveryKeepingBluetoothAwake(uint32_t now) {
+  return refreshSchedule.keepAwakeForBluetooth(now);
 }
 
 void refreshHomeDeliveryAfterSubmission() {

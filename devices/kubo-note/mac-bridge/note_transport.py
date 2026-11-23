@@ -7,6 +7,10 @@ from dataclasses import dataclass, field
 from note_settings import SettingsError
 
 
+# Leave time for discovery, the settings GATT connection, authentication and the reply.
+BLUETOOTH_SETTINGS_TIMEOUT = 40
+
+
 @dataclass
 class BluetoothRequest:
     body: dict
@@ -62,7 +66,7 @@ class SettingsTransport:
             self.bluetooth.put_nowait(request)
         except queue.Full as error:
             raise SettingsError("The current Note settings request is busy.") from error
-        if not request.done.wait(12):
+        if not request.done.wait(BLUETOOTH_SETTINGS_TIMEOUT):
             request.cancelled = True
             with self.bluetooth.mutex:
                 if request in self.bluetooth.queue:

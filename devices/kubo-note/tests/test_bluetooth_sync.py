@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import hmac
+import struct
 from types import SimpleNamespace
 from unittest.mock import patch
 import sys
@@ -82,7 +83,10 @@ class GattPeer:
             self.frames = BleFrames(self.session_key, host=False)
         else:
             self.plaintext = self.frames.open(packet)
-            self.reply = self.frames.seal(self.command(self.plaintext))
+            result = self.command(self.plaintext)
+            if result is None:
+                return
+            self.reply = self.frames.seal(result)
         self.notify(None, b"\x01")
 
 
@@ -117,6 +121,8 @@ class BluetoothSyncTests(unittest.IsolatedAsyncioTestCase):
             SimpleNamespace(local_name="Kubo-" + tag.hex(), service_data={}, service_uuids=[SERVICE]),
             SimpleNamespace(local_name="Peter-Note Settings", service_data={SERVICE: b"P" + enrolled_tag},
                             service_uuids=[]),
+            SimpleNamespace(local_name="Peter-Note", service_data={SERVICE: b"D" + enrolled_tag},
+                            service_uuids=[]),
         ):
             with self.subTest(accepted=accepted.local_name):
                 stop = asyncio.Event()
@@ -135,6 +141,8 @@ class BluetoothSyncTests(unittest.IsolatedAsyncioTestCase):
                             local_name="Kubo-" + tag.hex(), service_data={}, service_uuids=[]))
                         self.detect("other-settings-device", SimpleNamespace(
                             local_name="Other-Note", service_data={SERVICE: b"PFFFFFF"}, service_uuids=[]))
+                        self.detect("other-delivery-device", SimpleNamespace(
+                            local_name="Other-Note", service_data={SERVICE: b"DFFFFFF"}, service_uuids=[]))
                         self.detect("paired-device", accepted)
 
                     async def __aexit__(self, *_exception):
@@ -153,8 +161,8 @@ class BluetoothSyncTests(unittest.IsolatedAsyncioTestCase):
                     async def __aexit__(self, *_exception):
                         pass
 
-                def drain(_link, device, token, settings_window):
-                    found.append((device, token, settings_window))
+                def drain(_link, device, token, settings_window, *, delivery_only=False):
+                    found.append((device, token, settings_window, delivery_only))
                     stop.set()
 
                 def fail(error):
@@ -167,10 +175,12 @@ class BluetoothSyncTests(unittest.IsolatedAsyncioTestCase):
                         enrollments=lambda: {"fixture": {"advertiser": enrolled_tag.hex(), "token": self.token}},
                         settings_pending=lambda device: device == "fixture")
                     await asyncio.wait_for(watcher, timeout=2)
+                settings_window = accepted.service_data.get(SERVICE, b"") == b"P" + enrolled_tag
                 self.assertEqual(found, [
-                    ("paired-device", {"timeout": 6, "services": [SERVICE],
+                    ("paired-device", {"timeout": 18 if settings_window else 6, "services": [SERVICE],
                                        "winrt": {"use_cached_services": False}}),
-                    ("fixture", self.token, accepted.service_data.get(SERVICE, b"") == b"P" + enrolled_tag),
+                    ("fixture", self.token, settings_window,
+                     accepted.service_data.get(SERVICE, b"") == b"D" + enrolled_tag),
                 ])
 
     async def test_incomplete_gatt_reports_expected_endpoints_without_handshake(self):
@@ -272,6 +282,56 @@ class BluetoothSyncTests(unittest.IsolatedAsyncioTestCase):
             link.write(b"KUBO_USB_V1 HELLO")
         self.assertEqual(len(device.chunks), 3)
 
+    async def test_downloads_binary_audio_notifications_and_checks_integrity_before_saving(self):
+        for failure in (None, "tampered", "wrong-offset", "disconnected"):
+            with self.subTest(failure=failure):
+                note = FakePala()
+                windows = []
+                transcribed = []
+
+                def command(payload):
+                    if payload == b"KUBO_USB_V1 AUDIO\n":
+                        return b"\nKUBO_USB_V1 AUDIO 1024\n"
+                    if payload.startswith(b"\x03"):
+                        offset, size = struct.unpack("!IH", payload[1:])
+                        windows.append((offset, size))
+                        returned_offset = offset + 1 if failure == "wrong-offset" else offset
+                        plaintext = struct.pack("!I", returned_offset) + note.audio[offset:offset + size]
+                        frames = device.frames
+                        block = frames.cipher.encrypt(frames.nonce(1, frames.sent), plaintext, None)
+                        frames.sent += 1
+                        if failure == "tampered":
+                            block = block[:-1] + bytes([block[-1] ^ 1])
+                        for start in range(0, len(block), 19):
+                            device.notify(None, b"\x02" + block[start:start + 19])
+                            if failure == "disconnected":
+                                raise OSError("The Note disconnected mid-block.")
+                        return None
+                    if payload.startswith(b"KUBO_USB_V1 READ "):
+                        self.fail("The legacy audio read was used after starting an audio transfer.")
+                    note.write(payload)
+                    note.read_until(b"\n", 500)
+                    return note.read_until(b"\n", 500)
+
+                def transcribe(audio):
+                    transcribed.append(audio)
+                    return {"text": "Dictated text."}
+
+                device = GattPeer(TOKEN, self.challenge, command=command)
+                link = BleLink(device, asyncio.get_running_loop())
+                await link.initialize(TOKEN)
+                if failure is not None:
+                    with self.assertRaises(OSError):
+                        await asyncio.to_thread(sync_one, link, (TOKEN,), transcribe)
+                    self.assertEqual(transcribed, [])
+                    self.assertEqual(note.text, b"")
+                    self.assertTrue(link.failed)
+                else:
+                    result = await asyncio.to_thread(sync_one, link, (TOKEN,), transcribe)
+                    self.assertEqual(transcribed, [note.audio])
+                    self.assertEqual(result.audio_bytes, 2844)
+                    self.assertEqual(windows, [(0, 588), (588, 588), (1176, 588), (1764, 588), (2352, 492)])
+                    self.assertEqual(note.text, b"Dictated text.")
 
     async def test_recording_survives_a_dropped_ble_session_and_saves_on_next_connection(self):
         note = FakePala()
@@ -280,6 +340,8 @@ class BluetoothSyncTests(unittest.IsolatedAsyncioTestCase):
 
         def record_command(*, drop):
             def command(payload):
+                if payload == b"KUBO_USB_V1 AUDIO\n":
+                    return b"\nKUBO_USB_V1 ERROR COMMAND\n"
                 if drop and payload.startswith(b"KUBO_USB_V1 READ "):
                     raise OSError("The synthetic link went out of range.")
                 note.write(payload)

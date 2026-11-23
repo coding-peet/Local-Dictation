@@ -24,6 +24,33 @@ constexpr bool stopsFastChecksAfterTheDeliveryWindow() {
 
 static_assert(followsAsynchronousDelivery());
 static_assert(stopsFastChecksAfterTheDeliveryWindow());
+
+constexpr bool followsBluetoothDeliveryAfterTheRecordingLinkCloses() {
+  HomeDeliveryRefresh refresh;
+  if (refresh.needsBluetoothFollowup(10000) || refresh.keepAwakeForBluetooth(10000)) return false;
+  refresh.received(1000, 1);
+  if (refresh.needsBluetoothFollowup(8999) || !refresh.needsBluetoothFollowup(9000)) return false;
+  refresh.bluetoothAttempted(9000);
+  refresh.received(9200, 1);
+  if (refresh.needsBluetoothFollowup(20999) || !refresh.needsBluetoothFollowup(21000)) return false;
+  if (!refresh.keepAwakeForBluetooth(45999) || refresh.keepAwakeForBluetooth(46000)) return false;
+  refresh.received(24000, 0);
+  return !refresh.needsBluetoothFollowup(90000) && !refresh.keepAwakeForBluetooth(24000);
+}
+
+constexpr bool backsOffAndRecoversFromAnOfflineBridge() {
+  HomeDeliveryRefresh refresh;
+  refresh.received(0xfffffff0u, 1);
+  if (!refresh.needsBluetoothFollowup(7984)) return false;
+  refresh.bluetoothAttempted(7984);
+  if (refresh.needsBluetoothFollowup(19983) || !refresh.needsBluetoothFollowup(19984)) return false;
+  refresh.bluetoothAttempted(39984);
+  return !refresh.keepAwakeForBluetooth(44984) && !refresh.needsBluetoothFollowup(99983) &&
+         refresh.needsBluetoothFollowup(99984);
+}
+
+static_assert(followsBluetoothDeliveryAfterTheRecordingLinkCloses());
+static_assert(backsOffAndRecoversFromAnOfflineBridge());
 }
 
 #include "../pala_note/src/app/home_dashboard.h"

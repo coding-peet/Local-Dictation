@@ -9,6 +9,7 @@ import io
 import json
 import os
 from pathlib import Path
+import queue
 import re
 import shutil
 import sys
@@ -17,6 +18,7 @@ import ssl
 import subprocess
 import tempfile
 import threading
+import time
 import uuid
 import wave
 from http import HTTPStatus
@@ -119,7 +121,8 @@ def local_dictation_model(config, settings):
 
 def local_dictation_address(settings=None):
     settings = local_dictation_settings() if settings is None else settings
-    value = settings.get("Endpoint", LOCAL_DICTATION_DEFAULT_ENDPOINT)
+    override = os.environ.get("PALA_BRIDGE_LOCAL_API_ENDPOINT")
+    value = override or settings.get("Endpoint", LOCAL_DICTATION_DEFAULT_ENDPOINT)
     if not isinstance(value, str):
         raise ValueError("Neplatná adresa Local Dictation.")
 
@@ -134,6 +137,55 @@ def local_dictation_address(settings=None):
     return endpoint.hostname, port
 
 
+def local_dictation_application_key(host, port):
+    override = os.environ.get("PALA_BRIDGE_LOCAL_API_KEY_FILE")
+    if override is not None:
+        path = Path(override)
+        if not os.environ.get("PALA_BRIDGE_LOCAL_API_ENDPOINT") or not path.is_absolute():
+            raise ValueError("Bind the Bridge application key to its loopback endpoint.")
+    else:
+        if (host, port) != ("127.0.0.1", 48125):
+            return None
+        root = Path(os.environ.get("LOCAL_DICTATION_HOME", r"C:\AI\LocalDictation"))
+        path = root / "api-keys" / "bridge.key"
+        if not path.is_file():
+            return None
+    with path.open("r", encoding="ascii") as file:
+        key = file.read(256).strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", key):
+        raise ValueError("Invalid Bridge application key file.")
+    return key
+
+
+def local_dictation_requires_key(health):
+    capabilities = health.get("capabilities")
+    return isinstance(capabilities, dict) and capabilities.get("application_keys") is True
+
+
+def windows_packaged_codex():
+    # The Codex desktop package is registered per user and may be absent from PATH.
+    system_root = Path(os.environ.get("SystemRoot", r"C:\Windows"))
+    powershell = system_root / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    try:
+        result = subprocess.run(
+            [str(powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+             "[Console]::OutputEncoding = [Text.UTF8Encoding]::new(); "
+             "Get-AppxPackage -Name OpenAI.Codex -ErrorAction Stop | "
+             "Select-Object -ExpandProperty InstallLocation"],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
+            timeout=8, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode == 0:
+            for location in result.stdout.splitlines():
+                root = Path(location.strip())
+                exe = root / "app" / "resources" / "codex.exe"
+                if root.is_absolute() and exe.is_file():
+                    return str(exe)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    return None
+
+
 def codex_command():
     if os.name == "nt":
         exe = shutil.which("codex.exe")
@@ -144,6 +196,9 @@ def codex_command():
             script = Path(shim).parent / "node_modules/@openai/codex/bin/codex.js"
             if script.exists():
                 return ["node", str(script)]
+        exe = windows_packaged_codex()
+        if exe:
+            return [exe]
         raise RuntimeError("Nainštaluj Codex CLI a prihlás sa cez codex login.")
     return [shutil.which("codex") or "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex"]
 
@@ -155,20 +210,119 @@ def require_chatgpt_login(cli):
         raise RuntimeError("Prihlás Codex CLI cez ChatGPT (codex login).")
 
 
-def codex(prompt, schema):
+CODEX_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+CODEX_MODEL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,127}")
+
+
+def codex_options(settings):
+    effort = settings.get("PalaKuboReasoningEffort", "high")
+    model = settings.get("PalaKuboModel")
+    if not isinstance(effort, str) or effort not in CODEX_EFFORTS:
+        raise ValueError("Choose a valid Kubo reasoning effort in Local Dictation.")
+    options = ["-c", f'model_reasoning_effort="{effort}"']
+    if model is not None:
+        if not isinstance(model, str) or not CODEX_MODEL_ID.fullmatch(model):
+            raise ValueError("Choose a valid Kubo processing model in Local Dictation.")
+        options.extend(("--model", model))
+    return options
+
+
+def codex_environment():
+    return {key: value for key, value in os.environ.items()
+            if key not in ("OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL")}
+
+
+def codex_model_catalog():
+    cli = codex_command()
+    require_chatgpt_login(cli)
+    with tempfile.TemporaryDirectory() as work:
+        command = cli + ["app-server", "--listen", "stdio://",
+                         "-c", 'model_provider="openai"', "-c", "analytics.enabled=false"]
+        with subprocess.Popen(command, cwd=work, env=codex_environment(), encoding="utf-8",
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)) as child:
+            messages = queue.Queue()
+            deadline = time.monotonic() + 24
+
+            def read_messages():
+                try:
+                    for line in child.stdout:
+                        with contextlib.suppress(ValueError):
+                            messages.put(json.loads(line))
+                finally:
+                    messages.put(None)
+
+            def send(message):
+                child.stdin.write(json.dumps(message) + "\n")
+                child.stdin.flush()
+
+            def receive(ident):
+                while time.monotonic() < deadline:
+                    try:
+                        reply = messages.get(timeout=max(0, deadline - time.monotonic()))
+                    except queue.Empty:
+                        break
+                    if reply is None:
+                        raise RuntimeError("Codex closed the model catalog connection.")
+                    if not isinstance(reply, dict) or reply.get("id") != ident:
+                        continue
+                    if "result" not in reply:
+                        raise RuntimeError("Codex did not return its model catalog.")
+                    return reply["result"]
+                raise TimeoutError("Codex did not return the model catalog in time.")
+
+            threading.Thread(target=read_messages, daemon=True).start()
+            items = {}
+            try:
+                send({"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "kubo-bridge", "version": "1"}}})
+                receive(1)
+                send({"method": "initialized"})
+                cursor = None
+                for ident in range(2, 12):
+                    params = {"limit": 100, "includeHidden": False}
+                    if cursor is not None:
+                        params["cursor"] = cursor
+                    send({"id": ident, "method": "model/list", "params": params})
+                    page = receive(ident)
+                    for model in page["data"]:
+                        name = model.get("model") or model.get("id")
+                        efforts = [item["reasoningEffort"] for item in model.get("supportedReasoningEfforts", [])
+                                   if item.get("reasoningEffort") in CODEX_EFFORTS]
+                        if isinstance(name, str) and CODEX_MODEL_ID.fullmatch(name) and efforts and not model.get("hidden"):
+                            items[name] = {"id": name, "label": model.get("displayName") or name,
+                                           "efforts": efforts, "isDefault": model.get("isDefault") is True}
+                    cursor = page.get("nextCursor")
+                    if not cursor:
+                        break
+                else:
+                    raise RuntimeError("The Codex model catalog did not finish.")
+            finally:
+                with contextlib.suppress(OSError):
+                    child.stdin.close()
+                try:
+                    child.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    child.kill()
+                    child.wait()
+    if not items:
+        raise RuntimeError("Codex returned no compatible processing models.")
+    return list(items.values())
+
+
+def codex(prompt, schema, *, profile=None):
     cli = codex_command()
     require_chatgpt_login(cli)
     with tempfile.TemporaryDirectory() as work:
         out = Path(work) / "result"
         args = cli + ["exec", "--ephemeral", "--ignore-user-config",
                 "--skip-git-repo-check", "--sandbox", "read-only", "--disable", "shell_tool", "--disable", "apps",
-                "-c", 'web_search="disabled"', "-c", 'model_reasoning_effort="low"', "-o", str(out)]
+                "-c", 'web_search="disabled"', "-o", str(out)]
+        args += codex_options(local_dictation_settings() if profile is None else profile)
         if schema:
             spec = Path(work) / "schema.json"
             spec.write_bytes(encode(schema))
             args += ["--output-schema", str(spec)]
-        env = {k: v for k, v in os.environ.items() if k not in ("OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL")}
-        subprocess.run(args + ["-"], input=prompt.encode(), cwd=work, env=env,
+        subprocess.run(args + ["-"], input=prompt.encode(), cwd=work, env=codex_environment(),
                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True, timeout=120)
         return out.read_text(encoding="utf-8").strip()
 
@@ -281,8 +435,19 @@ class Bridge:
         child = self.state / "PalaApple.app/Contents/MacOS/PalaApple"
         subprocess.run([child], input=encode(cmd), check=True, timeout=90)
 
-    def memories(self, doc, schema):
+    def memories(self, doc, schema, *, profile=None):
         config = processing_config(self.state, self.config)
+        google = config.get("destination") == "google"
+        route = ""
+        if google:
+            from pala_google import classify_transcript
+
+            route, _ = classify_transcript(doc["pala_transcript"])
+        explicit_calendar = route == "calendar"
+
+        def appointment_allowed(action):
+            return not google or explicit_calendar or (route == "work" and action["kind"] == "work_event")
+
         key = digest([doc["pala_note"], doc["pala_created"], doc["pala_transcript"]])
         with self.database() as db:
             row = db.execute("SELECT data FROM memories WHERE id=?", (key,)).fetchone()
@@ -315,11 +480,7 @@ class Bridge:
                     "For a shopping-list-only note use kind=reference, tasks=[], and a descriptive title. "
                     "In mixed notes keep independent tasks, events, and explicitly requested timed reminders. "
                     "Never export the list-entry instruction as a work task.")
-                explicit_calendar = False
-                if config.get("destination") == "google":
-                    from pala_google import classify_transcript
-
-                    explicit_calendar = classify_transcript(doc["pala_transcript"])[0] == "calendar"
+                if google:
                     action_schema["properties"]["kind"]["enum"] += ["work_event", "work_note", "keep"]
                     prompt += (" Use work_event only for explicitly work-related appointments, otherwise event. "
                                "Use work_note for an explicitly requested OneNote entry only, with its text in title. "
@@ -340,8 +501,10 @@ class Bridge:
                                "to Notes unless separately requested.")
                 schema["properties"]["apple"] = {"type": "array", "items": action_schema}
                 schema["required"].append("apple")
-                result = json.loads(codex(doc["instructions"] + prompt + "\n" + doc["input"], schema))
+                result = json.loads(codex(doc["instructions"] + prompt + "\n" + doc["input"], schema, profile=profile))
                 actions = result.pop("apple")
+                if route.startswith("list:"):
+                    actions = []
                 arrival = any(a["kind"] == "shopping" for a in actions)
                 if "tasks" in result:
                     result["tasks"] = [t for t in result["tasks"]
@@ -364,6 +527,8 @@ class Bridge:
                     if explicit_calendar and config["personal_note_collection"] and a["kind"] == "work_event":
                         a["kind"] = "event"
                     if config["personal_note_collection"] and a["kind"] in ("work", "work_note", "work_event"):
+                        continue
+                    if a["kind"] in ("event", "work_event") and not appointment_allowed(a):
                         continue
                     if not resolve_action_yearless(a, reference):
                         # Preserve the proposal locally until the device can collect a date.
@@ -389,16 +554,24 @@ class Bridge:
         pending = []
         with self.database() as db:
             rows = list(db.execute("SELECT id,data,status FROM actions WHERE id LIKE ? ORDER BY rowid", (key + "-%",)))
+        now = dt.datetime.now(dt.timezone.utc)
+        zone = ZoneInfo(config.get("timezone", "Europe/Bratislava"))
         for ident, data, status in rows:
             action = json.loads(data)
-            if status == "auto":
+            if status == "auto" and not route.startswith("list:"):
                 self.deliver(action, "arrival" if action["kind"] == "arrival" else ident)
                 self.mark(ident, "done")
             elif status == "accepted":
                 self.deliver_accepted_event(ident, action)
-            elif status == "pending":
-                if not config["personal_note_collection"] or action["kind"] != "work_event":
-                    pending.append(dict(id=ident, **action))
+            elif status == "pending" and appointment_allowed(action):
+                if config["personal_note_collection"] and action["kind"] == "work_event":
+                    continue
+                dates = action.get("choices") or (action,)
+                if google and not any(all(valid_future_start(date.get(field), zone, now) for field in ("due", "end"))
+                                      for date in dates):
+                    self.mark(ident, "needs-date", expected="pending")
+                    continue
+                pending.append(dict(id=ident, **action))
         return json.dumps(result, ensure_ascii=False), pending
 
     def mark(self, ident, status, *, expected=None):
@@ -497,7 +670,10 @@ class Bridge:
         try:
             host, port = local_dictation_address()
             with contextlib.closing(http.client.HTTPConnection(host, port, timeout=2)) as connection:
-                busy = local_dictation_health(connection).get("busy", False)
+                health = local_dictation_health(connection)
+                if local_dictation_requires_key(health) and local_dictation_application_key(host, port) is None:
+                    return HTTPStatus.BAD_GATEWAY
+                busy = health.get("busy", False)
         except (OSError, ValueError, http.client.HTTPException):
             return HTTPStatus.BAD_GATEWAY
         if busy is True:
@@ -525,13 +701,15 @@ class Bridge:
             f'\r\n--{boundary}--\r\n'.encode(),
         ))
         host, port = local_dictation_address(settings)
+        key = local_dictation_application_key(host, port)
+        headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
+        if key is not None:
+            headers["Authorization"] = "Bearer " + key
         connection = http.client.HTTPConnection(host, port, timeout=100)
         try:
-            local_dictation_health(connection)
-
-            connection.request("POST", "/v1/audio/transcriptions", b"".join(parts), {
-                "Content-Type": f"multipart/form-data; boundary={boundary}",
-            })
+            if local_dictation_requires_key(local_dictation_health(connection)) and key is None:
+                raise OSError("The Local Dictation API requires a Bridge application key.")
+            connection.request("POST", "/v1/audio/transcriptions", b"".join(parts), headers)
             response = connection.getresponse()
             if response.status != 200:
                 raise OSError(f"Local Dictation returned HTTP {response.status}")
@@ -549,19 +727,51 @@ class Bridge:
             if config.get("processing_mode") == "transcribe":
                 raise ProcessingDisabled("Bridge is set to transcription only.")
             if route == "/pala/event":
-                return self.confirm(doc)
+                if device is None:
+                    return self.confirm(doc)
+                from pala_google import DeliveryQueue
+
+                journal = DeliveryQueue(self.state)
+                try:
+                    result = self.confirm(doc)
+                except Exception as error:
+                    journal.log_calendar_decision(doc.get("id"), f"decision could not complete ({type(error).__name__})")
+                    raise
+                journal.log_calendar_decision(doc.get("id"), "confirmation processed" if doc.get("accept")
+                                              else "declined on Note")
+                return result
             if route == "/v1/responses":
                 fmt = doc.get("text", {}).get("format", {})
                 if fmt.get("name") == "pala_memory":
-                    if device is not None and config.get("google_routes"):
-                        from pala_google import DeliveryQueue, general_fallback_kinds
+                    journal = None
+                    profile = local_dictation_settings() if device is not None else None
+                    if device is not None:
+                        from pala_google import (DeliveryQueue, can_stage_google_route, classify_transcript,
+                                                 general_fallback_kinds)
 
-                        # The Note sends this only after saving the transcript to SD.
-                        # The shared journal deduplicates Wi-Fi retries and USB/BLE sync.
-                        DeliveryQueue(self.state).stage(device, doc["pala_note"],
-                                                        doc["pala_created"], doc["pala_transcript"],
-                                                        general_fallback=general_fallback_kinds(config))
-                    text, pending = self.memories(doc, fmt["schema"])
+                        journal = DeliveryQueue(self.state)
+                        # The Note sends organization only once its transcript is durable on SD.
+                        recording = journal.remember_transcript(device, doc["pala_note"], doc["pala_created"],
+                                                                 doc["pala_transcript"], on_note=True)
+                        kind, _ = classify_transcript(doc["pala_transcript"])
+                        if can_stage_google_route(config, kind):
+                            journal.stage(device, doc["pala_note"], doc["pala_created"], doc["pala_transcript"],
+                                          general_fallback=general_fallback_kinds(config))
+                        else:
+                            journal.log_decision(recording, "Routing", f"{kind} retained locally")
+                        codex_options(profile)
+                        model = profile.get("PalaKuboModel") or "Codex default"
+                        effort = profile.get("PalaKuboReasoningEffort", "high")
+                        journal.log_decision(recording, "Kubo", f"configured model {model}, reasoning {effort}")
+                    try:
+                        text, pending = self.memories(doc, fmt["schema"], profile=profile)
+                    except Exception as error:
+                        if journal:
+                            journal.log_decision(recording, "Kubo", f"processing failed ({type(error).__name__})")
+                        raise
+                    if journal and (kind == "calendar" or pending):
+                        detail = f"{len(pending)} proposal(s) await confirmation" if pending else "No concrete future proposal"
+                        journal.log_calendar_proposals(recording, pending, detail)
                 else:
                     text = codex(doc["instructions"] + "\n" + doc["input"], fmt.get("schema"))
                     pending = []
@@ -733,7 +943,10 @@ def managed_stop_event(parent_input):
 
 
 def serve_configured_bridge(config, stop, report):
+    from pala_google import home_codex_usage
+
     bridge = Bridge(STATE, config)
+    home_codex_usage(STATE, config)
     if config.get("discovery_id"):
         serve(STATE, config, Handler, bridge, stop=stop,
               on_status=lambda listeners, desired: report(
@@ -795,6 +1008,16 @@ def run_bridge(config, stop):
 
 if __name__ == "__main__":
     os.umask(0o077)
+    if sys.argv[1:] == ["--codex-models", "--managed"]:
+        sys.stdout.reconfigure(encoding="utf-8")
+        print(json.dumps(codex_model_catalog(), ensure_ascii=False))
+        sys.exit(0)
+    if len(sys.argv) == 4 and sys.argv[1] == "--note-transcripts" and sys.argv[3] == "--managed":
+        from pala_google import DeliveryQueue
+
+        sys.stdout.reconfigure(encoding="utf-8")
+        print(json.dumps(DeliveryQueue(STATE).note_transcripts(int(sys.argv[2])), ensure_ascii=False))
+        sys.exit(0)
     config = json.loads((STATE / "config.json").read_text())
     if sys.argv[1:] == ["--ms-login"]:
         from microsoft_store import credentials

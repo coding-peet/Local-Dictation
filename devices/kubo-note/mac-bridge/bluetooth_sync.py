@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import re
 import secrets
+import struct
 import threading
 import time
 from concurrent.futures import TimeoutError as FutureTimeout
@@ -20,6 +21,8 @@ RESPONSE = "a7727a13-7a9d-4bdd-aaf5-d3e331eddf71"
 SIGNAL = "a7727a14-7a9d-4bdd-aaf5-d3e331eddf71"
 GATT_ENDPOINTS = ((CAPABILITY, "CAPABILITY"), (REQUEST, "REQUEST"),
                   (RESPONSE, "RESPONSE"), (SIGNAL, "SIGNAL"))
+SETTINGS_GATT_TIMEOUT = 18
+SETTINGS_HANDSHAKE_TIMEOUT = 10
 
 IDENTITY_LABEL = b"KUBO_BLE_V1 identity"
 KEY_INFO = b"KUBO_BLE_V2 keys"
@@ -29,6 +32,11 @@ NONCE_BYTES = 16
 KEY_BYTES = 32
 MAX_PACKET = 512
 TAG_BYTES = 16
+AUDIO_REQUEST = 0x03
+AUDIO_FRAGMENT = b"\x02"
+AUDIO_OFFSET_BYTES = 4
+MAX_AUDIO_BLOCK = 4096
+MAX_AUDIO_NOTIFICATIONS = 32
 
 
 def identity(token):
@@ -69,8 +77,8 @@ class BleFrames:
         self.sent += 1
         return packet
 
-    def open(self, packet):
-        if not TAG_BYTES < len(packet) <= MAX_PACKET:
+    def open(self, packet, *, max_packet=MAX_PACKET):
+        if not TAG_BYTES < len(packet) <= max_packet:
             raise ValueError("Invalid Pala BLE frame length.")
         plaintext = self.cipher.decrypt(self.nonce(self.read_direction, self.received), packet, None)
         self.received += 1
@@ -83,12 +91,15 @@ class BleLink:
     read_chunk = 224
     write_chunk = 224
     settings_frame_limit = MAX_PACKET - TAG_BYTES
+    audio_block_limit = MAX_AUDIO_BLOCK
 
     def __init__(self, client, loop):
         self.client = client
         self.loop = loop
         self.buffer = bytearray()
         self.ready = asyncio.Event()
+        self.audio_packet = None
+        self.audio_packet_size = 0
         self.frames = None
         self.handshake_started = False
         self.failed = False
@@ -120,13 +131,26 @@ class BleLink:
     def _on_ready(self, _characteristic, data):
         if data == b"\x01":
             self.ready.set()
+        elif self.audio_packet is not None and not self.ready.is_set() and data[:1] == AUDIO_FRAGMENT:
+            self.audio_packet.extend(data[1:])
+            if len(data) == 1 or len(self.audio_packet) >= self.audio_packet_size:
+                self.ready.set()
 
-    async def _request(self, packet):
+    @property
+    def preferred_audio_block_size(self):
+        # ATT uses three bytes and the stream adds one fragment marker.
+        fragment_size = min(243, max(19, self.client.mtu_size - 4))
+        return min(self.audio_block_limit, MAX_AUDIO_NOTIFICATIONS * fragment_size - AUDIO_OFFSET_BYTES - TAG_BYTES)
+
+    async def _write_packet(self, packet):
         framed = len(packet).to_bytes(2, "big") + packet
         chunk_size = min(MAX_PACKET, max(20, self.client.mtu_size - 3))
-        self.ready.clear()
         for offset in range(0, len(framed), chunk_size):
             await self.client.write_gatt_char(REQUEST, framed[offset:offset + chunk_size], response=True)
+
+    async def _request(self, packet):
+        self.ready.clear()
+        await self._write_packet(packet)
         await self.ready.wait()
         return await self.client.read_gatt_char(RESPONSE, use_cached=False)
 
@@ -134,21 +158,50 @@ class BleLink:
         reply = await self._request(self.frames.seal(data))
         return self.frames.open(reply)
 
-    def write(self, data):
+    async def _read_audio_block(self, offset, length):
+        expected_size = AUDIO_OFFSET_BYTES + length + TAG_BYTES
+        self.audio_packet = bytearray()
+        self.audio_packet_size = expected_size
+        self.ready.clear()
+        try:
+            request = struct.pack("!BIH", AUDIO_REQUEST, offset, length)
+            await self._write_packet(self.frames.seal(request))
+            await self.ready.wait()
+            if len(self.audio_packet) != expected_size:
+                raise ValueError("Incomplete Pala BLE audio block.")
+            reply = self.frames.open(bytes(self.audio_packet), max_packet=expected_size)
+            if int.from_bytes(reply[:AUDIO_OFFSET_BYTES], "big") != offset:
+                raise ValueError("The Pala BLE audio block has the wrong offset.")
+            return reply[AUDIO_OFFSET_BYTES:]
+        finally:
+            self.audio_packet = None
+
+    def _require_active(self):
         if self.failed:
             raise OSError("The Pala BLE session has ended.")
         if self.frames is None:
             raise OSError("Pala BLE authentication is incomplete.")
-        request = asyncio.run_coroutine_threadsafe(self._exchange(data), self.loop)
+
+    def _wait(self, operation):
+        request = asyncio.run_coroutine_threadsafe(operation, self.loop)
         try:
-            reply = request.result(timeout=8)
+            return request.result(timeout=8)
         except Exception as error:
             self.failed = True
             if isinstance(error, FutureTimeout):
                 request.cancel()
             raise OSError("The Pala BLE exchange was interrupted.") from error
-        self.buffer.extend(reply)
+
+    def write(self, data):
+        self._require_active()
+        self.buffer.extend(self._wait(self._exchange(data)))
         return len(data)
+
+    def read_audio_block(self, offset, length):
+        self._require_active()
+        if not 0 <= offset <= 0xffffffff or not 0 < length <= self.audio_block_limit:
+            raise ValueError("Invalid Pala BLE audio block request.")
+        return self._wait(self._read_audio_block(offset, length))
 
     def read_until(self, terminator, limit):
         found = self.buffer.find(terminator, 0, limit)
@@ -222,25 +275,27 @@ async def watch_bluetooth(tokens, stop, drain, on_error, *, enrollments=None, pa
                 return
             _, peers, legacy_names = available()
             settings_window = False
+            delivery_only = False
             if SERVICE in data.service_data:
                 tag = data.service_data[SERVICE]
                 settings_window = len(tag) == 7 and tag[:1] == b"P"
+                delivery_only = len(tag) == 7 and tag[:1] == b"D"
                 if settings_window:
                     job = pairing.claim_ble() if pairing is not None else None
                     if job is not None:
-                        found.set_result((device, None, None, job, settings_window))
+                        found.set_result((device, None, None, job, settings_window, False))
                         return
                     peer = peers.get(tag[1:])
                     if peer and (settings_pending is None or not settings_pending(peer[0])):
                         peer = None
                 else:
-                    peer = peers.get(tag)
+                    peer = peers.get(tag[1:] if delivery_only else tag)
             elif SERVICE in data.service_uuids:
                 peer = legacy_names.get(data.local_name)
             else:
                 peer = None
             if peer:
-                found.set_result((device, *peer, None, settings_window))
+                found.set_result((device, *peer, None, settings_window, delivery_only))
 
         try:
             async with BleakScanner(detection_callback=discover):
@@ -249,7 +304,7 @@ async def watch_bluetooth(tokens, stop, drain, on_error, *, enrollments=None, pa
                     await asyncio.wait((found,), timeout=1)
                 if stop.is_set():
                     return
-                device, device_id, token, job, settings_window = found.result()
+                device, device_id, token, job, settings_window, delivery_only = found.result()
         except Exception as error:
             if scan_error is not type(error):
                 on_error(error)
@@ -264,12 +319,18 @@ async def watch_bluetooth(tokens, stop, drain, on_error, *, enrollments=None, pa
                 await _enroll_bluetooth(device, job, BleakClient, pairing, enroll, pairing_lock)
                 continue
             # An uncached value read does not refresh WinRT's characteristic list.
-            async with BleakClient(device, timeout=6, services=[SERVICE],
+            # A single WinRT GATT operation can wait seven seconds on an unreachable peer.
+            connect_timeout = SETTINGS_GATT_TIMEOUT if settings_window else 6
+            handshake_timeout = SETTINGS_HANDSHAKE_TIMEOUT if settings_window else 6
+            async with BleakClient(device, timeout=connect_timeout, services=[SERVICE],
                                    winrt={"use_cached_services": False}) as client:
                 require_note_gatt(client)
                 link = BleLink(client, loop)
-                await asyncio.wait_for(link.initialize(token), timeout=6)
-                await asyncio.to_thread(drain, link, device_id, token, settings_window)
+                await asyncio.wait_for(link.initialize(token), timeout=handshake_timeout)
+                if delivery_only:
+                    await asyncio.to_thread(drain, link, device_id, token, False, delivery_only=True)
+                else:
+                    await asyncio.to_thread(drain, link, device_id, token, settings_window)
         except Exception as error:
             if not stop.is_set():
                 on_error(error)

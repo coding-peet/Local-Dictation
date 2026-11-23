@@ -159,6 +159,52 @@ For another PC, prepare a compatible Python/CUDA environment from
 Provide the original model files and manifests separately. Package locks do not
 install GPU drivers or download model weights.
 
+### Start the first speech API candidate
+
+Use a free loopback port and a separate data root. This command starts the
+candidate, creates its private key files on first use, and reads the paths to
+the installed Lili voice from the existing Bridge speech profile.
+
+~~~powershell
+$candidate = 'C:\Git\Local-Dictation\build\local-speech-candidate-20261122'
+New-Item -ItemType Directory -Path $candidate -Force | Out-Null
+.\scripts\Start-CandidateServer.ps1 `
+    -Port 48126 `
+    -DataRoot (Join-Path $candidate 'server-data') `
+    -ApplicationKeyDirectory (Join-Path $candidate 'app-keys') `
+    -PiperProfile (Join-Path $env:LOCALAPPDATA 'PalaBridge\speech-voice.json')
+~~~
+
+The Local Dictation key grants speech, transcription and model management
+to the native client. The Bridge key grants transcription. Both keys bind
+to the configured loopback endpoint. Supply the path to the corresponding
+private file through the client process environment.
+
+| Client | Endpoint variable | Key file variable | File name |
+| --- | --- | --- | --- |
+| Native Local Dictation | `LOCAL_DICTATION_API_KEY_ENDPOINT` | `LOCAL_DICTATION_API_KEY_FILE` | `local-dictation.key` |
+| Pala Bridge | `PALA_BRIDGE_LOCAL_API_ENDPOINT` | `PALA_BRIDGE_LOCAL_API_KEY_FILE` | `bridge.key` |
+
+For the native client, set `Endpoint` in its isolated settings to the same
+address and set `LOCAL_DICTATION_HOME` to the isolated client profile before
+launching the candidate EXE. Set the Bridge variables in the process that
+runs the candidate Bridge worker. The Windows user who provisions a key
+owns its private file. The service authorizes requests using the digests in
+`app-keys\registry.json`.
+
+`GET /health` reports candidate readiness. The speech endpoint is
+`POST /v1/audio/speech` with a Bearer key that has the speech permission and
+a JSON body such as `{"input":"Toto je skúška syntézy hlasu."}`. It returns
+24 kHz PCM WAV with `X-Speech-Backend: cpu`. This candidate accepts up to 500
+characters per Slovak Lili request. The first-release plan tracks chapter
+playback, the API settings page and additional voices as later tasks.
+
+The installed Windows client and managed Bridge use separate keys in
+C:\AI\LocalDictation\api-keys for the default loopback address.
+Keep the directory private to the Windows user. The client starts the keyed
+API with the existing Piper Lili profile when it finds this directory in the
+standard installation. Candidate profiles can still supply explicit keys.
+
 Start from the new checkout when its source should own the candidate:
 
 ~~~powershell

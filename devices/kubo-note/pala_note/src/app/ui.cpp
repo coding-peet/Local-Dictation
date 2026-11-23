@@ -14,6 +14,9 @@
 #include "home_delivery.h"
 #include "home_bridge_status.h"
 #include "battery.h"
+#include "date_validation.h"
+#include "local_calendar.h"
+#include "rtc.h"
 
 #include <ctime>
 
@@ -178,21 +181,28 @@ void drawFooterCentered(const char* text, uint8_t color) {
   if (text && strlen(text)) drawStrC(W / 2, kFooterTextY, text, 1, color);
 }
 
-void drawBattery(int percent, int y) {
+void drawBattery(int percent) {
   const int bars = batteryBarCount(percent);
   if (bars < 0) return;
   constexpr int x = kHomeBatteryX;
+  constexpr int y = kHomeHeaderCenterY - kBatteryHeight / 2;
   strokeRect(x, y, kBatteryBodyWidth, kBatteryHeight, 1, BLACK);
   fillRect(x + kBatteryBodyWidth, y + 3, kBatteryContactWidth, 6, BLACK);
+  if (bars == 0) {
+    constexpr int markWidth = 3;
+    constexpr int markX = x + (kBatteryBodyWidth - markWidth) / 2;
+    fillRect(markX, y + 2, markWidth, 5, BLACK);
+    fillRect(markX, y + 8, markWidth, 2, BLACK);
+    return;
+  }
   for (int i = 0; i < bars; i++) fillRect(x + 3 + i * 6, y + 3, 5, 6, BLACK);
 }
 
-void drawCompanionHeader(int batteryPercent) {
-  constexpr const char* mode = "WEB";
+void drawModeHeaderWithBattery(const char* mode, int batteryPercent) {
   const int nameWidth = W / 2 - textW(mode, 1) / 2 - kInset - 6;
   labelLeft(kHeaderY, palaNoteName().c_str(), 1, BLACK, nameWidth);
   drawStrC(W / 2, kHeaderY, mode, 1, BLACK);
-  drawBattery(batteryPercent, 9);
+  drawBattery(batteryPercent);
   hline(kInset, kHeaderRuleY, kContentWidth, BLACK);
 }
 
@@ -738,7 +748,7 @@ void showIdle(int pendingCount, int batteryPercent) {
   }
   const HomeBridgeLink bridgeLink = homeBridgeStatus.latest();
   drawHomeBridgeStatus(bridgeLink);
-  drawBattery(batteryPercent, kHomeHeaderCenterY - kBatteryHeight / 2);
+  drawBattery(batteryPercent);
   hline(kInset, kHeaderRuleY, kContentWidth, BLACK);
   const String nowUtc = currentUtcIso();
   const String localNow = utcToLocalDeviceLabel(nowUtc);
@@ -921,12 +931,13 @@ void showMemoryProcessing(int noteNumber, const char* phase) {
 void showBacklogProcessing(int completed, int total, const char* phase,
                            BacklogLink link, void (*serviceConnection)()) {
   clearWhite();
-  completed = constrain(completed, 0, max(total, 1));
-  total = max(total, 1);
-  drawHeader(translatedUi("SYNC"), BLACK);
-  char progress[20];
-  snprintf(progress, sizeof(progress), "%d / %d", completed, total);
-  labelLeft(kContentTop, progress, 1, BLACK);
+  completed = constrain(completed, 0, max(total, 0));
+  drawModeHeaderWithBattery("SYNC", readBattery().percent);
+  if (total > 0) {
+    char progress[24];
+    snprintf(progress, sizeof(progress), "%d / %d", completed, total);
+    labelLeft(kContentTop, progress, 1, BLACK);
+  }
   if (const char* transport = backlogTransportLabel(link)) labelRight(kContentTop, transport, 1, BLACK);
   drawStatusHero(memoryPhaseCopy(phase), 78, BLACK);
   strokeRect(kInset, 149, kContentWidth, 12, 1, BLACK);
@@ -1017,7 +1028,7 @@ void showNoteBluetoothPairingNumber(uint32_t code) {
 
 void showTransferConnecting(int batteryPercent) {
   clearWhite();
-  drawCompanionHeader(batteryPercent);
+  drawModeHeaderWithBattery("WEB", batteryPercent);
   labelLeft(kContentTop, translatedUi("COMPANION"), 1, BLACK);
   labelRight(kContentTop, "Wi-Fi", 1, BLACK);
   drawStatusHero(uiText("VERBINDE", "CONNECTING"), 67, BLACK);
@@ -1069,7 +1080,7 @@ void drawCompanionVolumeOverlay(int percent) {
 void showTransferMode(CompanionLink link, const String& network, const String& ip,
                       const String& apPassword, int batteryPercent, int volumeOverlay) {
   clearWhite();
-  drawCompanionHeader(batteryPercent);
+  drawModeHeaderWithBattery("WEB", batteryPercent);
   if (volumeOverlay >= 0) {
     drawCompanionVolumeOverlay(volumeOverlay);
     refresh();
@@ -1144,17 +1155,21 @@ void showUltraSleepScreen() {
   refreshClean();
 }
 
-static int calendarButtonChoice() {
+static int calendarButtonChoice(bool (*serviceConnection)()) {
   bool armed = false;
   const uint32_t since = millis();
   while (millis() - since < 30000UL) {
+    if (serviceConnection && !serviceConnection()) return -1;
     const bool up = digitalRead(BTN_REC) == LOW, down = digitalRead(BTN_PWR) == LOW;
     if (!up && !down) armed = true;
     if (armed && (up != down)) {
       delay(35);
       const int pin = up ? BTN_REC : BTN_PWR;
       if (digitalRead(pin) != LOW) continue;
-      while (digitalRead(pin) == LOW && millis() - since < 30000UL) delay(10);
+      while (digitalRead(pin) == LOW && millis() - since < 30000UL) {
+        if (serviceConnection && !serviceConnection()) return -1;
+        delay(10);
+      }
       return up ? 0 : 1;
     }
     delay(10);
@@ -1162,30 +1177,57 @@ static int calendarButtonChoice() {
   return -1;
 }
 
-int chooseCalendarEventDate(const String& title, const String& first, const String& second) {
+static bool parseCalendarMinute(const String& text, struct tm& fields) {
+  if (text.length() != 16 || !validUtcTimestamp((text + ":00Z").c_str())) return false;
+  fields = {};
+  fields.tm_year = text.substring(0, 4).toInt() - 1900;
+  fields.tm_mon = text.substring(5, 7).toInt() - 1;
+  fields.tm_mday = text.substring(8, 10).toInt();
+  fields.tm_hour = text.substring(11, 13).toInt();
+  fields.tm_min = text.substring(14, 16).toInt();
+  return true;
+}
+
+static String calendarProposalLine(const CalendarProposalTime& time) {
+  struct tm start{}, end{};
+  if (!parseCalendarMinute(time.start, start)) return "-";
+  char label[32];
+  snprintf(label, sizeof(label), "%02d.%02d.%04d %02d:%02d",
+           start.tm_mday, start.tm_mon + 1, start.tm_year + 1900, start.tm_hour, start.tm_min);
+  if (!parseCalendarMinute(time.end, end)) return String(label);
+
+  setenv("TZ", LOCAL_TZ_RULE, 1); tzset();
+  const time_t from = localWallClockEpoch(utcTmToEpoch(start));
+  const time_t until = localWallClockEpoch(utcTmToEpoch(end));
+  if (from == -1 || until <= from) return String(label);
+  return String(label) + " / " + static_cast<long>((until - from) / 60) + " min";
+}
+
+int chooseCalendarEventDate(const String& title, const CalendarProposalTime& first, const CalendarProposalTime& second,
+                            bool (*serviceConnection)()) {
   const bool sk = palaUiLanguage() == "sk";
   clearWhite();
   drawHeader(sk ? "VYBER DATUM" : "CHOOSE DATE", BLACK);
   labelLeft(38, normalizeForDisplay(title).c_str(), 1, BLACK);
-  labelLeft(75, (String("1  ") + first).c_str(), 1, BLACK);
-  labelLeft(108, (String("2  ") + second).c_str(), 1, BLACK);
+  labelLeft(75, (String("1  ") + calendarProposalLine(first)).c_str(), 1, BLACK);
+  labelLeft(108, (String("2  ") + calendarProposalLine(second)).c_str(), 1, BLACK);
   drawFooter(sk ? "HORE 1" : "UP 1", sk ? "DOLE 2" : "DOWN 2", BLACK);
   refresh();
-  return calendarButtonChoice();
+  return calendarButtonChoice(serviceConnection);
 }
 
 // 1 accepts, 0 declines, -1 leaves the proposal pending at the Bridge.
-int confirmCalendarEvent(const String& title, const String& start, const String& end, int minutes) {
+int confirmCalendarEvent(const String& title, const CalendarProposalTime& time, int minutes,
+                         bool (*serviceConnection)()) {
   const bool sk = palaUiLanguage() == "sk";
   clearWhite();
   drawHeader(sk ? "KALENDAR" : "CALENDAR", BLACK);
   labelLeft(38, normalizeForDisplay(title).c_str(), 1, BLACK);
-  labelLeft(66, start.c_str(), 1, BLACK);
-  labelLeft(91, end.c_str(), 1, BLACK);
-  if (minutes >= 0) labelLeft(117, (String(sk ? "Predstih " : "Alert ") + minutes + " min").c_str(), 1, BLACK);
+  labelLeft(66, calendarProposalLine(time).c_str(), 1, BLACK);
+  if (minutes >= 0) labelLeft(91, (String(sk ? "Predstih " : "Alert ") + minutes + " min").c_str(), 1, BLACK);
   labelLeft(143, sk ? "Ulozit termin?" : "Save event?", 1, BLACK);
   drawFooter(sk ? "HORE ANO" : "UP YES", sk ? "DOLE NIE" : "DOWN NO", BLACK);
   refresh();
-  const int button = calendarButtonChoice();
+  const int button = calendarButtonChoice(serviceConnection);
   return button < 0 ? -1 : 1 - button;
 }

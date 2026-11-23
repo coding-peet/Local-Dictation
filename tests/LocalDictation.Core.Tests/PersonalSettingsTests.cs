@@ -3,6 +3,32 @@ using Xunit;
 
 public class PersonalSettingsTests
 {
+    [Fact]
+    public void KuboSelectionDefaultsToHighAndPersistsSeparatelyFromTranscription()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "ld-kubo-" + Guid.NewGuid());
+        try
+        {
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(Path.Combine(directory, "settings.json"), "{}");
+            var settings = Settings.Load(directory);
+            Assert.Null(settings.PalaKuboModel);
+            Assert.Equal("high", settings.PalaKuboReasoningEffort);
+            settings.PalaKuboModel = "gpt-6.2-astra";
+            settings.PalaKuboReasoningEffort = "xhigh";
+            settings.Save(directory);
+            var loaded = Settings.Load(directory);
+            Assert.Equal(settings.PrimaryModel, loaded.PrimaryModel);
+            Assert.Equal("gpt-6.2-astra", loaded.PalaKuboModel);
+            Assert.Equal("xhigh", loaded.PalaKuboReasoningEffort);
+        }
+        finally
+        {
+            File.Delete(Path.Combine(directory, "settings.json"));
+            if (Directory.Exists(directory)) Directory.Delete(directory);
+        }
+    }
+
     [Fact] public void ConfigurableShortcutIgnoresRepeatAndOtherKeys()
     {
         var input=new InputCommands {Shortcut=ShortcutSpec.Parse("Ctrl+Alt+Space")};

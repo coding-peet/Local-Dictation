@@ -33,16 +33,18 @@ public sealed class HistoryAudioPlayback(Func<byte[],IHistoryAudioOutput> output
     /// <summary>Display-scaled RMS envelope; retained Peaks name for player compatibility.</summary>
     public IReadOnlyList<float> Peaks=>peaks;
 
-    public void Load(byte[] wave)
+    public void Load(byte[] wave) => Load(wave, 16000);
+
+    internal void Load(byte[] wave, int sampleRate)
     {
         ArgumentNullException.ThrowIfNull(wave);
         Clear();byte[]? pcm=null;
         try
         {
-            pcm=RecordedAudio.PcmFromWave(wave);
+            pcm=RecordedAudio.PcmFromWave(wave,sampleRate);
             var samples=pcm.Length/2;
             peaks=HistoryAudioEnvelope.Create(pcm);
-            Duration=TimeSpan.FromSeconds(samples/16000d);audio=wave;
+            Duration=TimeSpan.FromSeconds(samples/(double)sampleRate);audio=wave;
             State=HistoryPlaybackState.Stopped;
         }
         catch

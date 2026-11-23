@@ -14,7 +14,7 @@ NOTE_SAMPLE_RATE = 24000
 PEAK_LEVEL = 0.70
 
 
-def synthesize(model: Path, text: str, output: Path) -> None:
+def synthesize(model: Path, text: str, output) -> None:
     with model.with_suffix(model.suffix + ".json").open(encoding="utf-8") as settings:
         config = PiperConfig.from_dict(json.load(settings))
     # A small CPU pool avoids contention with the running local ASR service.
@@ -44,10 +44,11 @@ def synthesize(model: Path, text: str, output: Path) -> None:
 
     # Use one gain for the answer and leave headroom for the Note speaker.
     pcm = np.rint(samples * (32767 * PEAK_LEVEL / peak)).astype("<i2")
-    with wave.open(str(output), "wb") as wav:
+    with wave.open(str(output) if isinstance(output, Path) else output, "wb") as wav:
         wav.setparams((1, 2, NOTE_SAMPLE_RATE, 0, "NONE", "not compressed"))
         wav.writeframes(pcm.tobytes())
 
 
 if __name__ == "__main__":
-    synthesize(Path(sys.argv[1]), sys.stdin.buffer.read().decode("utf-8").strip(), Path(sys.argv[2]))
+    output = sys.stdout.buffer if sys.argv[2] == "--stdout" else Path(sys.argv[2])
+    synthesize(Path(sys.argv[1]), sys.stdin.buffer.read().decode("utf-8").strip(), output)

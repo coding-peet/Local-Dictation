@@ -175,6 +175,24 @@ class NoteSettingsTests(unittest.TestCase):
             self.assertEqual(legacy["PalaWeatherLocation"], "Trnava, SK")
             self.assertEqual(legacy["Endpoint"], "unchanged")
 
+    def test_locked_ble_read_does_not_include_bridge_or_other_settings(self):
+        def transport(request):
+            self.assertEqual(request["op"], "get")
+            if request.get("session"):
+                return {"ok": True, "device": {"name": "Kubo", "language": "sk"}, "wifi": [], "peers": []}, "BLE"
+            return {"ok": False, "access": "locked", "_selectedDevice": "fixture-note",
+                    "device": {"name": "Private Note"}, "wifi": [{"ssid": "Private network"}]}, "BLE"
+
+        with tempfile.TemporaryDirectory() as folder:
+            route = SettingsRoute(Path(folder), lambda: {"PalaBridgeName": "Private Bridge"}, transport, None)
+            locked = route({"op": "get"})
+            self.assertEqual(locked["access"], "locked")
+            self.assertEqual(locked["_selectedDevice"], "fixture-note")
+            self.assertFalse({"device", "wifi", "bridge", "capabilities"} & locked.keys())
+            signed_in = route({"op": "get", "session": "a1" * 24})
+            self.assertEqual(signed_in["bridge"]["name"], "Private Bridge")
+            self.assertEqual(signed_in["device"]["name"], "Kubo")
+
     def test_note_response_omits_all_credentials(self):
         wire = {"ok": True, "device": {"name": "Kubo", "language": "sk", "token": "secret"},
                 "wifi": [{"ssid": "MyWiFi", "password": "secret"}],
@@ -269,6 +287,14 @@ class NoteSettingsTests(unittest.TestCase):
         with self.assertRaisesRegex(SettingsError, "Refresh"):
             transport.request({"op": "wifi.remove", "ssid": "Example"})
         self.assertEqual(requests, [("note1", {"op": "get"})])
+
+    def test_bluetooth_settings_request_allows_a_full_connection_and_exchange(self):
+        transport = SettingsTransport(lambda: None, None, threading.Lock(), threading.Event(), True)
+        request = BluetoothRequest({"op": "get"}, result={"ok": True})
+        with patch.object(request.done, "wait", return_value=True) as wait, \
+                patch("note_transport.BluetoothRequest", return_value=request):
+            self.assertEqual(transport.request({"op": "get"}), ({"ok": True}, "BLE"))
+        wait.assert_called_once_with(40)
 
     def test_recording_advertisement_serves_an_active_settings_request_and_yields(self):
         transport = SettingsTransport(lambda: None, None, threading.Lock(), threading.Event(), True)
@@ -444,11 +470,18 @@ class ManagedWatcherSettingsTests(unittest.TestCase):
         forecast = {"days": []}
 
         def start_bluetooth(_tokens, _stop, drain, _error, **_options):
+            drain(link, "fixture-note", TOKEN, False, delivery_only=True)
             drain(link, "fixture-note", TOKEN, True)
             actions.append("ordinary advertisement")
             drain(link, "fixture-note", TOKEN, False)
             actions.append("ordinary advertisement while ASR is busy")
             drain(link, "fixture-note", TOKEN, False)
+
+        def drain_recordings(_link, _token, bridge, *_args):
+            if not bridge.local_transcription_ready():
+                return False
+            actions.append("recording")
+            return True
 
         with tempfile.TemporaryDirectory() as folder:
             state = Path(folder) / "synthetic-profile"
@@ -460,13 +493,16 @@ class ManagedWatcherSettingsTests(unittest.TestCase):
                   patch("note_transport.SettingsTransport.serve_bluetooth",
                         side_effect=lambda _device, _exchange, *, keep_open: actions.append(("settings", keep_open))),
                   patch("usb_sync.transfer_note_name", side_effect=lambda *_: actions.append("metadata")),
-                  patch("usb_sync.transfer_delivery_counts"),
+                  patch("pala_google.home_dashboard_payload",
+                        side_effect=["h2,3,0,19:30", "h2,3,0,-", "h2,3,0,-", "h2,3,1,-", "h2,3,1,-"]),
+                  patch("usb_sync.transfer_delivery_counts",
+                        side_effect=lambda *_, dashboard: actions.append(("home", dashboard))),
                   patch("usb_sync.transfer_holidays", side_effect=lambda *_: actions.append("holidays")),
                   patch("weather.ForecastCache.get",
                         side_effect=lambda: actions.append("weather lookup") or forecast),
                   patch("usb_sync.transfer_forecast",
                         side_effect=lambda *_: actions.append("weather transfer")),
-                  patch("usb_sync._drain_link", side_effect=lambda *_: actions.append("recording")),
+                  patch("usb_sync.drain_bluetooth_backlog", side_effect=drain_recordings),
                   patch("usb_sync.watch_paired", side_effect=lambda *_args, **_kwargs: stop.set()),
                   patch("bluetooth_sync.start_bluetooth_watcher", side_effect=start_bluetooth),
                   patch.object(sys, "platform", "win32"),
@@ -475,11 +511,12 @@ class ManagedWatcherSettingsTests(unittest.TestCase):
                 bridge.return_value.local_transcription_ready.side_effect = [True, False]
                 main()
 
-        self.assertEqual(actions, [("settings", True), "ordinary advertisement",
-                                   ("settings", False), "metadata", "recording", "holidays",
+        self.assertEqual(actions, [("home", "h2,3,0,19:30"), ("home", "h2,3,0,-"), ("settings", True), "ordinary advertisement",
+                                   ("settings", False), "metadata", ("home", "h2,3,0,-"), "recording",
+                                   ("home", "h2,3,1,-"), "holidays",
                                    "weather lookup", "weather transfer",
                                    "ordinary advertisement while ASR is busy", ("settings", False),
-                                   "metadata", "holidays", "weather lookup", "weather transfer"])
+                                   "metadata", ("home", "h2,3,1,-"), "holidays", "weather lookup", "weather transfer"])
         self.assertEqual(bridge.return_value.local_transcription_ready.call_count, 2)
 
     def test_managed_watcher_first_run_serves_page_until_its_owner_stops(self):
@@ -539,6 +576,18 @@ class SyncTimingSettingsTests(unittest.TestCase):
         self.assertNotIn("syncTiming", note_response({"ok": True, "device": device}, "BLE")["device"])
 
 class NavigationAndPriorityTests(unittest.TestCase):
+    def test_wireless_radios_round_trip_without_coercion(self):
+        for wifi, bluetooth in ((True, True), (False, True), (True, False), (False, False)):
+            radios = {"wifiEnabled": wifi, "bluetoothEnabled": bluetooth}
+            with self.subTest(**radios):
+                request = {"op": "radios.save", **radios}
+                self.assertEqual(note_request(request), request)
+                device = {"name": "Willow", "language": "en", **radios}
+                self.assertEqual(note_response({"ok": True, "device": device}, "BLE")["device"], device)
+        for invalid in ({"wifiEnabled": False}, {"wifiEnabled": 0, "bluetoothEnabled": True}):
+            with self.assertRaises(SettingsError):
+                note_request({"op": "radios.save", **invalid})
+
     def test_wrap_and_wireless_priority_are_strict_booleans(self):
         ops = ({"op": "pages.save", "pages": "TECNm", "wrap": False},
                {"op": "wireless.save", "preferBluetooth": True})

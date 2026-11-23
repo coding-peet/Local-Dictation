@@ -1,4 +1,5 @@
 #include "../pala_note/src/app/bluetooth_handshake.h"
+#include "../pala_note/src/app/bluetooth_audio.h"
 
 namespace {
 using namespace pala_ble;
@@ -63,6 +64,14 @@ static_assert(!validFrameLength(16, true, 512, 16));
 static_assert(validFrameLength(17, true, 512, 16));
 static_assert(validFrameLength(512, true, 512, 16));
 static_assert(!validFrameLength(513, true, 512, 16));
+
+constexpr auto audioRead = bytes("03001122331000");
+constexpr auto oversizedAudioRead = bytes("03001122331001");
+static_assert(parseAudioRequest(audioRead.data(), audioRead.size()).offset == 0x00112233);
+static_assert(parseAudioRequest(audioRead.data(), audioRead.size()).length == 4096);
+static_assert(!parseAudioRequest(oversizedAudioRead.data(), oversizedAudioRead.size()).length);
+static_assert(!parseAudioRequest(audioRead.data(), audioRead.size() - 1).length);
+static_assert(!parseAudioRequest(nullptr, audioRead.size()).length);
 
 constexpr const uint8_t* bridgeNonce = hello.data() + 1;
 static_assert(same(handshakeSalt(capability, bridgeNonce),

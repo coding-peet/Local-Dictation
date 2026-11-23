@@ -3,6 +3,8 @@
 #include <cstdint>
 
 bool startBluetoothSync();
+bool startBluetoothHomeDelivery();
+bool bluetoothHomeDeliveryOpen();
 bool bluetoothEnrollmentAvailable();
 bool startBluetoothEnrollment();
 bool bluetoothEnrollmentOpen();

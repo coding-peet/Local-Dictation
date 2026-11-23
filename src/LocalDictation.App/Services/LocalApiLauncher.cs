@@ -1,11 +1,26 @@
 using System.Diagnostics;
 using System.Net.NetworkInformation;
 using System.Reflection;
+using LocalDictation.Core;
 
 namespace LocalDictation.App.Services;
 
 public static class LocalApiLauncher
 {
+    internal static void ConfigureInstalledTranscriptionAndSpeech()
+    {
+        const string endpointVariable = "LOCAL_DICTATION_API_KEY_ENDPOINT";
+        const string keyFileVariable = "LOCAL_DICTATION_API_KEY_FILE";
+        if (Environment.GetEnvironmentVariable(endpointVariable) is not null ||
+            Environment.GetEnvironmentVariable(keyFileVariable) is not null)
+            return;
+
+        var keyPath = Path.Combine(AppPaths.Root, "api-keys", "local-dictation.key");
+        if (!File.Exists(keyPath)) return;
+        Environment.SetEnvironmentVariable(endpointVariable, "http://127.0.0.1:48125");
+        Environment.SetEnvironmentVariable(keyFileVariable, Path.GetFullPath(keyPath));
+    }
+
     public static Task<bool> IsListening(Uri endpoint)
     {
         if(!endpoint.IsAbsoluteUri||!endpoint.IsLoopback||endpoint.Port<1)throw new ArgumentException("Only local service endpoints with a valid port can be inspected.",nameof(endpoint));

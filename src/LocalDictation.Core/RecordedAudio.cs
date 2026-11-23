@@ -4,7 +4,9 @@ namespace LocalDictation.Core;
 
 public static class RecordedAudio
 {
-    public static byte[] PcmFromWave(byte[] wave)
+    public static byte[] PcmFromWave(byte[] wave) => PcmFromWave(wave, 16000);
+
+    internal static byte[] PcmFromWave(byte[] wave, int sampleRate)
     {
         if(wave.Length<44||!wave.AsSpan(0,4).SequenceEqual("RIFF"u8)||!wave.AsSpan(8,4).SequenceEqual("WAVE"u8))
             throw new InvalidDataException("The original recording is not a WAV file.");
@@ -16,12 +18,12 @@ public static class RecordedAudio
             var length=(int)size;var chunk=wave.AsSpan(offset+8,length);
             if(wave.AsSpan(offset,4).SequenceEqual("fmt "u8))
                 format=length>=16&&BinaryPrimitives.ReadInt16LittleEndian(chunk)==1&&BinaryPrimitives.ReadInt16LittleEndian(chunk[2..])==1&&
-                    BinaryPrimitives.ReadInt32LittleEndian(chunk[4..])==16000&&BinaryPrimitives.ReadInt16LittleEndian(chunk[12..])==2&&BinaryPrimitives.ReadInt16LittleEndian(chunk[14..])==16;
+                    BinaryPrimitives.ReadInt32LittleEndian(chunk[4..])==sampleRate&&BinaryPrimitives.ReadInt16LittleEndian(chunk[12..])==2&&BinaryPrimitives.ReadInt16LittleEndian(chunk[14..])==16;
             if(wave.AsSpan(offset,4).SequenceEqual("data"u8)){dataOffset=offset+8;dataLength=length;}
             offset+=8+length+(length&1);
         }
-        if(!format||dataOffset<0||dataLength==0||dataLength%2!=0||dataLength>600*32000)
-            throw new InvalidDataException("Expected a complete 16 kHz mono PCM16 recording, up to ten minutes.");
+        if(!format||dataOffset<0||dataLength==0||dataLength%2!=0||dataLength>600*sampleRate*2)
+            throw new InvalidDataException($"Expected a complete {sampleRate/1000} kHz mono PCM16 recording, up to ten minutes.");
         return wave.AsSpan(dataOffset,dataLength).ToArray();
     }
 }

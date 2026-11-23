@@ -4,6 +4,35 @@ using Xunit;
 
 public sealed class ApiAvailabilityTests
 {
+    sealed class SpeechHandler(string expectedKey) : HttpMessageHandler
+    {
+        public int Calls {get;private set;}
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken token)
+        {
+            Calls++;
+            Assert.Equal("/v1/audio/speech",request.RequestUri!.AbsolutePath);
+            Assert.Equal("Bearer",request.Headers.Authorization?.Scheme);
+            Assert.Equal(expectedKey,request.Headers.Authorization?.Parameter);
+            var content=new ByteArrayContent("RIFF"u8.ToArray());
+            content.Headers.ContentType=new("audio/wav");
+            var response=new HttpResponseMessage(HttpStatusCode.OK){Content=content};
+            response.Headers.Add("X-Speech-Backend","cpu");
+            return Task.FromResult(response);
+        }
+    }
+
+    [Fact] public async Task SpeechUsesApplicationKeyOnlyForItsConfiguredOrigin()
+    {
+        var key=new string('k',43);
+        var handler=new SpeechHandler(key);
+        using var client=new ApiClient(new Settings(),handler,TimeSpan.FromSeconds(5),key);
+        var result=await client.Synthesize("Ahoj.");
+        Assert.Equal("RIFF"u8.ToArray(),result.Wave);
+        Assert.Equal("cpu",result.Backend);
+        await Assert.ThrowsAsync<InvalidOperationException>(()=>client.Get("http://127.0.0.1:48126/health"));
+        Assert.Equal(1,handler.Calls);
+    }
+
     sealed class Handler(Func<CancellationToken,Task<HttpResponseMessage>> reply):HttpMessageHandler
     {
         public int Calls {get;private set;}

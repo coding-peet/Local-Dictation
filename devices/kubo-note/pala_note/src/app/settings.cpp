@@ -14,6 +14,10 @@ static int cachedApiConfigured = -1;
 static int cachedIdleSleepMinutes = -1;
 static int cachedSyncTiming = -1;
 static int cachedPreferBluetooth = -1;
+static constexpr uint8_t kWifiRadio = 1;
+static constexpr uint8_t kBluetoothRadio = 2;
+static constexpr uint8_t kBothRadios = kWifiRadio | kBluetoothRadio;
+static uint8_t enabledRadios = kBothRadios;
 
 static bool supportedLanguage(const String& language) {
   return language == "de" || language == "en" || language == "fr" ||
@@ -47,6 +51,7 @@ void palaSettingsBegin() {
   if (ready) return;
   ready = prefs.begin("pala", false);
   if (!ready) return;
+  enabledRadios = prefs.getUChar("radios", kBothRadios);
   // Migrate the original single-network setting without losing it.
   if (!storedString("wifi0s").length()) {
     const String legacySsid = storedString("wifi_ssid");
@@ -59,6 +64,19 @@ void palaSettingsBegin() {
 static String value(const char* key) {
   palaSettingsBegin();
   return ready ? storedString(key) : String();
+}
+
+bool palaWifiEnabled() { return (enabledRadios & kWifiRadio) != 0; }
+bool palaBluetoothEnabled() { return (enabledRadios & kBluetoothRadio) != 0; }
+
+bool palaSetWirelessRadios(bool wifi, bool bluetooth) {
+  palaSettingsBegin();
+  if (!ready) return false;
+  const uint8_t selected = (wifi ? kWifiRadio : 0) | (bluetooth ? kBluetoothRadio : 0);
+  if (selected == enabledRadios) return true;
+  if (prefs.putUChar("radios", selected) != sizeof(selected)) return false;
+  enabledRadios = selected;
+  return true;
 }
 
 static bool validNoteName(const String& name) {

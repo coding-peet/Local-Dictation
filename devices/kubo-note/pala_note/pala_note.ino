@@ -28,6 +28,7 @@ extern "C" {
 #include "src/app/network.h"
 #include "src/app/notes.h"
 #include "src/app/note_config.h"
+#include "src/app/note_peers.h"
 #include "src/app/record.h"
 #include "src/app/rtc.h"
 #include "src/app/settings.h"
@@ -480,7 +481,7 @@ void browseAnswerPages(const String& answer, int sourceCount) {
 }
 
 bool connectConfiguredWifi(uint8_t attempts = 20, uint32_t budgetMs = 0) {
-  if (!palaHasWifi()) return false;
+  if (!palaWifiEnabled() || !palaHasWifi()) return false;
   const uint32_t startedAt = millis();
   const auto hasTime = [&] { return !budgetMs || millis() - startedAt < budgetMs; };
   const uint32_t clockTimeout = budgetMs ? 1200 : 4000;
@@ -622,6 +623,12 @@ bool refreshCompanionConnection() {
 }
 
 void enterCompanion() {
+  if (!palaWifiEnabled()) {
+    showError("WI-FI OFF");
+    delay(1000);
+    returnToReady();
+    return;
+  }
   resetActivity();
   state = STATE_TRANSFER;
   companionControls.reset();
@@ -1171,13 +1178,13 @@ bool yieldBacklogToUsb() {
 #endif
 
 #if PALA_BRIDGE_DISCOVERY
-bool startBacklogBluetooth(int completed, uint32_t retryDelay) {
+bool startBacklogBluetooth(uint32_t retryDelay) {
   if (!startBluetoothSync()) return false;
-  const int total = backlogSyncTotal;
   backlogSyncActive = false;
   backlogSyncTotal = 0;
   nextBackgroundAttemptAt = millis() + retryDelay;
-  showBacklogLink(BacklogLink::Bluetooth, completed, total);
+  // The peer supplies its processing capabilities after authentication.
+  showBacklogLink(BacklogLink::Bluetooth, 0, 0);
   return true;
 }
 #endif
@@ -1290,16 +1297,17 @@ void handleBackgroundBrain(const IdleSleepPolicy& sleep) {
   };
   // Association and an authenticated Bridge readiness reply are separate.
 #if PALA_BRIDGE_DISCOVERY
-  if (tryPreferredBluetooth(palaPreferBluetooth(), triedPreferredBluetooth, hasQueuedAudio())) {
+  const bool bluetoothWork = hasQueuedAudio() || (visibleNote >= 0 && indexingNote < 0);
+  if (tryPreferredBluetooth(palaPreferBluetooth(), triedPreferredBluetooth, bluetoothWork)) {
     pollUsbBacklog();
     if (yieldBacklogToUsb() || deferForSleep()) return;
     triedPreferredBluetooth = true;
     stopWifi();
     // An unused preferred Bluetooth window falls through to Wi-Fi immediately.
-    if (startBacklogBluetooth(completedBefore, 0)) return;
+    if (startBacklogBluetooth(0)) return;
   }
   WifiBacklog wifi = WifiBacklog::Unavailable;
-  if (palaHasWifi()) {
+  if (palaWifiEnabled() && palaHasWifi()) {
     showBacklogLink(BacklogLink::Wifi, completedBefore, backlogSyncTotal);
     if (yieldBacklogToUsb()) return;
     if (!sleepDue() && connectConfiguredWifi(8, 4500) && !sleepDue()) wifi = pairedWifiBacklog();
@@ -1308,12 +1316,11 @@ void handleBackgroundBrain(const IdleSleepPolicy& sleep) {
   if (yieldBacklogToUsb()) return;
   if (!sleepDue() && wifi != WifiBacklog::Unavailable && homeNoteNameNeedsRefresh()) refreshHomeNoteName();
   if (deferForSleep()) return;
-  const bool audioForBluetooth = !triedPreferredBluetooth && (waitingAudio || hasQueuedAudio());
-  const BacklogLink link = pairedBacklogAfterWifi(wifi, visibleNote >= 0, audioForBluetooth);
+  const BacklogLink link = pairedBacklogAfterWifi(wifi, visibleNote >= 0, !triedPreferredBluetooth && bluetoothWork);
   if (link != BacklogLink::Wifi) {
     stopWifi();
     if (link == BacklogLink::Bluetooth &&
-        startBacklogBluetooth(completedBefore, BACKGROUND_RETRY_MS)) return;
+        startBacklogBluetooth(BACKGROUND_RETRY_MS)) return;
 #else
   showBacklogLink(BacklogLink::Wifi, completedBefore, backlogSyncTotal);
   const bool connected = !sleepDue() && connectConfiguredWifi(8);
@@ -1408,10 +1415,19 @@ void handleBackgroundBrain(const IdleSleepPolicy& sleep) {
   }
 }
 
+bool canFollowHomeDeliveryOverBluetooth() {
+#if PALA_BRIDGE_DISCOVERY
+  return palaBluetoothEnabled() && !usbDataConnected && notePeerCount() > 0 &&
+         (!palaWifiEnabled() || !palaHasWifi() || homeBridgeStatus.latest() == HomeBridgeLink::Bluetooth);
+#else
+  return false;
+#endif
+}
+
 void refreshHomeMetadataWhenIdle(uint32_t homeSleepMs) {
 #if PALA_BRIDGE_DISCOVERY
   const uint32_t now = millis();
-  if (!palaHasWifi() || backlogRequested || backlogSyncActive ||
+  if (!palaWifiEnabled() || !palaHasWifi() || backlogRequested || backlogSyncActive ||
       now - lastActivityMs < BACKGROUND_IDLE_MS ||
       now - lastActivityMs >= homeSleepMs - 12000 ||
       (nextHomeWeatherCheckAt && static_cast<int32_t>(now - nextHomeWeatherCheckAt) < 0) ||
@@ -1444,6 +1460,12 @@ void refreshHomeMetadataWhenIdle(uint32_t homeSleepMs) {
 
 void handleCompanion() {
   if (transferServerActive) transferServer.handleClient();
+  if (!palaWifiEnabled()) {
+    // Give the settings reply time to leave before shutting down the radio.
+    delay(250);
+    leaveCompanion();
+    return;
+  }
 
   const bool upperDown = digitalRead(BTN_REC) == LOW;
   const bool lowerDown = digitalRead(BTN_PWR) == LOW;
@@ -1623,6 +1645,7 @@ void setup() {
   audio_bsp_init();
   audio_play_init();
   initializeStorage();
+  restoreHomeDeliveryRefresh();
 
   setupRequired = (!palaHasWifi() && !PALA_BRIDGE_DISCOVERY) || !(PALA_MAC_BRIDGE || palaHasOpenAiKey());
   if (setupRequired) {
@@ -1674,12 +1697,18 @@ void loop() {
   }
   const bool bluetoothOpen = pollBluetoothSync();
   if (bluetoothOpen && bluetoothSyncActive()) {
-    if (backlogScreen.link == BacklogLink::Bluetooth && !backlogScreen.authenticated) {
-      showBacklogLink(BacklogLink::Bluetooth, backlogScreen.completed, backlogScreen.total, true);
+    const bool organized = pollBluetoothOrganization();
+    int completed = backlogScreen.completed, total = backlogScreen.total;
+    const bool progress = takeBluetoothBacklogProgress(completed, total);
+    if (backlogScreen.link == BacklogLink::Bluetooth && (organized || progress || !backlogScreen.authenticated)) {
+      showBacklogLink(BacklogLink::Bluetooth, completed, total, true);
     }
-    if (bothButtonsUp()) idleInputArmed = true;
+    if (organized) {
+      clearLatchedPresses();
+      idleInputArmed = false;
+    } else if (bothButtonsUp()) idleInputArmed = true;
     else if (idleInputArmed) stopBluetoothSync();
-    if (!recordingSync.beforeSleep()) resetActivity();
+    if (!bluetoothHomeDeliveryOpen() && !recordingSync.beforeSleep()) resetActivity();
     delay(5);
     return;
   }
@@ -1753,6 +1782,18 @@ void loop() {
       delay(8);
       return;
     }
+    const uint32_t now = millis();
+    const bool deliveryFollowupDue = homeDeliveryNeedsBluetoothFollowup(now);
+    const bool deliveryWakeWindow = homeDeliveryKeepingBluetoothAwake(now);
+    const bool followDeliveryOverBluetooth = (deliveryFollowupDue || deliveryWakeWindow) &&
+                                              canFollowHomeDeliveryOverBluetooth();
+    const bool keepAwakeForDelivery = deliveryWakeWindow && followDeliveryOverBluetooth;
+    if (state == STATE_IDLE && !backlogRequested && !backlogSyncActive &&
+        (now - lastActivityMs < sleep.homeMs || keepAwakeForDelivery) &&
+        deliveryFollowupDue && followDeliveryOverBluetooth) {
+      homeDeliveryBluetoothAttempted(now);
+      if (startBluetoothHomeDelivery()) return;
+    }
     if (state == STATE_IDLE) refreshHomeMetadataWhenIdle(sleep.homeMs);
     if (state == STATE_IDLE && !backlogRequested && !backlogSyncActive &&
         bothButtonsUp() && !upperButton.pressLatched && !lowerButton.pressLatched && !preferUsbForBacklog()) {
@@ -1775,7 +1816,8 @@ void loop() {
         idleInputArmed && bothButtonsUp() && !upperButton.gesture.pending() &&
         !lowerButton.gesture.pending() && !upperButton.pressLatched && !lowerButton.pressLatched &&
         !usbSyncActive() && !bluetoothSyncActive()) {
-      if (millis() - lastActivityMs >= sleep.homeMs && !recordingSyncAllowed()) enterUltraSleep();
+      if (millis() - lastActivityMs >= sleep.homeMs && !recordingSyncAllowed() && !keepAwakeForDelivery)
+        enterUltraSleep();
     }
   }
   delay(8);

@@ -34,5 +34,11 @@ void showError(const char* message);
 void showSleepLocked();
 void showUltraSleepScreen();
 
-int chooseCalendarEventDate(const String& title, const String& first, const String& second);
-int confirmCalendarEvent(const String& title, const String& start, const String& end, int minutes);
+struct CalendarProposalTime {
+  String start;
+  String end;
+};
+int chooseCalendarEventDate(const String& title, const CalendarProposalTime& first, const CalendarProposalTime& second,
+                            bool (*serviceConnection)() = nullptr);
+int confirmCalendarEvent(const String& title, const CalendarProposalTime& time, int minutes,
+                         bool (*serviceConnection)() = nullptr);

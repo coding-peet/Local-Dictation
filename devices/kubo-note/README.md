@@ -40,6 +40,9 @@ When Kubo processing is enabled, Home shows the remaining Codex allowance
 next to the Note name. In **Note settings → Note**, choose **5 hours
 (weekly fallback)** or **Weekly** and save the Note settings. Bridge reads
 both available windows from the signed-in Codex CLI account status.
+On Windows, Bridge can also find the registered Codex desktop package when
+its CLI is absent from PATH. It starts its own background CLI process to
+read the quota as soon as Bridge starts in Kubo processing mode.
 
 The percentage is the remaining allowance. The small blocks underneath show
 the time until reset in approximate hours or days. A partially remaining hour
@@ -60,9 +63,9 @@ supported passwords at every rating.
 
 On Wi-Fi, sign in before opening Web Companion pages, reading notes,
 playing audio or using settings and Trash. On Bluetooth, sign in from the
-Local Dictation settings page after the connection is paired. Sign out in
-the **Note password** section. A session expires after 15 minutes without
-a request.
+Local Dictation settings page after the connection is paired. The locked
+page shows the password form. Sign in to open settings, or sign out later
+in **Note password**. A session expires after 15 minutes without a request.
 
 To change a password over Wi-Fi or Bluetooth, enter the current password
 and enter the new password twice. For initial setup or password recovery,
@@ -141,6 +144,15 @@ the aquarium is independent of recording, transcription, and Internet
 access.
 
 ## Bridge processing
+
+In Local Dictation under **Connections**, choose the Codex model used
+for Kubo processing and the model's reasoning effort. High is the
+default. Changes apply to the next request.
+
+The **Note transcripts** window in Connections shows the original text
+retained by Bridge and the related routing and delivery decisions. See
+[Bridge routing rules](BRIDGE_ROUTING_RULES.md) for the current rules and
+observed failures.
 
 Open Note settings from Local Dictation and select **Bridge**. With **Kubo
 processing** off, Bridge runs local transcription and returns the text to
@@ -229,6 +241,11 @@ sync starts and select **Save sync timing**.
 
 The upper-button triple press works in every mode.
 
+Open **Wireless connections** to enable or disable Wi-Fi and Bluetooth
+independently. Existing Notes start with both enabled. Disabling a radio
+keeps its saved networks or pairings. It also closes any settings session
+using that radio. Connect by USB to turn either radio back on.
+
 Open **Sync connection priority** and select **Wi-Fi first** or
 **Bluetooth first** for recording sync. USB always has priority. A
 Bluetooth-first attempt gives a paired PC a short window to pick up audio,
@@ -250,10 +267,23 @@ a fresh challenge. Both verify the peer's proof using the existing pairing
 before transferring encrypted recording data. Older BLE peers leave the
 recording queued.
 
+When both BLE v2 peers support binary audio, the Note sends the original
+WAV in encrypted blocks through the existing notification characteristic.
+The Bridge verifies each block before transcription. Older v2 firmware
+continues to use the original block reads over the paired connection.
+
 The client returns the local transcript to the same SD note over USB or
 Bluetooth. The watcher releases the COM port between queue checks. An
 empty USB check leaves the device's usual sleep deadline in effect.
 If all routes fail, the original recording stays queued.
+
+The paired Bluetooth connection also updates the Codex quota and the
+open General count on Home. Open Note settings over Bluetooth to refresh
+them when there are no recordings queued. While Google delivery is pending,
+the Note also opens a short Bluetooth window automatically to update Home.
+The Bridge sends the latest Home data over the paired link without fetching
+recordings. The Note briefly delays sleep for these checks and resumes them
+on the next wake if delivery is still pending.
 
 ### Manual USB check
 
@@ -282,6 +312,31 @@ the full transcript.
 USB transcription stores text on the note's SD card and uses the Local
 Dictation API. It does not add a desktop History entry. Google routing is
 available when the private Bridge has approved destination bindings.
+
+### Process saved transcripts over Bluetooth
+
+With Kubo processing enabled in Bridge, recording sync over a paired
+Bluetooth link also picks up saved transcripts waiting for Kubo. Wi-Fi
+and USB can both be off. Start sync from Home with three presses of the
+upper button.
+
+Note shows the date, local start time, and duration on one line, for
+example '25.11.2026 15:00 / 30 min'. If there are two date candidates,
+select the intended date and then confirm the displayed event. Use
+the lower button to decline it.
+Leaving the prompt unanswered keeps it pending for a later sync.
+Bridge adds an event to Google Calendar after that event is confirmed.
+
+The counter shows the items eligible for the current Bluetooth session.
+In Kubo mode, a recording counts when the structured result is saved.
+In transcription-only mode, it counts when the transcript is saved.
+An interrupted item stays in the queue.
+
+An explicit list name is looked up in the connected Google Tasks account.
+For a shopping command without a named list, Bridge uses the configured
+shopping list or looks for an existing list called Nákup. A missing or
+ambiguous target keeps the delivery pending. A spoken calendar command can
+appear before or after the appointment details.
 
 ## Verify one saved transcript in Google
 
@@ -353,7 +408,8 @@ count is unavailable. The Note keeps its latest snapshot while offline.
 delivery. While confirmed delivery is pending, this column shows
 **Awaiting Google** and the number of waiting dictations. After submitting
 a note over Wi-Fi, the Note fetches an update on the same connection and
-briefly checks again while delivery is pending.
+briefly checks again while delivery is pending. Bluetooth checks also run
+automatically while Home shows a pending delivery.
 
 Connect the paired Note by USB to transfer and verify only the counters:
 

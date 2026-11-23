@@ -2,6 +2,7 @@
 #include "provider.h"
 
 #if PALA_BRIDGE_DISCOVERY
+#include "bluetooth_audio.h"
 #include "bluetooth_handshake.h"
 #include "note_config.h"
 #include "note_peers.h"
@@ -13,6 +14,7 @@
 #include <BLEServer.h>
 #include <atomic>
 #include <cstring>
+#include <esp_gatt_common_api.h>
 #include <esp_random.h>
 #include <freertos/queue.h>
 #include <mbedtls/gcm.h>
@@ -32,10 +34,16 @@ constexpr char kCapability[] = "a7727a11-7a9d-4bdd-aaf5-d3e331eddf71";
 constexpr char kRequest[] = "a7727a12-7a9d-4bdd-aaf5-d3e331eddf71";
 constexpr char kResponse[] = "a7727a13-7a9d-4bdd-aaf5-d3e331eddf71";
 constexpr char kSignal[] = "a7727a14-7a9d-4bdd-aaf5-d3e331eddf71";
+enum class BluetoothWindow { Recordings, Settings, Delivery };
 constexpr char kEnrollmentMarker = 'P';
+constexpr char kDeliveryMarker = 'D';
 constexpr size_t kIdentitySize = 6;
 constexpr size_t kTagSize = 16;
 constexpr size_t kMaxPacket = 512;
+constexpr uint16_t kDefaultMtu = 23;
+constexpr uint16_t kPreferredMtu = 247;
+constexpr size_t kNotificationOverhead = 3;
+constexpr unsigned kNotificationsPerPoll = 8;
 constexpr int kDisconnected = -1;
 constexpr uint32_t kAdvertiseMs = 16000;
 constexpr uint32_t kEnrollmentTimeout = 90000;
@@ -58,7 +66,9 @@ std::atomic<int> connection{kDisconnected};
 std::atomic<uint32_t> connectionGeneration{0};
 std::atomic<bool> running{false};
 std::atomic<bool> overflow{false};
+std::atomic<bool> restartAdvertising{false};
 std::atomic<bool> enrollmentMode{false};
+bool deliveryMode = false;
 std::atomic<bool> nativeEnrollmentSecure{false};
 std::atomic<bool> nativeEnrollmentDenied{false};
 std::atomic<bool> nativeEnrollmentCompleted{false};
@@ -71,6 +81,8 @@ uint8_t peerResponse[kMaxPacket]{};
 size_t peerResponseSize = 0;
 bool closingPeer = false;
 bool signalSubscribed = false;
+uint16_t peerMtu = kDefaultMtu;
+bool transmitCongested = false;
 esp_bd_addr_t remoteAddress = {};
 bool numericWaiting = false;
 bool numericApproved = false;
@@ -83,6 +95,7 @@ String linkToken;
 Capability linkCapability{};
 uint32_t connectedAt = 0;
 uint32_t advertisedAt = 0;
+uint32_t radioOffAt = 0;
 bool advertising = false;
 bool keyReady = false;
 mbedtls_gcm_context cipher;
@@ -90,6 +103,9 @@ uint64_t sent = 0;
 uint64_t received = 0;
 uint8_t frame[kMaxPacket + 2];
 size_t frameSize = 0;
+uint8_t audioPacket[kAudioOffsetBytes + kAudioBlockBytes + kTagSize];
+size_t audioPacketSize = 0;
+size_t audioPacketSent = 0;
 
 bool discoveryIdentity(uint8_t (&result)[kIdentitySize]) {
   const String identity = notePeerAdvertiser();
@@ -117,7 +133,9 @@ void resetLink() {
   linkToken = "";
   linkCapability.fill(0);
   mbedtls_platform_zeroize(frame, sizeof(frame));
+  mbedtls_platform_zeroize(audioPacket, sizeof(audioPacket));
   frameSize = 0;
+  audioPacketSize = audioPacketSent = 0;
   sent = received = 0;
 }
 
@@ -181,6 +199,8 @@ class ServerCallbacks : public BLEServerCallbacks {
     uint8_t unsubscribed[2] = {};
     signalConfiguration->setValue(unsubscribed, sizeof(unsubscribed));
     signalSubscribed = false;
+    peerMtu = kDefaultMtu;
+    transmitCongested = false;
     memcpy(remoteAddress, event->connect.remote_bda, sizeof(remoteAddress));
     numericWaiting = false;
     numericApproved = false;
@@ -207,6 +227,9 @@ class ServerCallbacks : public BLEServerCallbacks {
     numericWaiting = false;
     nativeEnrollmentSecure.store(false);
     closingPeer = false;
+    // A connect and disconnect can both occur during a single e-paper refresh.
+    // Tell the loop that connectable advertising ended even if it never saw the link.
+    restartAdvertising.store(true);
     connection.store(kDisconnected);
   }
 };
@@ -243,8 +266,18 @@ void handleGattEvent(esp_gatts_cb_event_t event, esp_gatt_if_t interface, esp_bl
     gattInterface.store(interface);
     return;
   }
-  if (event != ESP_GATTS_WRITE_EVT || !running.load() ||
-      interface != gattInterface.load() || param->write.is_prep ||
+  if (!running.load() || interface != gattInterface.load()) return;
+  if (event == ESP_GATTS_MTU_EVT || event == ESP_GATTS_CONGEST_EVT) {
+    const std::lock_guard<std::mutex> lock(peerMutex);
+    const int id = connection.load();
+    if (event == ESP_GATTS_MTU_EVT && id == param->mtu.conn_id && param->mtu.mtu >= kDefaultMtu) {
+      peerMtu = param->mtu.mtu;
+    } else if (event == ESP_GATTS_CONGEST_EVT && id == param->congest.conn_id) {
+      transmitCongested = param->congest.congested;
+    }
+    return;
+  }
+  if (event != ESP_GATTS_WRITE_EVT || param->write.is_prep ||
       param->write.handle != signalConfiguration->getHandle()) return;
 
   const std::lock_guard<std::mutex> lock(peerMutex);
@@ -305,7 +338,7 @@ bool initialize() {
   input = xQueueCreate(8, sizeof(Incoming));
   if (!input) return false;
   BLEDevice::init(palaNoteName() + "-Note");
-  BLEDevice::setMTU(247);
+  BLEDevice::setMTU(kPreferredMtu);
   BLEDevice::setCustomGattsHandler(handleGattEvent);
   BLEDevice::setCustomGapHandler(handleGapEvent);
   server = BLEDevice::createServer();
@@ -323,9 +356,8 @@ bool initialize() {
   return gattInterface.load() != ESP_GATT_IF_NONE;
 }
 
-bool configureAdvertising() {
+bool configureAdvertising(BluetoothWindow window) {
   uint8_t id[kIdentitySize];
-  const bool enrolling = enrollmentMode.load();
   if (!discoveryIdentity(id)) return false;
 
   const String name = palaNoteName() + "-Note";
@@ -336,9 +368,10 @@ bool configureAdvertising() {
   // identity bytes for discovery. Session authentication still uses the token.
   BLEAdvertisementData data;
   data.setFlags(ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT);
-  char tagged[kIdentitySize + 1] = {kEnrollmentMarker};
+  char tagged[kIdentitySize + 1] = {window == BluetoothWindow::Delivery ? kDeliveryMarker : kEnrollmentMarker};
   memcpy(tagged + 1, id, sizeof(id));
-  const String marker = enrolling ? String(tagged, sizeof(tagged)) : String(tagged + 1, sizeof(id));
+  const String marker = window == BluetoothWindow::Recordings ? String(tagged + 1, sizeof(id))
+                                                             : String(tagged, sizeof(tagged));
   data.setServiceData(BLEUUID(String(kService)), marker);
   BLEAdvertisementData scan;
   scan.setName(name);
@@ -416,6 +449,48 @@ void sendFrame(const String& plaintext) {
   if (!publishResponse(preparedGeneration, packet, size + kTagSize)) markOverflow(preparedGeneration);
 }
 
+bool queueAudioPacket(const uint8_t* plaintext, size_t size) {
+  const AudioRequest request = parseAudioRequest(plaintext, size);
+  if (audioPacketSize || sent == UINT64_MAX || !request.length ||
+      !readBluetoothAudio(linkPeer, request.offset, audioPacket + kAudioOffsetBytes, request.length)) return false;
+
+  memcpy(audioPacket, plaintext + 1, kAudioOffsetBytes);
+  uint8_t iv[12];
+  nonce(iv, true, sent);
+  const size_t bytes = kAudioOffsetBytes + request.length;
+  // GCM encryption supports using the same storage for input and output.
+  if (mbedtls_gcm_crypt_and_tag(&cipher, MBEDTLS_GCM_ENCRYPT, bytes, iv, sizeof(iv), nullptr, 0,
+                              audioPacket, audioPacket, kTagSize, audioPacket + bytes) != 0) return false;
+  ++sent;
+  audioPacketSize = bytes + kTagSize;
+  audioPacketSent = 0;
+  return true;
+}
+
+bool sendAudioNotifications(uint32_t generation) {
+  const std::lock_guard<std::mutex> lock(peerMutex);
+  const int id = connection.load();
+  if (id == kDisconnected || closingPeer || connectionGeneration.load() != generation || !signalSubscribed)
+    return false;
+  if (transmitCongested) return true;
+
+  uint8_t fragment[kPreferredMtu - kNotificationOverhead] = {kAudioFragment};
+  const size_t capacity = std::min<size_t>(sizeof(fragment), peerMtu - kNotificationOverhead) - 1;
+  const unsigned credits = esp_ble_get_cur_sendable_packets_num(static_cast<uint16_t>(id));
+  for (unsigned i = 0; i < std::min(kNotificationsPerPoll, credits); ++i) {
+    const size_t count = std::min(capacity, audioPacketSize - audioPacketSent);
+    memcpy(fragment + 1, audioPacket + audioPacketSent, count);
+    if (esp_ble_gatts_send_indicate(gattInterface.load(), static_cast<uint16_t>(id), signal->getHandle(),
+                                   count + 1, fragment, false) != ESP_OK) break;
+    audioPacketSent += count;
+    if (audioPacketSent == audioPacketSize) {
+      audioPacketSize = audioPacketSent = 0;
+      break;
+    }
+  }
+  return true;
+}
+
 bool receiveEnrollment(const uint8_t* data, size_t length) {
   if (!nativeEnrollmentSecure.load() || !length || data[length - 1] != '\n' ||
       memchr(data, '\0', length)) return false;
@@ -461,6 +536,16 @@ bool receive(const Incoming& chunk) {
   }
   ++received;
   connectedAt = millis();
+  const bool audioSupported = !deliveryMode && !enrollmentMode.load();
+  if (plaintext[0] == kAudioRequest) {
+    const bool queued = audioSupported && queueAudioPacket(reinterpret_cast<const uint8_t*>(plaintext), plainSize);
+    mbedtls_platform_zeroize(plaintext, sizeof(plaintext));
+    return queued;
+  }
+  if (audioPacketSize) {
+    mbedtls_platform_zeroize(plaintext, sizeof(plaintext));
+    return false;
+  }
   plaintext[plainSize] = '\0';
   if (plaintext[plainSize - 1] != '\n' || strlen(plaintext) != plainSize) {
     mbedtls_platform_zeroize(plaintext, sizeof(plaintext));
@@ -469,22 +554,24 @@ bool receive(const Incoming& chunk) {
   String line(plaintext);
   mbedtls_platform_zeroize(plaintext, sizeof(plaintext));
   line.trim();
-  return handleBluetoothSyncLine(line, linkPeer, sendFrame);
+  return handleBluetoothSyncLine(line, linkPeer, sendFrame, deliveryMode, audioSupported);
 }
 }  // namespace
 
-static bool startBluetoothWindow(bool enrollment) {
-  if (running.load()) return enrollmentMode.load() == enrollment;
+static bool startBluetoothWindow(BluetoothWindow window) {
+  if (!palaBluetoothEnabled()) return false;
+  const bool enrollment = window == BluetoothWindow::Settings;
+  const bool delivery = window == BluetoothWindow::Delivery;
+  if (running.load()) return enrollmentMode.load() == enrollment && deliveryMode == delivery;
   if (!initialize() || connection.load() != kDisconnected || (enrollment && !configureEnrollmentSecurity())) return false;
+  if (!configureAdvertising(window)) return false;
   enrollmentMode.store(enrollment);
-  if (!configureAdvertising()) {
-    enrollmentMode.store(false);
-    return false;
-  }
+  deliveryMode = delivery;
   resetLink();
   takeBluetoothSyncDrained();
   xQueueReset(input);
   overflow.store(false);
+  restartAdvertising.store(false);
   nativeEnrollmentCompleted.store(false);
   advertisedAt = millis();
   running.store(true);
@@ -492,13 +579,16 @@ static bool startBluetoothWindow(bool enrollment) {
   if (!advertising) {
     running.store(false);
     enrollmentMode.store(false);
+    deliveryMode = false;
   }
   return advertising;
 }
 
-bool startBluetoothSync() { return startBluetoothWindow(false); }
-bool bluetoothEnrollmentAvailable() { return true; }
-bool startBluetoothEnrollment() { return startBluetoothWindow(true); }
+bool startBluetoothSync() { return startBluetoothWindow(BluetoothWindow::Recordings); }
+bool startBluetoothHomeDelivery() { return startBluetoothWindow(BluetoothWindow::Delivery); }
+bool bluetoothHomeDeliveryOpen() { return running.load() && deliveryMode; }
+bool bluetoothEnrollmentAvailable() { return palaBluetoothEnabled(); }
+bool startBluetoothEnrollment() { return startBluetoothWindow(BluetoothWindow::Settings); }
 bool bluetoothEnrollmentOpen() { return running.load() && enrollmentMode.load(); }
 
 bool bluetoothEnrollmentPrompt(uint32_t& code) {
@@ -523,11 +613,20 @@ void stopBluetoothSync() {
   advertising = false;
   disconnectLink();
   enrollmentMode.store(false);
+  deliveryMode = false;
   resetLink();
 }
 
 bool pollBluetoothSync() {
+  if (palaBluetoothEnabled()) radioOffAt = 0;
   if (!running.load()) return false;
+  if (!palaBluetoothEnabled()) {
+    // The client reads the save acknowledgement after receiving a GATT notification.
+    if (!radioOffAt) radioOffAt = millis() + 1500;
+    if (connection.load() != kDisconnected && static_cast<int32_t>(millis() - radioOffAt) < 0) return true;
+    stopBluetoothSync();
+    return false;
+  }
   const bool enrolling = enrollmentMode.load();
   if (enrolling && (nativeEnrollmentCompleted.load() || millis() - advertisedAt >= kEnrollmentTimeout)) {
     bluetoothEnrollmentConfirm(false);
@@ -535,6 +634,7 @@ bool pollBluetoothSync() {
     return false;
   }
   if (connection.load() == kDisconnected) {
+    if (restartAdvertising.exchange(false)) advertising = false;
     if (linkCapability[0] != 0) resetLink();
     if (!enrolling && (takeBluetoothSyncDrained() || millis() - advertisedAt >= kAdvertiseMs)) {
       stopBluetoothSync();
@@ -563,6 +663,7 @@ bool pollBluetoothSync() {
       valid = receive(chunk) && !overflow.load();
     }
   }
+  if (valid && audioPacketSize) valid = sendAudioNotifications(generation);
   if (!valid || (!enrolling && !bluetoothSyncActive() && millis() - connectedAt >= kUnauthenticatedMs)) {
     disconnectLink(generation);
     resetLink();
@@ -571,6 +672,8 @@ bool pollBluetoothSync() {
 }
 #else
 bool startBluetoothSync() { return false; }
+bool startBluetoothHomeDelivery() { return false; }
+bool bluetoothHomeDeliveryOpen() { return false; }
 bool bluetoothEnrollmentAvailable() { return false; }
 bool startBluetoothEnrollment() { return false; }
 bool bluetoothEnrollmentOpen() { return false; }

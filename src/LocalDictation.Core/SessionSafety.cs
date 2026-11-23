@@ -33,10 +33,13 @@ public sealed class AudioBudget
     }
 }
 
-public enum InputCommand {None,Toggle,Cancel,Start,Stop}
+public enum InputCommand {None,Toggle,Cancel,Start,Stop,ReadAloud}
 public readonly record struct InputDecision(InputCommand Command,bool Suppress);
 public sealed class InputCommands
 {
+    public static ShortcutSpec ReadAloudShortcut { get; } = ShortcutSpec.Parse("Ctrl+Alt+R");
+    public bool ReadAloudEnabled { get; set; }
+    bool readAloudArmed;
     ShortcutMode mode=ShortcutMode.Toggle;
     public ShortcutMode Mode
     {
@@ -72,6 +75,19 @@ public sealed class InputCommands
     {
         var holdFirst=pressed&&holdDown.Add(key);
         var released=!pressed&&holdDown.Remove(key);
+        if(key==ReadAloudShortcut.Key)
+        {
+            var enabled=ReadAloudEnabled&&!CapturingShortcut&&(!shortcutEnabled||shortcut!=ReadAloudShortcut);
+            // Right Alt generates a synthetic Ctrl on AltGr keyboard layouts.
+            if(holdFirst&&enabled&&!holdDown.Contains(0xA5)&&ReadAloudShortcut.Matches(holdDown)&&
+                holdDown.All(k=>IsShortcutKey(ReadAloudShortcut,k)))readAloudArmed=true;
+            if(readAloudArmed)
+            {
+                if(pressed)return new(InputCommand.None,true);
+                readAloudArmed=false;
+                return new(enabled&&released?InputCommand.ReadAloud:InputCommand.None,true);
+            }
+        }
         if(Mode==ShortcutMode.Hold||holdGesture is not null)
             return UpdateHold(key,pressed,holdFirst,released,sessionActive,shortcutEnabled);
         if(CapturingShortcut)return new(InputCommand.None,false);

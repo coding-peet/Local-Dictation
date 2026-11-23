@@ -38,6 +38,7 @@ public partial class App : System.Windows.Application
         };
         try
         {
+            Services.LocalApiLauncher.ConfigureInstalledTranscriptionAndSpeech();
             controller=new AppController(e.Args.Contains("--no-hotkey"));
             if (launch.ShowSettings) controller.ShowSettings();
             _=controller.InitializeConnection();

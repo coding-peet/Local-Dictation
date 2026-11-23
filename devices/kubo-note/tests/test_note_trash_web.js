@@ -30,7 +30,7 @@ class Element {
   scrollIntoView() { this.scrolled = true; }
 }
 
-function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, hash = '', name = 'Willow', displayPages, sleepMinutes, syncTiming, pageWrap, preferBluetooth, bridge, webPasswordConfigured, weeklyCodexLimit } = {}) {
+function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, hash = '', name = 'Willow', displayPages, sleepMinutes, syncTiming, pageWrap, preferBluetooth, bridge, webPasswordConfigured, weeklyCodexLimit, wifiEnabled, bluetoothEnabled, locked = false } = {}) {
   const elements = new Map();
   const buttons = [];
   for (const match of settings.matchAll(/<([a-z][a-z0-9]*)\b[^<>]*\bid="([^"]+)"[^<>]*>/g)) {
@@ -71,13 +71,29 @@ function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, ha
       let reply = { ok: true };
       switch (data.op) {
         case 'get':
+          if (locked && connected) {
+            reply = { ok: false, access: 'locked', transport, csrf: writePermission, bridge,
+              capabilities: { pair: true, enableBlePairing: true }, error: 'Enter the Note password.' };
+            break;
+          }
           reply = {
             ...reply, ok: connected, csrf: writePermission, transport, capabilities: { devicePortal: portal },
             targetKey: connected ? targetKey : undefined,
             device: connected ? { name, language: 'en', memoryTrash, displayPages, sleepMinutes, syncTiming,
-              pageWrap, preferBluetooth, webPasswordConfigured, weeklyCodexLimit } : undefined,
+              pageWrap, preferBluetooth, webPasswordConfigured, weeklyCodexLimit, wifiEnabled, bluetoothEnabled } : undefined,
             wifi: [], peers: [], bridge,
           };
+          break;
+        case 'auth.login':
+          if (data.password === 'correct-fixture-password') {
+            locked = false;
+            reply.session = 'fixture-session';
+          } else {
+            reply = { ok: false, access: 'locked', transport, error: 'Incorrect password.' };
+          }
+          break;
+        case 'auth.logout':
+          locked = true;
           break;
         case 'bridge.save':
           bridge = { name: data.name, weatherLocation: data.weatherLocation, holidayCountry: data.holidayCountry };
@@ -101,6 +117,10 @@ function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, ha
           break;
         case 'wireless.save':
           preferBluetooth = data.preferBluetooth;
+          break;
+        case 'radios.save':
+          wifiEnabled = data.wifiEnabled;
+          bluetoothEnabled = data.bluetoothEnabled;
           break;
         case 'trash.status':
           reply = { ...reply, days: retention, count: trash.length };
@@ -146,6 +166,39 @@ function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, ha
     },
   };
 }
+
+test('BLE lock exposes only password authentication until successful sign-in', async () => {
+  const page = fixture({ locked: true, bridge: { name: 'Private Bridge' }, wifiEnabled: true,
+    bluetoothEnabled: true, preferBluetooth: false, webPasswordConfigured: true });
+  assert.equal(page.el('settings-content').hidden, true);
+  await page.refresh();
+  assert.equal(page.el('access-login').hidden, false);
+  assert.equal(page.el('refresh').hidden, true);
+  assert.equal(page.el('settings-content').hidden, true);
+  assert.notEqual(page.el('bridge-name').value, 'Private Bridge');
+  page.el('access-password').value = 'incorrect-fixture-password';
+  await page.dispatch('access-login-form', 'submit');
+  assert.equal(page.el('settings-content').hidden, true);
+  page.el('access-password').value = 'correct-fixture-password';
+  await page.dispatch('access-login-form', 'submit');
+  assert.equal(page.el('access-login').hidden, true);
+  assert.equal(page.el('refresh').hidden, false);
+  assert.equal(page.el('settings-content').hidden, false);
+  assert.equal(page.el('wireless-radios').hidden, false);
+  assert.equal(page.el('wireless-priority').hidden, false);
+  assert.equal(page.el('wifi').hidden, false);
+  await page.dispatch('note-password-logout', 'click');
+  assert.equal(page.el('settings-content').hidden, true);
+  page.disconnect();
+  await page.refresh();
+  assert.equal(page.el('settings-content').hidden, true);
+});
+
+test('wireless controls, sync connection priority and network list are grouped in that order', () => {
+  const sections = [...settings.matchAll(/<section id="([^"]+)"/g)].map(match => match[1]);
+  const position = sections.indexOf('wireless-radios');
+  assert.deepEqual(sections.slice(position, position + 3), ['wireless-radios', 'wireless-priority', 'wifi']);
+});
 
 test('unsaved display edits stay through another form save and use the saved Note name', async () => {
   const page = fixture({ name: 'Wren-8', displayPages: 'TECNM', pageWrap: true });
@@ -533,4 +586,31 @@ test('end-of-pages setting and wireless priority round-trip independently', asyn
   await old.refresh();
   assert.equal(old.el('page-wrap-field').hidden, true);
   assert.equal(old.el('wireless-priority').hidden, true);
+});
+
+test('Wi-Fi can be switched off from USB while Bluetooth stays on', async () => {
+  const page = fixture({ transport: 'USB', wifiEnabled: true, bluetoothEnabled: true });
+  await page.refresh();
+  assert.equal(page.el('wireless-radios').hidden, false);
+  assert.equal(page.el('wifi-enabled').checked, true);
+  assert.equal(page.el('bluetooth-enabled').checked, true);
+  page.el('wifi-enabled').checked = false;
+  await page.dispatch('radios-form', 'submit');
+  assert(page.calls.some(call => call.op === 'radios.save' && !call.wifiEnabled && call.bluetoothEnabled));
+  assert.equal(page.el('wifi-enabled').checked, false);
+  assert.equal(page.el('bluetooth-enabled').checked, true);
+  const old = fixture({ transport: 'USB' });
+  await old.refresh();
+  assert.equal(old.el('wireless-radios').hidden, true);
+});
+
+test('disabling the active Bluetooth connection acknowledges the save without reconnecting', async () => {
+  const page = fixture({ transport: 'BLE', wifiEnabled: true, bluetoothEnabled: true });
+  await page.refresh();
+  const firstSaveCall = page.calls.length;
+  page.el('bluetooth-enabled').checked = false;
+  await page.dispatch('radios-form', 'submit');
+  assert.deepEqual(page.calls.slice(firstSaveCall).map(call => call.op), ['radios.save']);
+  assert.equal(page.el('wireless-radios').hidden, true);
+  assert.match(page.el('status').textContent, /Reconnect by USB/);
 });

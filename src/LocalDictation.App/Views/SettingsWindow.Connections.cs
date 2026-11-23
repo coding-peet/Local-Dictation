@@ -85,6 +85,7 @@ public sealed partial class SettingsWindow
         palaSettingsError.Visibility = Visibility.Collapsed;
         group.Children.Add(palaSettingsError);
         Ui.Label(group, "Pala transcription model", palaBridgeModel, "Choose the Dictation model or one of the installed models that supports Slovak.");
+        AddKuboControls(group);
 
         var bridgeHeader = new Grid { Margin = new(0, 16, 0, 0) };
         bridgeHeader.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
@@ -230,6 +231,7 @@ public sealed partial class SettingsWindow
         palaBridgeModel.SelectedItem = models.First(model => model.Id == settings.PalaBridgeModel);
         palaBridgeAutoStart.IsChecked = settings.PalaBridgeAutoStart;
         palaBridgeAutoStart.IsEnabled = settings.PalaIntegrationEnabled;
+        RefreshKuboSelections();
         if (navigation.SelectedIndex == (int)MainSection.Connections) RefreshPalaBridgeStatus();
     }
 

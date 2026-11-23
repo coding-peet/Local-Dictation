@@ -37,7 +37,9 @@ class LoopbackGuard:
             return
         await self.app(scope,receive,send)
 
-def create_app(config, engine, catalog=None):
+def create_app(config, engine, catalog=None, *, application_keys=None, speech=None):
+    if speech is not None and application_keys is None:
+        raise ValueError("Speech synthesis requires an application key registry.")
     if catalog is None:
         from .catalog import Catalog
         catalog = Catalog(config)
@@ -48,7 +50,8 @@ def create_app(config, engine, catalog=None):
         runtime=engine.status() if hasattr(engine,"status") else {}
         return JSONResponse({"service":"local-dictation","protocol_version":1,"process_id":os.getpid(),
                              "ready":not admission.unavailable and runtime.get("ready",True),"busy":admission.lock.locked(),
-                             "phase":admission.kind,"max_seconds":config.max_seconds,"capabilities":{"audio_normalization":True,"vocabulary_prompt":True},"runtime":runtime})
+                             "phase":admission.kind,"max_seconds":config.max_seconds,"capabilities":{"audio_normalization":True,"vocabulary_prompt":True,
+                             "application_keys":application_keys is not None,"speech":speech is not None},"runtime":runtime})
 
     def ready():
         return not admission.unavailable and (not hasattr(engine,"status") or engine.status().get("ready",True))
@@ -193,6 +196,9 @@ def create_app(config, engine, catalog=None):
     from .imports import Imports
     imports=Imports(config,catalog,admission,ready,engine)
     routes.extend(imports.routes())
+    if speech is not None:
+        from .speech import make_speech_endpoint
+        routes.append(Route("/v1/audio/speech", make_speech_endpoint(speech, error), methods=["POST"]))
     if hasattr(engine,"catalog"):
         engine.catalog=catalog
     app=Starlette(routes=routes)
@@ -200,4 +206,7 @@ def create_app(config, engine, catalog=None):
     app.state.imports=imports
     app.state.validate=validate
     app.state.engine=engine
+    if application_keys is not None:
+        from .application_keys import ApplicationKeyGuard
+        return LoopbackGuard(ApplicationKeyGuard(app, application_keys))
     return LoopbackGuard(app)

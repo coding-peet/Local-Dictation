@@ -395,6 +395,9 @@
       <section id="settings" aria-labelledby="settings-title">
         <h2 id="settings-title">General and shortcuts</h2>
         <p>The main sections are <strong>General → Models → Dictation → History → Connections</strong>. General controls the app, Models manages installed resources, Dictation prepares your next recording, and History works with saved or imported results. <a href="#connections">Connections</a> manages the local transcription service and Pala Note. Manual launch opens Dictation; Record/Stop and Help remain available from every section.</p>
+        <h3>Read aloud</h3>
+        <p>Select text in a supported Windows app and press <kbd>Ctrl</kbd> + <kbd>Left Alt</kbd> + <kbd>R</kbd>. Press the same shortcut again to stop playback or cancel a pending request. Starting dictation also stops read-aloud.</p>
+        <p>For clipboard text, right-click the Local Dictation tray icon and choose <strong>Read from clipboard</strong>. While reading, the tray offers <strong>Stop reading</strong>. The connected speech-enabled local API reads short Slovak selections of up to 500 characters using Piper Lili.</p>
         <h3>Start with Windows</h3>
         <p>In <strong>General → Startup</strong>, enable <strong>Start with Windows</strong> to open Local Dictation in the system tray when you sign in. It is off until you choose it. Automatic startup does not open the main window or start a recording. Double-click the tray icon or choose <strong>Open Local Dictation</strong> to open the window.</p>
         <p>This choice applies to your Windows account. Turning it off does not close the app or stop local APIs. Windows Startup apps settings or organization restrictions can override automatic startup. If the change cannot be confirmed, the app shows an inline explanation and retains the verified state.</p>
@@ -456,6 +459,11 @@
           Turn <strong>Kubo processing</strong> off for local transcription saved on Note. This mode needs no Codex or Google sign-in.</p>
         <p>Turn it on to organize notes and use configured Google destinations. Run <code>codex login</code>,
           then choose <strong>Check Codex sign-in</strong>. Set the exact Google Tasks list name and personal calendar ID.</p>
+        <p>In <strong>Connections</strong>, choose the <strong>Kubo processing model</strong> and its
+          <strong>Reasoning effort</strong> side by side. The default effort is High. Use <strong>Refresh Codex models</strong> to
+          update the available models and levels from the signed-in account.</p>
+        <p>Choose <strong>Note transcripts</strong> to read an original Note transcript and see Bridge decisions about
+          processing, routing and delivery. A calendar request without a concrete time remains available here.</p>
 
         <p>Open <strong>Note password</strong> over paired local USB to set the password.
           Enter the new password twice. Use the password to sign in to Web Companion

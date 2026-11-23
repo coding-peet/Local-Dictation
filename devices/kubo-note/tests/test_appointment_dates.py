@@ -57,7 +57,7 @@ class BridgeRecordingDateTests(unittest.TestCase):
 
         action = dict(kind="event", title="Termín", due="2026-12-11T15:00",
                       end="2026-12-11T15:30", minutes=-1, yearless=True)
-        request = dict(pala_note=7, pala_created=timestamp, pala_transcript="11. decembra o 15:00",
+        request = dict(pala_note=7, pala_created=timestamp, pala_transcript="Pridaj mi termín 11. decembra o 15:00",
                        input="", instructions="")
         with patch("bridge.codex", return_value=json.dumps(
                 dict(title="Termín", summary="Plán", apple=[action]))) as model:
@@ -69,6 +69,35 @@ class BridgeRecordingDateTests(unittest.TestCase):
         self.assertEqual(events[0]["due"], "2027-12-11T15:00")
         self.assertEqual(events[0]["end"], "2027-12-11T15:30")
         self.assertIn("2026-12-12T09:00+01:00", prompt)
+
+    def test_no_confirmation_for_an_unrequested_or_expired_appointment(self):
+        import json
+        from unittest.mock import patch
+
+        action = dict(kind="event", title="Skúšobný termín", due="2030-11-23T15:00",
+                      end="2030-11-23T15:30", minutes=-1, yearless=False,
+                      originalTimeText="v sobotu o tretej")
+        future = "V sobotu mám o tretej zubára"
+        request = dict(pala_note=3, pala_created="2030-11-22T00:30:00Z", input="", instructions="")
+        schema = {"properties": {}, "required": []}
+        response = dict(title="Zubár", summary="Plán", apple=[action])
+
+        class FixedTime(dt.datetime):
+            @classmethod
+            def now(cls, zone=dt.timezone.utc):
+                return cls(2030, 11, 24, 1, 0, tzinfo=dt.timezone.utc).astimezone(zone)
+
+        with patch("bridge.codex", return_value=json.dumps(response)), patch.object(self.bridge, "deliver") as deliver:
+            _, plain = self.bridge.memories(dict(request, pala_transcript=future + "."), schema)
+            _, confirmed_only = self.bridge.memories(
+                dict(request, pala_note=4, pala_transcript=future + ", daj mi to do kalendára."), schema)
+            with patch("bridge.dt.datetime", FixedTime):
+                _, expired = self.bridge.memories(
+                    dict(request, pala_note=4, pala_transcript=future + ", daj mi to do kalendára."), schema)
+        self.assertEqual(plain, [])
+        self.assertEqual(len(confirmed_only), 1)
+        self.assertEqual(expired, [])
+        deliver.assert_not_called()
 
     def test_early_morning_tomorrow_requires_an_explicit_choice(self):
         import json

@@ -26,8 +26,10 @@ public sealed class GlobalInput : IDisposable
     public event Action? Toggle;
     public event Action? HoldStart;
     public event Action? HoldStop;
+    public event Action? ReadAloud;
     public event Action<DestinationInput>? UserEdited;
     public bool ShortcutEnabled { get; set; }
+    public bool ReadAloudEnabled {get=>commands.ReadAloudEnabled;set=>commands.ReadAloudEnabled=value;}
     public ShortcutMode Mode {get=>commands.Mode;set=>commands.Mode=value;}
     public bool IsHoldingShortcut=>commands.IsHoldingShortcut;
     public bool CapturingShortcut {get=>commands.CapturingShortcut;set=>commands.CapturingShortcut=value;}
@@ -75,6 +77,7 @@ public sealed class GlobalInput : IDisposable
                 if(decision.Command==InputCommand.Start)HoldStart?.Invoke();
                 if(decision.Command==InputCommand.Stop)HoldStop?.Invoke();
                 if(decision.Command==InputCommand.Cancel)Cancel?.Invoke();
+                if(decision.Command==InputCommand.ReadAloud)ReadAloud?.Invoke();
                 if(decision.Suppress)return 1;
             }
         }

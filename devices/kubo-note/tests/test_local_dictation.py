@@ -162,7 +162,11 @@ class BridgeProcessingModeTests(unittest.TestCase):
             with patch.object(delivery, "_send") as send:
                 delivery.flush([queued])
                 send.assert_not_called()
-            self.assertIsNone(delivery.stager("note")(2, None, "Second note"))
+            retained = delivery.stager("note")(2, None, "Second note")
+            self.assertFalse(retained.organize_calendar)
+            retained()
+            self.assertTrue(any(record["text"] == "Second note" and record["onNote"]
+                                for record in delivery.queue.note_transcripts(0)["records"]))
             self.assertEqual(delivery.queue.pending(), [queued])
 
 

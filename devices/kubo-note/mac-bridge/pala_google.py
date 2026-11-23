@@ -31,8 +31,13 @@ WORK = re.compile(
     r"|pracovn[ua]\s+(?:ulohu|uloha|poznamku|poznamka)|pracovn[ye]\s+termin)\b",
     re.IGNORECASE,
 )
+# The list word can lose voicing in a recording. Only accept these forms
+# in explicit shopping prefixes, never in the free-form note body.
+SHOPPING_LIST_WORD = r"[sz][ou][zs]n[ao]m"
 SHOPPING = re.compile(
-    r"^(?:pridaj(?:\s+mi)?\s+na\s+nakupny\s+zoznam|nakup(?:ny zoznam)?)"
+    r"^(?:prosim[\s,:]+)?(?:(?:pridaj|daj|zapis|vloz)(?:\s+mi)?\s+"
+    rf"(?:na\s+nakup(?:ny\s+{SHOPPING_LIST_WORD})?|do\s+nakupneho\s+{SHOPPING_LIST_WORD}u"
+    rf"|do\s*{SHOPPING_LIST_WORD}u?\s+nakup)|nakup(?:ny\s+{SHOPPING_LIST_WORD})?)"
     r"(?:\s*[:,–-]\s*|\s+)(.+)$", re.IGNORECASE | re.DOTALL,
 )
 TASK = re.compile(
@@ -44,10 +49,16 @@ DOC = re.compile(
     r"(?:\s*[:,–-]\s*|\s+)(.+)$", re.IGNORECASE | re.DOTALL,
 )
 CALENDAR = re.compile(
-    r"^(?:prosim[\s,:]+)?(?:termin\b"
+    r"^(?:prosim[\s,:]+)?(?:termin\s*[:,]"
     r"|(?:pridaj|naplanuj|zapis|vytvor|napis|vloz)(?:\s+mi)?\s+(?:osobny\s+)?(?:termin|udalost)\b"
     r"|(?:(?:daj|pridaj|zapis|uloz|napis|vloz|zaznamenaj|naplanuj)(?:\s+mi)?\s+)?"
     r"do\s+(?:google\s+)?kalendara\b)",
+    re.IGNORECASE,
+)
+CALENDAR_SUFFIX = re.compile(
+    r"\b(?:daj|pridaj|zapis|uloz|napis|vloz|zaznamenaj|naplanuj)"
+    r"(?:\s+(?:mi|to)){0,2}\s+do\s+(?:google\s+)?kalendara"
+    r"(?:\s*,?\s*prosim)?[.!?]*$",
     re.IGNORECASE,
 )
 NAMED_TARGET = re.compile(
@@ -68,6 +79,10 @@ def canonical(text):
     return unicodedata.normalize("NFC", text.replace("\r\n", "\n").replace("\r", "\n")).strip()
 
 
+def _spoken_title(text):
+    return " ".join(canonical(text).translate(SLOVAK_FOLD).casefold().split())
+
+
 def _named_destination(text, match):
     suffix = text[match.start(2):].strip()
     quoted = QUOTED_TARGET.fullmatch(suffix)
@@ -76,7 +91,7 @@ def _named_destination(text, match):
     else:
         parts = re.split(r"[:,]", suffix, maxsplit=1)
         name, body = parts if len(parts) == 2 else ("", "")
-    alias = " ".join(name.translate(SLOVAK_FOLD).casefold().split())
+    alias = _spoken_title(name)
     if not alias or not body.strip() or name.startswith(('"', '„')):
         return "needs-target", [text]
     provider = "list" if match[1].lower() == "zoznamu" else "document"
@@ -88,13 +103,15 @@ def classify_transcript(text):
     command_text = text.translate(SLOVAK_FOLD)
     if WORK.search(command_text):
         return "work", [text]
-    if CALENDAR.match(command_text):
+    if CALENDAR.match(command_text) or CALENDAR_SUFFIX.search(command_text):
         return "calendar", [text]
     if ANOTHER_COMMAND.search(command_text):
         return "sorting", [text]
     named = NAMED_TARGET.fullmatch(command_text)
     if named:
-        return _named_destination(text, named)
+        route, entries = _named_destination(text, named)
+        if route != "needs-target" or not SHOPPING.fullmatch(command_text):
+            return route, entries
 
     for pattern, kind in ((SHOPPING, "shopping"), (TASK, "tasks"), (DOC, "docs")):
         match = pattern.fullmatch(command_text)
@@ -114,7 +131,7 @@ def classify_transcript(text):
     return "general", [text]
 
 
-def _recording_actions(device_id, note, text):
+def _recording_identity(device_id, note, text):
     if not isinstance(device_id, str) or not device_id.strip() or type(note) is not int or note <= 0:
         raise ValueError("Pala device and note identity are required.")
     text = canonical(text)
@@ -123,8 +140,13 @@ def _recording_actions(device_id, note, text):
 
     # Normalize the original text so a Companion export and a USB replay
     # from the same recording generate the same identity.
-    digest = hashlib.sha256(json.dumps(
+    ident = hashlib.sha256(json.dumps(
         [device_id.casefold(), note, text], ensure_ascii=False).encode("utf-8")).hexdigest()
+    return ident, text
+
+
+def _recording_actions(device_id, note, text):
+    digest, text = _recording_identity(device_id, note, text)
     kind, entries = classify_transcript(text)
     return kind, [(f"{digest}-{index}", body) for index, body in enumerate(entries)]
 
@@ -136,11 +158,24 @@ def _delivery_target(bindings, kind):
     return target
 
 
+def _spoken_list_name(kind):
+    if kind == "shopping":
+        return "nakup"
+    if kind.startswith("list:"):
+        return kind.removeprefix("list:")
+    return None
+
+
+def can_stage_google_route(config, kind):
+    return bool(config.get("google_routes") or
+                (config.get("destination") == "google" and _spoken_list_name(kind)))
+
+
 def general_fallback_kinds(config):
     routes = config.get("google_routes", {})
     if not config.get("personal_note_collection") or "general" not in routes:
         return frozenset()
-    return frozenset(("work", "tasks", "shopping", "sorting")) - routes.keys()
+    return frozenset(("work", "tasks", "sorting")) - routes.keys()
 
 
 class DeliveryQueue:
@@ -148,6 +183,18 @@ class DeliveryQueue:
         self.path = Path(directory) / "google-delivery.sqlite"
         with self.database() as db:
             db.execute("BEGIN IMMEDIATE")
+            db.execute("""CREATE TABLE IF NOT EXISTS note_transcripts (
+                id TEXT PRIMARY KEY, device TEXT NOT NULL, note INTEGER NOT NULL, captured TEXT,
+                body TEXT NOT NULL, on_note INTEGER NOT NULL
+            )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS bridge_decisions (
+                seq INTEGER PRIMARY KEY, recording TEXT NOT NULL, time TEXT NOT NULL,
+                stage TEXT NOT NULL, detail TEXT NOT NULL
+            )""")
+            db.execute("CREATE INDEX IF NOT EXISTS bridge_decisions_recording ON bridge_decisions(recording, seq)")
+            db.execute("""CREATE TABLE IF NOT EXISTS bridge_calendar_links (
+                action TEXT PRIMARY KEY, recording TEXT NOT NULL
+            )""")
             db.execute("""CREATE TABLE IF NOT EXISTS google_actions (
                 id TEXT PRIMARY KEY, kind TEXT NOT NULL, captured TEXT, body TEXT NOT NULL,
                 status TEXT NOT NULL, target_id TEXT, provider_id TEXT, device TEXT,
@@ -167,8 +214,72 @@ class DeliveryQueue:
         with contextlib.closing(sqlite3.connect(self.path, timeout=5)) as db, db:
             yield db
 
+    def remember_transcript(self, device_id, note, captured, text, *, on_note):
+        ident, _ = _recording_identity(device_id, note, text)
+        capture = recording_time(captured, timezone.utc)
+        with self.database() as db:
+            db.execute("""INSERT INTO note_transcripts(id, device, note, captured, body, on_note)
+                          VALUES(?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET
+                          captured=COALESCE(note_transcripts.captured, excluded.captured),
+                          on_note=MAX(note_transcripts.on_note, excluded.on_note)""",
+                       (ident, device_id.casefold(), note, capture.isoformat() if capture else None, text, int(on_note)))
+        return ident
+
+    @staticmethod
+    def _record_decision(db, recording, stage, detail):
+        previous = db.execute("""SELECT stage, detail FROM bridge_decisions
+                                 WHERE recording=? ORDER BY seq DESC LIMIT 1""", (recording,)).fetchone()
+        if previous != (stage, detail):
+            db.execute("INSERT INTO bridge_decisions(recording,time,stage,detail) VALUES(?,?,?,?)",
+                       (recording, datetime.now(timezone.utc).isoformat(timespec="seconds"), stage, detail))
+
+    def log_decision(self, recording, stage, detail):
+        with self.database() as db:
+            self._record_decision(db, recording, stage, detail)
+
+    def log_calendar_proposals(self, recording, proposals, detail):
+        with self.database() as db:
+            for proposal in proposals:
+                db.execute("INSERT OR IGNORE INTO bridge_calendar_links(action,recording) VALUES(?,?)",
+                           (proposal["id"], recording))
+            self._record_decision(db, recording, "Calendar", detail)
+
+    def log_calendar_decision(self, action, detail):
+        with self.database() as db:
+            link = db.execute("SELECT recording FROM bridge_calendar_links WHERE action=?", (action,)).fetchone()
+            if link:
+                self._record_decision(db, link[0], "Calendar", detail)
+
+    def note_transcripts(self, offset):
+        if type(offset) is not int or offset < 0 or offset > 2_147_483_647:
+            raise ValueError("Invalid Note transcript page.")
+        size = 50
+        with self.database() as db:
+            rows = db.execute("""SELECT id, note, captured, body, on_note
+                FROM (
+                  SELECT id, note, captured, body, on_note FROM note_transcripts
+                  UNION ALL
+                  SELECT 'legacy:' || g.id,
+                    NULLIF(CAST(substr(g.recording_id, 1, instr(g.recording_id, ':') - 1) AS INTEGER), 0),
+                    g.captured, g.body, g.status != 'awaiting-usb'
+                  FROM google_actions g
+                  WHERE g.kind IN ('calendar', 'general', 'work', 'needs-target', 'sorting')
+                    AND NOT EXISTS (SELECT 1 FROM note_transcripts n WHERE
+                        n.id=substr(g.id, 1, instr(g.id, '-') - 1))
+                ) ORDER BY captured IS NULL, julianday(captured) DESC, id LIMIT ? OFFSET ?""", (size + 1, offset)).fetchall()
+            records = []
+            for ident, num, stamp, text, saved in rows[:size]:
+                log = db.execute("""SELECT time, stage, detail FROM bridge_decisions
+                                    WHERE recording=? ORDER BY seq DESC LIMIT 24""", (ident,)).fetchall()
+                capture = recording_time(stamp, timezone.utc)
+                records.append({"note": num, "captured": capture.isoformat() if capture else None,
+                                "text": text, "onNote": bool(saved),
+                                "decisions": [f"{when}  {stage}: {detail}" for when, stage, detail in reversed(log)]})
+        return {"records": records, "hasMore": len(rows) > size}
+
     def stage(self, device_id, note, captured, text, *, ready=True, archive=False, general_fallback=()):
         kind, actions = _recording_actions(device_id, note, text)
+        classified = kind
         if archive or kind in general_fallback:
             kind, actions = "general", [(actions[0][0], canonical(text))]
         recorded = recording_time(captured, timezone.utc)
@@ -178,6 +289,9 @@ class DeliveryQueue:
         if not ready:
             status = "awaiting-usb"
         with self.database() as db:
+            if ready:
+                decision = kind if kind == classified else f"{classified} routed to {kind} by the profile"
+                self._record_decision(db, actions[0][0].rsplit("-", 1)[0], "Routing", decision)
             for key, body in actions:
                 db.execute("""INSERT OR IGNORE INTO google_actions
                     (id, kind, captured, body, status, device, recording_id)
@@ -224,7 +338,20 @@ class DeliveryQueue:
             return [key for key, in db.execute(
                 "SELECT id FROM google_actions WHERE status='pending' ORDER BY rowid")]
 
-    def deliver(self, key, bindings, send):
+    def deliver(self, key, bindings, send, *, resolve_list=None):
+        if resolve_list is not None:
+            with self.database() as db:
+                action = db.execute("SELECT kind, status FROM google_actions WHERE id=?", (key,)).fetchone()
+            if action is not None:
+                kind, status = action
+                spoken = _spoken_list_name(kind)
+                if status == "pending" and spoken and _delivery_target(bindings, kind) is None:
+                    try:
+                        bindings = {**bindings, kind: resolve_list(spoken)}
+                    except DestinationUnavailable:
+                        self.log_decision(key.rsplit("-", 1)[0], "Routing", f"{kind} has no unique available list")
+                        return "pending"
+        recording = key.rsplit("-", 1)[0]
         with self.database() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
@@ -240,9 +367,11 @@ class DeliveryQueue:
                     isinstance(target.get(field), str) and target[field].strip()
                     for field in ("id", "title"))
                     or previous_target not in (None, target["id"])):
+                self._record_decision(db, recording, "Routing", f"{kind} is waiting for its destination")
                 return "pending"
             db.execute("UPDATE google_actions SET status='sending', target_id=? WHERE id=?",
                        (target["id"], key))
+            self._record_decision(db, recording, "Google", f"attempted delivery to {target['title']}")
 
         try:
             provider_id = send(kind, target, captured, body, key)
@@ -250,23 +379,32 @@ class DeliveryQueue:
                 raise RuntimeError("Google did not return a verified result.")
         except DestinationUnavailable:
             self._finish(key, "pending")
+            self.log_decision(recording, "Google", "destination unavailable")
             raise
-        except Exception:
+        except Exception as error:
             self._finish(key, "uncertain")
+            self.log_decision(recording, "Google", f"delivery unconfirmed ({type(error).__name__})")
             raise
         self._finish(key, "done", provider_id)
+        self.log_decision(recording, "Google", f"confirmed delivery to {target['title']}")
         return "done"
 
-    def reconcile_task(self, key, bindings, read):
+    def reconcile_task(self, key, bindings, read, *, resolve_list=None):
         with self.database() as db:
             row = db.execute("SELECT kind, status, target_id FROM google_actions WHERE id=?",
                              (key,)).fetchone()
         if row is None:
             raise ValueError("Unknown Pala delivery.")
         kind, status, target_id = row
-        target = _delivery_target(bindings, kind)
         if status not in ("sending", "uncertain"):
             return status
+        target = _delivery_target(bindings, kind)
+        spoken = _spoken_list_name(kind)
+        if target is None and target_id and spoken and resolve_list is not None:
+            try:
+                target = resolve_list(spoken)
+            except DestinationUnavailable:
+                return "uncertain"
         task_kind = kind in ("tasks", "shopping", "sorting", "general") or kind.startswith("list:")
         if (not task_kind
                 or not isinstance(target, dict) or target.get("provider") == "docs"
@@ -318,6 +456,7 @@ class GeneralTaskCount:
         self.changed_at = 0
         self.next_check = 0
         self.refreshing = False
+        self.revision = 0
 
     def get(self, state, target):
         key = (state, target["id"], target["title"])
@@ -327,19 +466,27 @@ class GeneralTaskCount:
                 self.key = key
                 self.count = None
                 self.next_check = 0
+                self.revision += 1
             if not self.refreshing and now >= self.next_check:
                 self.refreshing = True
                 self.next_check = now + 60
-                threading.Thread(target=self._refresh, args=(key, target), daemon=True).start()
+                threading.Thread(target=self._refresh, args=(key, target, self.revision), daemon=True).start()
             if self.count is not None and now - self.changed_at <= 300:
                 return self.count
         return -1
 
-    def _refresh(self, key, target):
+    def invalidate(self, state, target):
+        with self.lock:
+            if self.key == (state, target["id"], target["title"]):
+                self.count = None
+                self.next_check = 0
+                self.revision += 1
+
+    def _refresh(self, key, target, revision):
         try:
             count = count_open_general_tasks(key[0], target)
             with self.lock:
-                if self.key == key:
+                if self.key == key and self.revision == revision:
                     self.count = count
                     self.changed_at = time.monotonic()
         except Exception:
@@ -362,16 +509,20 @@ def count_open_general_tasks(state, target):
 general_task_count = GeneralTaskCount()
 
 
+def _general_task_target(active):
+    target = active["google_routes"].get("general")
+    if active["processing_mode"] != "kubo" or not isinstance(target, dict):
+        return None
+    if target.get("provider", "tasks") != "tasks" or not target.get("id") or not target.get("title"):
+        return None
+    return target
+
+
 def general_open_count(state, config):
     from note_web import processing_config
 
-    active = processing_config(state, config)
-    target = active["google_routes"].get("general")
-    if active["processing_mode"] != "kubo" or not isinstance(target, dict):
-        return -1
-    if target.get("provider", "tasks") != "tasks" or not target.get("id") or not target.get("title"):
-        return -1
-    return general_task_count.get(state, target)
+    target = _general_task_target(processing_config(state, config))
+    return general_task_count.get(state, target) if target is not None else -1
 
 
 def home_codex_usage(state, config):
@@ -383,19 +534,33 @@ def home_codex_usage(state, config):
     return None
 
 
-def home_dashboard_payload(state, config, device, *, queue=None, version=2):
+def home_dashboard_payload(state, config, device, *, queue=None, version=2, wait_for_sources=0):
     from note_web import processing_config
 
     active = processing_config(state, config)
     bindings = active["google_routes"] if active["processing_mode"] == "kubo" else {}
+    deadline = time.monotonic() + wait_for_sources
+    include_usage = bool(device and version >= 3)
+    count = general_open_count(state, config) if device else -1
+    usage = home_codex_usage(state, config) if include_usage else None
+    expect_count = bool(device and _general_task_target(active))
+    expect_usage = include_usage and active["processing_mode"] == "kubo"
+    while (expect_count and count < 0) or (expect_usage and usage is None):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(.2, remaining))
+        if expect_count and count < 0:
+            count = general_open_count(state, config)
+        if expect_usage and usage is None:
+            usage = home_codex_usage(state, config)
     waiting, confirmed = 0, None
     if device and (queue is not None or (state / "google-delivery.sqlite").is_file()):
         queue = queue if queue is not None else DeliveryQueue(state)
         _, _, waiting, confirmed = queue.home_counts(device, bindings, with_last=True)
     local_time = (datetime.fromtimestamp(confirmed, ZoneInfo("Europe/Bratislava")).strftime("%H:%M")
                   if confirmed is not None else "-")
-    counts = f"{general_open_count(state, config) if device else -1},{waiting},{local_time}"
-    usage = home_codex_usage(state, config) if version >= 3 and device else None
+    counts = f"{count},{waiting},{local_time}"
     if usage is not None:
         if version >= 4:
             short, short_reset = usage.five_hours or (-1, 0)
@@ -417,13 +582,15 @@ def _api(state, service, version, scope, token):
         raise DestinationUnavailable(f"Google {service} authorization or service is unavailable.") from error
 
 
-def bound_task_list(state, requested_title):
+def bound_task_list(state, requested_title, *, spoken=False):
+    normalize = _spoken_title if spoken else lambda title: title
+    expected = normalize(requested_title)
     with _api(state, "tasks", "v1", TASKS_SCOPE, "google-tasks-token.json") as api:
         matches = [row for row in items(api.tasklists(), maxResults=100)
-                   if row.get("title") == requested_title]
-    if len(matches) != 1:
+                   if isinstance(row.get("title"), str) and normalize(row["title"]) == expected]
+    if len(matches) != 1 or not matches[0].get("id"):
         raise DestinationUnavailable("The selected Google Tasks list is missing or ambiguous.")
-    return {"id": matches[0]["id"], "title": requested_title}
+    return {"id": matches[0]["id"], "title": matches[0]["title"]}
 
 
 def _verify_task_list(api, target):
@@ -566,18 +733,22 @@ class UsbGoogleDelivery:
         config = processing_config(self.state, self.config)
         return config if config["processing_mode"] == "kubo" else {}
 
-    def stager(self, device, staged=None):
+    def stager(self, device, staged=None, *, route=True):
         def stage(note, captured, text):
-            config = self.active_config()
-            organize_calendar = bool(config.get("calendar")) and classify_transcript(text)[0] == "calendar"
-            if not config.get("google_routes") and not organize_calendar:
-                return None
+            self.queue.remember_transcript(device, note, captured, text, on_note=False)
+            config = self.active_config() if route else {}
+            kind, _ = classify_transcript(text)
+            organize_calendar = bool(config.get("calendar")) and kind == "calendar"
             fallback = general_fallback_kinds(config)
-            self.queue.stage(device, note, captured, text, ready=False, general_fallback=fallback)
+            if can_stage_google_route(config, kind) or organize_calendar:
+                self.queue.stage(device, note, captured, text, ready=False, general_fallback=fallback)
 
             def acknowledge():
+                self.queue.remember_transcript(device, note, captured, text, on_note=True)
+                if not route:
+                    return
                 active = self.active_config()
-                if not active.get("google_routes") and not (organize_calendar and active.get("calendar")):
+                if not can_stage_google_route(active, kind) and not (organize_calendar and active.get("calendar")):
                     return
                 keys = self.queue.stage(device, note, captured, text, general_fallback=fallback)
                 if staged is not None:
@@ -596,10 +767,12 @@ class UsbGoogleDelivery:
             keys = self.queue.pending()
         for key in keys:
             try:
-                bindings = self.active_config().get("google_routes")
-                if not bindings:
+                config = self.active_config()
+                bindings = config.get("google_routes", {})
+                if not bindings and config.get("destination") != "google":
                     return
-                outcome = self.queue.deliver(key, bindings, self._send)
+                outcome = self.queue.deliver(
+                    key, bindings, self._send, resolve_list=lambda title: bound_task_list(self.state, title, spoken=True))
                 if outcome == "done":
                     print("Pala Google delivery confirmed.", flush=True)
             except Exception as error:
@@ -608,15 +781,23 @@ class UsbGoogleDelivery:
 
     def _send(self, kind, target, captured, text, key):
         with self.activity.step("google"):
-            return deliver_google(self.state, self.zone, kind, target, captured, text, key)
+            provider_id = deliver_google(self.state, self.zone, kind, target, captured, text, key)
+            if provider_id and kind == "general" and target.get("provider", "tasks") == "tasks":
+                general_task_count.invalidate(self.state, target)
+            return provider_id
 
 
 def route_saved(state, config, note, captured, text, device, *, bindings=None, reconcile=False):
     queue = DeliveryQueue(state)
     targets = config.get("google_routes", {}) if bindings is None else bindings
+    resolve_list = None
+    if bindings is None and (targets or config.get("destination") == "google"):
+        def resolve_list(title):
+            return bound_task_list(state, title, spoken=True)
     if reconcile:
         _, actions = _recording_actions(device, note, text)
-        return [queue.reconcile_task(key, targets, lambda target, k: reconcile_task(state, target, k))
+        return [queue.reconcile_task(key, targets, lambda target, k: reconcile_task(state, target, k),
+                                     resolve_list=resolve_list)
                 for key, _ in actions]
     keys = queue.stage(device, note, captured, text)
     zone = ZoneInfo(config.get("timezone", "Europe/Bratislava"))
@@ -624,7 +805,7 @@ def route_saved(state, config, note, captured, text, device, *, bindings=None, r
     def send(kind, target, when, body, key):
         return deliver_google(state, zone, kind, target, when, body, key)
 
-    return [queue.deliver(key, targets, send) for key in keys]
+    return [queue.deliver(key, targets, send, resolve_list=resolve_list) for key in keys]
 
 
 def main():

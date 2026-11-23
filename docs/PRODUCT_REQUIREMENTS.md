@@ -12,6 +12,16 @@ Application copy and engineering documentation are English. Collaboration with
 Peter is normally Slovak. Slovak dictation, diacritics, English technical terms,
 punctuation, whitespace, and Unicode must be preserved.
 
+## Read aloud
+
+- Use Ctrl+Left Alt+R to read selected text through UI Automation in the
+  focused Windows app. The next invocation cancels synthesis or stops the
+  current playback. Starting dictation stops playback before opening the mic.
+- Provide a separate **Read from clipboard** action in the system tray.
+  Read only the explicit selection or clipboard text supplied by the user.
+  Use the scoped local speech API with Slovak Piper Lili on CPU, up to 500
+  characters per request.
+
 ## User-first interaction priorities
 
 Example: select or highlight a saved transcript, choose Insert at cursor, and
@@ -932,12 +942,19 @@ clear to the user, preserve original recognition, and keep manual edits dominant
   Both BLE peers contribute fresh connection challenges and authenticate each
   other with the existing pairing token before exchanging recording data.
   Require BLE v2 on both peers.
-  Identify connection attempts on the Note as USB, Wi-Fi or BT. During
-  Bluetooth discovery, advertise the current Note display name with
+  Identify connection attempts on the Note as USB, Wi-Fi or BT.
+  During Bluetooth discovery, advertise the current Note display name with
   `-Note` appended, for example `Kubo-Note`. Bridge selects and
   authenticates its peer using the existing device identity.
 - While Local Dictation is running, transcribe USB and Bluetooth recordings
   through the local service and return each transcript to the same SD note.
+  Use authenticated binary notifications to transfer audio when both BLE
+  peers support them. Keep the legacy BLE download available for older v2
+  peers. Preserve the source WAV and retry an incomplete transfer from the
+  recording queue.
+  Align the battery icon in the upper right on Home, Web Companion, and
+  the recording sync screen. Use an exclamation mark in the empty icon
+  at 10% or less.
   Release the COM port between checks so Pala can sleep normally.
 - Deliver each plain personal dictation to the configured Google General
   list or document as a separate entry with the complete original text.
@@ -969,12 +986,22 @@ clear to the user, preserve original recognition, and keep manual edits dominant
 - Show unfinished items in the configured Google Tasks General list in the
   left Home column. Show the last confirmed Google delivery time in the
   right column. When Google confirmation is pending, show the number of
-  waiting dictations there until delivery completes.
+  waiting dictations there until delivery completes. After a Bluetooth sync,
+  check for confirmation automatically over the paired Bluetooth connection
+  while Home still shows a pending delivery.
 - Keep Home at the bottom of the display-pages settings and let the user
   choose whether tapping past the top page returns Home or stays there.
 - Offer Wi-Fi first or Bluetooth first for wireless recording sync.
+  Let the user enable Wi-Fi and Bluetooth independently on the Note. Both
+  start enabled on existing devices. Turning off a radio keeps its pairing or
+  network profiles and closes any settings connection using it. USB can always
+  be used to turn either radio back on.
   Give USB priority in both modes and preserve Wi-Fi for operations that
   require the paired Bridge's HTTPS API.
+- In Note settings, place **Wireless connections** first, then
+  **Sync connection priority** and **Wi-Fi networks**.
+- In Local Dictation, place the Kubo processing model and reasoning effort
+  selectors on the same row.
 - Between the status row and delivery counters, show weather and Moon
   first, then the calendar heading, then the weekly date strip. Leave
   equal space from the upper divider to the weather and from the date
@@ -996,3 +1023,22 @@ clear to the user, preserve original recognition, and keep manual edits dominant
   boundaries. Include the prior year's final days for the New Year week.
   In the monthly calendars and the weekly strip on Home, show the day
   numbers in bold for holidays. Keep the black highlight for today.
+
+## Follow-up for the next Kubo Note build
+
+- When the user opens Web Companion with Wi-Fi disabled, show a plain
+  status message on the Note that Wi-Fi is off. Point to the Wi-Fi setting
+  where guidance is needed, including in the companion settings.
+- Place **Enable Wi-Fi** in **Wi-Fi networks** and **Enable Bluetooth**
+  next to the Bluetooth pairing controls. Keep each switch accessible when
+  its radio is off.
+- Use the same theme for the Note sign-in screen and the rest of the Note
+  settings and Web Companion pages.
+- While the paired BLE connection is locked, show the password form with
+  sign-in status. Show Note and Bridge settings after successful sign-in.
+- Show the Kubo Note logo as the browser tab icon on the Note pages,
+  including sign-in.
+- At an estimated battery level of 10% or less, show an exclamation mark
+  inside the empty battery icon to indicate that the Note needs charging.
+
+Retest sign-in over Bluetooth with Wi-Fi disabled and USB disconnected.

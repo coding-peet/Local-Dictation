@@ -94,6 +94,7 @@ public sealed partial class SettingsWindow
         {
             RefreshPalaBridgeStatus();
             RefreshPalaActivity();
+            if (!kuboCatalogRequested && controller.Settings.PalaIntegrationEnabled) _ = LoadKuboCatalog();
             palaBridgePoll.Start();
             palaActivityPoll.Start();
         }

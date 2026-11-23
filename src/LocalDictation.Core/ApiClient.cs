@@ -50,15 +50,20 @@ public static class Protocol
     };
 }
 
+public sealed record SynthesisAudio(byte[] Wave, string Backend);
+
 public sealed class ApiClient : IDisposable
 {
     readonly HttpClient http;
-    public ApiClient(Settings settings):this(settings,new HttpClientHandler {UseProxy=false}){}
+    public ApiClient(Settings settings):this(settings,new HttpClientHandler {UseProxy=false,AllowAutoRedirect=false}){}
     public ApiClient(Settings settings,HttpMessageHandler handler):this(settings,handler,TimeSpan.FromSeconds(45)){}
-    public ApiClient(Settings settings,TimeSpan timeout):this(settings,new HttpClientHandler {UseProxy=false},timeout){}
-    public ApiClient(Settings settings,HttpMessageHandler handler,TimeSpan timeout)
+    public ApiClient(Settings settings,TimeSpan timeout):this(settings,new HttpClientHandler {UseProxy=false,AllowAutoRedirect=false},timeout){}
+    public ApiClient(Settings settings,HttpMessageHandler handler,TimeSpan timeout,string? applicationKey=null)
     {
-        http = new(handler) { BaseAddress = settings.ServerUri(), Timeout = timeout };
+        var endpoint=settings.ServerUri();
+        var key=applicationKey is null?LocalApiCredential.Read(endpoint):LocalApiCredential.Validate(applicationKey);
+        if (key is not null) handler=new LocalApiCredential.Handler(endpoint,key,handler);
+        http = new(handler) { BaseAddress = endpoint, Timeout = timeout };
     }
     public async Task<JsonElement> Get(string path, CancellationToken token = default)
     {
@@ -69,6 +74,16 @@ public sealed class ApiClient : IDisposable
     {
         using var response = await http.PostAsJsonAsync(path, payload, Protocol.Json, token);
         return await Read(response, token);
+    }
+
+    public async Task<SynthesisAudio> Synthesize(string text, CancellationToken token = default)
+    {
+        using var response = await http.PostAsJsonAsync("/v1/audio/speech", new { input = text }, Protocol.Json, token);
+        if (!response.IsSuccessStatusCode) await Read(response,token);
+        if (response.Content.Headers.ContentType?.MediaType != "audio/wav" ||
+            !response.Headers.TryGetValues("X-Speech-Backend",out var backends) || backends.SingleOrDefault() is not { } backend)
+            throw new InvalidDataException("The service did not return speech audio with its compute backend.");
+        return new(await response.Content.ReadAsByteArrayAsync(token),backend);
     }
     static async Task<JsonElement> Read(HttpResponseMessage response, CancellationToken token)
     {
@@ -221,7 +236,9 @@ public sealed class SessionStream : IAsyncDisposable
         var clock=Stopwatch.GetTimestamp();
         deadline=new SessionDeadline(()=>Stopwatch.GetElapsedTime(clock),TimeSpan.FromSeconds(10),
             TimeSpan.FromSeconds(15),TimeSpan.FromSeconds(600),TimeSpan.FromMinutes(10));
-        var uri = new UriBuilder(settings.ServerUri()) { Scheme = "ws", Path = "/v1/audio/sessions" }.Uri;
+        var endpoint=settings.ServerUri();
+        if (LocalApiCredential.Read(endpoint) is { } key) socket.Options.SetRequestHeader("Authorization","Bearer "+key);
+        var uri = new UriBuilder(endpoint) { Scheme = "ws", Path = "/v1/audio/sessions" }.Uri;
         await socket.ConnectAsync(uri, token);
         await Send(Protocol.SessionStart(settings),token);
     }

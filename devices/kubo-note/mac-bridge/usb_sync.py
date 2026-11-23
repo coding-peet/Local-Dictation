@@ -18,6 +18,7 @@ import wave
 
 from bridge_activity import BridgeActivity, activity_step
 from holidays import holiday_snapshot
+from note_web import processing_config
 from pala_google import StagedGoogleDelivery
 
 
@@ -39,6 +40,7 @@ REPLY_TYPES = {
     "SELECT": ("NOTE",),
     "META": ("META",),
     "EXPORT": ("TRANSCRIPT",),
+    "AUDIO": ("AUDIO",),
     "TEXT": ("OK",),
     "PUT": ("OK",),
     "COMMIT": ("SAVED",),
@@ -48,12 +50,22 @@ REPLY_TYPES = {
     "WEATHER": ("OK",),
     "WEATHER-COMMIT": ("OK",),
     "WEATHER-READ": ("FORECAST",),
+    "BATCH": ("BATCH",),
+    "BATCH-NEXT": ("WORK", "EMPTY"),
+    "ORGANIZE": ("OK",),
+    "JOB": ("WAIT", "REQUEST", "DONE", "DEFERRED"),
+    "JOB-RESPONSE": ("OK",),
+    "JOB-PUT": ("OK",),
+    "JOB-COMMIT": ("OK",),
+    "JOB-FAIL": ("OK",),
     "CLOSE": ("OK",),
 }
 
 
 FIRMWARE_ERRORS = {"AUTH", "BUSY", "COMMAND", "NOTE", "READ", "SAVE", "TEXT", "WEATHER", "NAME", "DELIVERY", "HOLIDAYS"}
-BLOCK_COMMANDS = {"READ", "READTXT", "READWEATHER"}
+BLOCK_COMMANDS = {"READ", "READTXT", "READWEATHER", "JOB-READ"}
+ORGANIZATION_LIMIT = 80_000
+ORGANIZATION_ROUTES = {"MEMORY": "/v1/responses", "EVENT": "/pala/event"}
 
 
 @dataclass(frozen=True)
@@ -275,8 +287,33 @@ def _download_blocks(port, command, size, stop=None):
     return bytes(data)
 
 
+def _download_audio(port, size, stop):
+    if hasattr(port, "read_audio_block"):
+        _check_stop(stop)
+        try:
+            response = _exchange(port, "AUDIO")
+        except UsbSyncError as error:
+            if _failure(error).FirmwareCode != "COMMAND":
+                raise
+        else:
+            if (len(response) != 2 or not re.fullmatch(r"[1-9][0-9]{0,3}", response[1])
+                    or int(response[1]) > port.audio_block_limit):
+                raise UsbSyncError("Invalid Pala BLE audio block limit.")
+            block_limit = min(int(response[1]), port.preferred_audio_block_size)
+            audio = bytearray()
+            while len(audio) < size:
+                _check_stop(stop)
+                length = min(block_limit, size - len(audio))
+                block = port.read_audio_block(len(audio), length)
+                if len(block) != length:
+                    raise UsbSyncError("Incomplete Pala BLE audio block.")
+                audio.extend(block)
+            return bytes(audio)
+    return _download_blocks(port, "READ", size, stop)
+
+
 def _download(port, size, stop):
-    audio = _download_blocks(port, "READ", size, stop)
+    audio = _download_audio(port, size, stop)
     try:
         with wave.open(io.BytesIO(audio), "rb") as recording:
             frame_bytes = recording.getnframes() * recording.getnchannels() * recording.getsampwidth()
@@ -543,13 +580,15 @@ def _recording_time(port):
     return _captured(reply[1])
 
 
-def sync_one(port, tokens, transcribe_local, *, note=None, stop=None, stage_transcript=None, activity=None):
+def sync_one(port, tokens, transcribe_local, *, note=None, stop=None, stage_transcript=None, activity=None,
+             session_open=False, organize=False):
     """Use one already-open serial port. Return None for an empty queue."""
     if note is not None:
         _require_note(note)
     _check_stop(stop)
-    with _usb_phase("authenticating"):
-        _paired_session(port, tokens)
+    if not session_open:
+        with _usb_phase("authenticating"):
+            _paired_session(port, tokens)
     try:
         with _usb_phase("selecting"):
             reply = _exchange(port, "NEXT" if note is None else f"SELECT {note}")
@@ -585,11 +624,11 @@ def sync_one(port, tokens, transcribe_local, *, note=None, stop=None, stage_tran
                 _expect_ok(port, f"PUT {offset} {data[offset:offset + write_chunk].hex()}")
             _check_stop(stop)
             try:
-                if isinstance(acknowledge, StagedGoogleDelivery) and acknowledge.organize_calendar:
+                if organize or isinstance(acknowledge, StagedGoogleDelivery) and acknowledge.organize_calendar:
                     try:
                         receipt = _exchange(port, "COMMIT CALENDAR")
                     except UsbSyncError as error:
-                        if _failure(error).FirmwareCode != "COMMAND":
+                        if organize or _failure(error).FirmwareCode != "COMMAND":
                             raise
                         # Older Notes reject the command before saving any text.
                         receipt = _exchange(port, "COMMIT")
@@ -607,8 +646,9 @@ def sync_one(port, tokens, transcribe_local, *, note=None, stop=None, stage_tran
             acknowledge()
         return SyncedNote(selected, len(audio))
     finally:
-        with contextlib.suppress(OSError, UsbSyncError):
-            _expect_ok(port, "CLOSE")
+        if not session_open:
+            with contextlib.suppress(OSError, UsbSyncError):
+                _expect_ok(port, "CLOSE")
 
 
 def paired_port(ports, port_name, tokens):
@@ -702,26 +742,114 @@ def _open_link(port_name, peer_id=None):
         yield link
 
 
-def _drain_link(link, token, bridge, stop, stage_transcript=None, activity=None):
-    def transcribe(audio):
-        deadline = time.monotonic() + 60
-        if not bridge.local_transcription_ready():
-            with activity_step(activity, "waiting"):
-                while not bridge.local_transcription_ready():
-                    if time.monotonic() >= deadline:
-                        raise UsbSyncError("Local Dictation stayed unavailable or busy.")
-                    stop.wait(1)
-                    _check_stop(stop)
-        _check_stop(stop)
-        return bridge.transcribe_local(audio)
+def _transcribe_when_ready(bridge, stop, activity, audio):
+    deadline = time.monotonic() + 60
+    if not bridge.local_transcription_ready():
+        with activity_step(activity, "waiting"):
+            while not bridge.local_transcription_ready():
+                if time.monotonic() >= deadline:
+                    raise UsbSyncError("Local Dictation stayed unavailable or busy.")
+                stop.wait(1)
+                _check_stop(stop)
+    _check_stop(stop)
+    return bridge.transcribe_local(audio)
 
+
+def _drain_link(link, token, bridge, stop, stage_transcript=None, activity=None):
     while not stop.is_set():
-        result = sync_one(link, (token,), transcribe, stop=stop,
+        result = sync_one(link, (token,), lambda audio: _transcribe_when_ready(bridge, stop, activity, audio), stop=stop,
                           stage_transcript=stage_transcript, activity=activity)
         if result is None:
             return link.recheck_when_empty
         print(f"Pala saved the transcript of note {result.note}.", flush=True)
     return False
+
+
+def _organize_bluetooth_note(link, note, bridge, device, stop):
+    _expect_ok(link, f"ORGANIZE {note}")
+    deadline = time.monotonic() + 360
+    while time.monotonic() < deadline:
+        _check_stop(stop)
+        job = _exchange(link, "JOB")
+        if job == ["WAIT"]:
+            stop.wait(0.3)
+            continue
+        if job in (["DONE"], ["DEFERRED"]):
+            return job == ["DONE"]
+        if (len(job) != 3 or job[0] != "REQUEST" or job[1] not in ORGANIZATION_ROUTES
+                or not re.fullmatch(r"[1-9][0-9]{0,4}", job[2]) or int(job[2]) > ORGANIZATION_LIMIT):
+            raise UsbSyncError("Invalid Bluetooth Kubo request.")
+        request = _download_blocks(link, "JOB-READ", int(job[2]), stop)
+        try:
+            result = bridge.dispatch(ORGANIZATION_ROUTES[job[1]], request, "application/json", device=device)
+            response = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        except Exception as error:
+            _expect_ok(link, "JOB-FAIL")
+            raise UsbSyncError(f"Bluetooth Kubo processing failed ({type(error).__name__}).") from None
+        _check_stop(stop)
+        if len(response) > ORGANIZATION_LIMIT:
+            _expect_ok(link, "JOB-FAIL")
+            raise UsbSyncError("The Bluetooth Kubo response is too large.")
+        _expect_ok(link, f"JOB-RESPONSE {len(response)} {hashlib.sha256(response).hexdigest()}")
+        for offset in range(0, len(response), getattr(link, "write_chunk", WRITE_CHUNK)):
+            _check_stop(stop)
+            piece = response[offset:offset + getattr(link, "write_chunk", WRITE_CHUNK)]
+            _expect_ok(link, f"JOB-PUT {offset} {piece.hex()}")
+        _expect_ok(link, "JOB-COMMIT")
+        deadline = time.monotonic() + 360
+    raise UsbSyncError("The Bluetooth Kubo job did not finish.")
+
+
+def drain_bluetooth_backlog(link, token, bridge, device, stop, stage_transcript=None, activity=None, retain_transcript=None):
+    """Synchronize the negotiated backlog and report whether to refresh Home."""
+    process = processing_config(bridge.state, bridge.config)["processing_mode"] == "kubo"
+    transcribe = bridge.local_transcription_ready()
+    if not process and not transcribe:
+        return False
+    mode = "FULL" if process and transcribe else "TEXT" if process else "AUDIO"
+    _paired_session(link, (token,))
+    saved = False
+    try:
+        try:
+            batch = _exchange(link, f"BATCH {mode}")
+        except UsbSyncError as error:
+            if _failure(error).FirmwareCode != "COMMAND":
+                raise
+            pass
+        else:
+            if len(batch) != 2 or not re.fullmatch(r"[0-9]{1,8}", batch[1]):
+                raise UsbSyncError("Invalid Bluetooth backlog size.")
+            while not stop.is_set():
+                work = _exchange(link, "BATCH-NEXT")
+                if work == ["EMPTY"]:
+                    return saved
+                if (len(work) != 3 or work[0] != "WORK" or work[2] not in ("AUDIO", "TEXT")
+                        or not re.fullmatch(r"[1-9][0-9]{0,9}", work[1])):
+                    raise UsbSyncError("Invalid Bluetooth backlog item.")
+                note = int(work[1])
+                _require_note(note)
+                if work[2] == "AUDIO":
+                    if not transcribe:
+                        raise UsbSyncError("The Bluetooth backlog requested an unavailable recording stage.")
+                    result = sync_one(link, (token,), lambda audio: _transcribe_when_ready(bridge, stop, activity, audio),
+                                      note=note, stop=stop, stage_transcript=retain_transcript if process else stage_transcript,
+                                      activity=activity, session_open=True, organize=process)
+                    print(f"Pala saved the transcript of note {result.note}.", flush=True)
+                    saved = True
+                elif not process:
+                    raise UsbSyncError("The Bluetooth backlog requested disabled Kubo processing.")
+                else:
+                    with activity_step(activity, "processing"):
+                        if not _organize_bluetooth_note(link, note, bridge, device, stop):
+                            return saved
+                    saved = True
+            return saved
+    finally:
+        with contextlib.suppress(OSError, UsbSyncError):
+            _expect_ok(link, "CLOSE")
+    if transcribe:
+        _drain_link(link, token, bridge, stop, stage_transcript, activity)
+    return transcribe
 
 
 def main():
@@ -812,16 +940,21 @@ def main():
             weather_revision = 0
             delivery_path = STATE / "google-delivery.sqlite"
 
-            def send_delivery(link, token):
+            def send_delivery(link, token, *, wait_for_sources=0, previous=None):
                 device = token_device(token)
                 queue = router.queue if router is not None else None
+                dashboard = home_dashboard_payload(STATE, config, device, queue=queue, version=4,
+                                                   wait_for_sources=wait_for_sources)
+                if dashboard == previous:
+                    return previous
                 payload = home_delivery_payload(STATE, config, device, queue=queue)
-                dashboard = home_dashboard_payload(STATE, config, device, queue=queue, version=4)
                 try:
                     transfer_delivery_counts(link, (token,), payload, dashboard=dashboard)
                 except UsbSyncError as error:
                     if str(error) != "Pala reported COMMAND.":
                         raise
+                    return None
+                return dashboard
 
             def metadata_revision():
                 nonlocal weather_revision
@@ -967,9 +1100,22 @@ def main():
                 with transfer_lock, paired_link(port, token) as link:
                     return drain(link, token_device(token), token, usb_activity)
 
-            def drain_bluetooth(link, device, token, settings_window):
+            def drain_bluetooth(link, device, token, settings_window, *, delivery_only=False):
+                def refresh_home(wait_for_sources, previous=None):
+                    try:
+                        return send_delivery(link, token, wait_for_sources=wait_for_sources, previous=previous)
+                    except (OSError, UsbSyncError, ValueError) as error:
+                        bluetooth_error(error)
+                        return None
+
                 if transfer_lock.acquire(blocking=False):
                     try:
+                        if settings_window or delivery_only:
+                            # The paired Bridge can refresh Home with no recordings queued.
+                            with bluetooth_activity.step("settings"):
+                                refresh_home(4)
+                        if delivery_only:
+                            return
                         if web_owner:
                             transport.serve_bluetooth(device, lambda request: paired_config(link, token, request),
                                                       keep_open=settings_window)
@@ -982,12 +1128,13 @@ def main():
                             except (UsbSyncError, ValueError) as error:
                                 if str(error) != "Pala reported COMMAND.":
                                     bluetooth_error(error)
-                            try:
-                                send_delivery(link, token)
-                            except (UsbSyncError, ValueError) as error:
-                                bluetooth_error(error)
-                        if bridge.local_transcription_ready():
-                            drain(link, device, token, bluetooth_activity)
+                            previous_dashboard = refresh_home(4)
+                        stage = router.stager(device) if router is not None else None
+                        retain = router.stager(device, route=False) if router is not None else None
+                        saved = drain_bluetooth_backlog(link, token, bridge, device, stop, stage, bluetooth_activity, retain)
+                        if saved and not stop.is_set():
+                            with bluetooth_activity.step("settings"):
+                                refresh_home(2, previous_dashboard)
                         if stop.is_set():
                             return
                         with bluetooth_activity.step("settings"):

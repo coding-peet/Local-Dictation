@@ -120,10 +120,10 @@ void getSettings(JsonVariantConst request, NoteConfigTransport link, JsonDocumen
   device["sleepMinutes"] = palaIdleSleepMinutes();
   device["syncTiming"] = static_cast<int>(palaSyncTiming());
   device["pageWrap"] = palaDisplayPagesWrap();
+  device["wifiEnabled"] = palaWifiEnabled();
 #if PALA_BRIDGE_DISCOVERY
   device["preferBluetooth"] = palaPreferBluetooth();
-#endif
-#if PALA_BRIDGE_DISCOVERY
+  device["bluetoothEnabled"] = palaBluetoothEnabled();
   device["bridgeAddress"] = palaBridgeAddress();
 #endif
   const bool hotspot = link == NoteConfigTransport::Web && WiFi.getMode() == WIFI_AP;
@@ -415,6 +415,13 @@ void dispatch(JsonVariantConst request, NoteConfigTransport link, bool authentic
       resetActivity();
     }
 #if PALA_BRIDGE_DISCOVERY
+  } else if (op == "radios.save") {
+    const auto wifi = request["wifiEnabled"];
+    const auto bluetooth = request["bluetoothEnabled"];
+    if (!wifi.is<bool>() || !bluetooth.is<bool>() ||
+        !palaSetWirelessRadios(wifi.as<bool>(), bluetooth.as<bool>())) {
+      fillResult(result, "Could not save the radio settings.");
+    }
   } else if (op == "wireless.save") {
     const auto preferred = request["preferBluetooth"];
     if (!preferred.is<bool>() || !palaSetPreferBluetooth(preferred.as<bool>())) {

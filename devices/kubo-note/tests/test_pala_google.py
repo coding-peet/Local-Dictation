@@ -14,6 +14,49 @@ from pala_google import DeliveryQueue, classify_transcript
 
 
 class PalaGoogleTests(unittest.TestCase):
+    def test_keeps_the_exact_original_transcript_without_any_google_target(self):
+        from pala_google import UsbGoogleDelivery
+
+        text = "Pridaj do kalendára, že zajtra treba zavolať."
+        capture = "2026-11-23T00:00:00Z"
+        with tempfile.TemporaryDirectory() as folder:
+            router = UsbGoogleDelivery(Path(folder), {"processing_mode": "transcribe"})
+            receipt = router.stager("fixture-device")(54, capture, text)
+            saved = router.queue.note_transcripts(0)["records"]
+            self.assertEqual([(row["note"], row["text"], row["onNote"]) for row in saved], [(54, text, False)])
+            receipt()
+            receipt()
+            saved = router.queue.note_transcripts(0)["records"]
+            self.assertEqual([(row["note"], row["text"], row["onNote"]) for row in saved], [(54, text, True)])
+            self.assertEqual(router.queue.pending(), [])
+
+    def test_decisions_follow_the_original_through_routing_and_delivery(self):
+        from pala_google import UsbGoogleDelivery
+
+        with tempfile.TemporaryDirectory() as folder:
+            list_binding = {"id": "target-id", "title": "General"}
+            router = UsbGoogleDelivery(Path(folder), {"destination": "google",
+                                                      "google_routes": {"general": list_binding}})
+            keys = []
+            router.stager("fixture-device", keys)(54, None, "Pôvodný text.")()
+            with patch.object(router, "_send", return_value="verified"):
+                router.flush(keys)
+            record, = router.queue.note_transcripts(0)["records"]
+            line = "\n".join(record["decisions"])
+            self.assertIn("Routing: general", line)
+            self.assertIn("Google: confirmed delivery to General", line)
+            self.assertNotIn("Pôvodný text", line)
+
+    def test_legacy_calendar_transcript_remains_visible(self):
+        with tempfile.TemporaryDirectory() as folder:
+            queue = DeliveryQueue(Path(folder))
+            with queue.database() as db:
+                db.execute("""INSERT INTO google_actions(id, kind, captured, body, status, device, recording_id)
+                              VALUES('legacy','calendar','2026-11-23T00:00:00Z','Presný starší prepis','needs-confirmation',
+                                     'fixture-device','54:2026-11-23T00:00:00+00:00')""")
+            records = queue.note_transcripts(0)["records"]
+            self.assertEqual([(row["note"], row["text"]) for row in records], [(54, "Presný starší prepis")])
+
     def test_codex_quota_prefers_five_hours_and_falls_back_to_weekly(self):
         from codex_usage import usage_snapshot
 
@@ -175,6 +218,98 @@ class PalaGoogleTests(unittest.TestCase):
         self.assertEqual(classify_transcript(
             "Poznámka: osobný nápad. Pridaj mi pracovnú úlohu poslať ponuku.")[0], "work")
         self.assertEqual(classify_transcript("Ulož do OneNotu zápis z porady.")[0], "work")
+
+    def test_spoken_list_uses_unique_account_match_without_a_binding(self):
+        from pala_google import UsbGoogleDelivery
+
+        with tempfile.TemporaryDirectory() as folder:
+            router = UsbGoogleDelivery(Path(folder), {"destination": "google"})
+            title = "Nákup"
+            existing = {"id": "shopping-fixture", "title": title}
+            general = {"id": "default-fixture", "title": "General"}
+            config = {"processing_mode": "kubo", "destination": "google",
+                      "google_routes": {"general": general}}
+            keys = []
+            with patch.object(router, "active_config", return_value=config), \
+                 patch("pala_google._api", return_value=nullcontext(Mock())), \
+                 patch("pala_google.items", return_value=[general, existing]), \
+                 patch.object(router, "_send", return_value="verified") as send:
+                text = "Pridaj mi do zoznamu Nákup: ovsené mlieko."
+                router.stager("fixture-device", keys)(17, None, text)()
+                router.flush(keys)
+                router.flush(keys)
+            send.assert_called_once_with("list:nakup", existing, None, "ovsené mlieko.", keys[0])
+
+    def test_shopping_intent_uses_nakup_instead_of_general(self):
+        from pala_google import UsbGoogleDelivery
+
+        with tempfile.TemporaryDirectory() as folder:
+            shopping = {"id": "shopping-fixture", "title": "Nákup"}
+            general = {"id": "default-fixture", "title": "General"}
+            router = UsbGoogleDelivery(Path(folder), {"destination": "google", "personal_note_collection": True,
+                                                      "google_routes": {"general": general}})
+            keys = []
+            with patch("pala_google._api", return_value=nullcontext(Mock())), \
+                 patch("pala_google.items", return_value=[general, shopping]), \
+                 patch.object(router, "_send", return_value="verified") as send:
+                router.stager("fixture-device", keys)(19, None, "Pridaj na nákupný zoznam ovsené mlieko.")()
+                router.flush(keys)
+            send.assert_called_once_with("shopping", shopping, None, "ovsené mlieko", keys[0])
+
+    def test_usb_and_paired_bridge_share_one_named_delivery(self):
+        import json
+        from bridge import Bridge
+        from pala_google import UsbGoogleDelivery
+
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder)
+            config = {"destination": "google"}
+            router = UsbGoogleDelivery(state, config)
+            bridge = Bridge(state, config)
+            text = "Pridaj mi do zoznamu Nákup: ovsené mlieko."
+            capture = "2026-11-23T00:10:00Z"
+            router.stager("fixture-device")(17, capture, text)()
+            request = {"pala_note": 17, "pala_created": capture, "pala_transcript": text,
+                       "text": {"format": {"name": "pala_memory", "schema": {}}}}
+            with patch.object(bridge, "memories", return_value=("{}", [])):
+                bridge.dispatch("/v1/responses", json.dumps(request), "application/json", device="fixture-device")
+            self.assertEqual(len(router.queue.pending()), 1)
+            with router.queue.database() as db:
+                self.assertEqual(db.execute("SELECT kind, body FROM google_actions").fetchall(),
+                                 [("list:nakup", "ovsené mlieko.")])
+
+    def test_missing_or_ambiguous_list_does_not_use_general(self):
+        from pala_google import UsbGoogleDelivery
+
+        for available in ([], [{"id": "1", "title": "Nákup"}, {"id": "2", "title": "Nakup"}]):
+            with self.subTest(available=available), tempfile.TemporaryDirectory() as folder:
+                general = {"id": "default-fixture", "title": "General"}
+                router = UsbGoogleDelivery(Path(folder), {"destination": "google",
+                                                          "google_routes": {"general": general}})
+                key, = router.queue.stage("fixture-device", 17, None, "Do zoznamu Nákup: ovsené mlieko.")
+                with patch("pala_google._api", return_value=nullcontext(Mock())), \
+                     patch("pala_google.items", return_value=available), \
+                     patch.object(router, "_send") as send:
+                    router.flush([key])
+                send.assert_not_called()
+                self.assertEqual(router.queue.pending(), [key])
+
+    def test_shopping_command_survives_a_transcribed_list_word(self):
+        for command in ("Pridaj mi do nákupného zoznamu ovsené mlieko.",
+                        "Pridaj mi na nákup ovsené mlieko.",
+                        "Pridaj dozusnom Nákup ovsené mlieko.",
+                        "Nákupný soznam, ovsené mlieko.",
+                        "Pridaj mi do zoznamu Nákup ovsené mlieko."):
+            with self.subTest(command=command):
+                self.assertEqual(classify_transcript(command), ("shopping", ["ovsené mlieko"]))
+        self.assertEqual(classify_transcript("Spomenul som si na nákup ovseného mlieka.")[0], "general")
+
+    def test_calendar_suffix_takes_precedence_and_plain_mentions_stay_notes(self):
+        item = "Vo štvrtok mám o 14:30 zubára"
+        for ending in (", daj mi to do kalendára.", " daj mi to do kalendára"):
+            self.assertEqual(classify_transcript(item + ending)[0], "calendar")
+        for plain in (item + ".", "Termín u zubára je vo štvrtok o 14:30."):
+            self.assertEqual(classify_transcript(plain), ("general", [plain]))
 
     def test_named_destination_requires_an_exact_binding(self):
         self.assertEqual(classify_transcript("Zapíš do zoznamu Môj nákup: rožky."),
@@ -395,6 +530,40 @@ if __name__ == "__main__":
     unittest.main()
 
 class HomeDashboardTests(unittest.TestCase):
+    def test_bluetooth_home_dashboard_waits_for_cold_provider_values(self):
+        from codex_usage import UsageSnapshot
+        from pala_google import home_dashboard_payload
+
+        config = {"processing_mode": "kubo", "google_routes": {
+            "general": {"id": "test-list", "title": "General"}}}
+        queue = Mock()
+        queue.home_counts.return_value = ("2026-11-22", 0, 0, None)
+        quota = UsageSnapshot(None, (25, 1795000200), 1795000100)
+        with patch("note_web.processing_config", return_value=config), \
+             patch("pala_google.general_open_count", side_effect=[-1, 3]), \
+             patch("pala_google.home_codex_usage", side_effect=[None, quota]), \
+             patch("pala_google.time.sleep"):
+            dashboard = home_dashboard_payload(Path("."), config, "note", queue=queue, version=4,
+                                               wait_for_sources=4)
+        self.assertEqual(dashboard, "h4,3,0,-,1795000100,-1,0,25,1795000200")
+
+    def test_confirmed_general_delivery_invalidates_an_inflight_count(self):
+        from pala_google import GeneralTaskCount
+
+        state = Path(".")
+        target = {"id": "test-list", "title": "General"}
+        cache = GeneralTaskCount()
+        with patch("pala_google.threading.Thread") as worker, \
+             patch("pala_google.count_open_general_tasks", side_effect=[2, 3]):
+            self.assertEqual(cache.get(state, target), -1)
+            old = worker.call_args.kwargs
+            cache.invalidate(state, target)
+            old["target"](*old["args"])
+            self.assertEqual(cache.get(state, target), -1)
+            fresh = worker.call_args.kwargs
+            fresh["target"](*fresh["args"])
+            self.assertEqual(cache.get(state, target), 3)
+
     def test_count_requests_only_status_and_excludes_completed_tasks(self):
         from contextlib import nullcontext
         from unittest.mock import patch

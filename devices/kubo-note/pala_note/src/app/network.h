@@ -15,6 +15,8 @@ bool palaBackgroundNetworkMode();
 bool transcribe(const String& wavPath, int noteNum);
 bool transcribeQuestion(const String& wavPath, String& question);
 bool understandNote(int noteNum);
+using OrganizationPost = bool (*)(const char*, const String&, String&, uint16_t, String*, const String&);
+bool understandNoteOverBluetooth(int noteNum, OrganizationPost post, bool (*serviceConnection)());
 bool answerFromBrain(const String& question, String& answer, std::vector<int>& sourceNotes);
 bool answerAgendaQuestion(const String& question, String& answer, std::vector<int>& sourceNotes);
 bool buildDailyBriefing(String& answer, int& taskCount, int& eventCount);
