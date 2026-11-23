@@ -65,10 +65,15 @@ class CompanionControls {
       return CompanionAction::None;
     }
 
+    // Both buttons were released before this press. Dispatch an earlier
+    // pending volume step before beginning another independent press.
+    const auto previous = !upperWasDown_ && !lowerWasDown_ && (upper || lower)
+        ? pending_ : CompanionAction::None;
     if (upper && !upperWasDown_) start(now, CompanionAction::Louder);
     else if (lower && !lowerWasDown_) start(now, CompanionAction::Quieter);
     upperWasDown_ = upper;
     lowerWasDown_ = lower;
+    if (previous != CompanionAction::None) return previous;
     if (pending_ == CompanionAction::None || now - singleAt_ < 140) return CompanionAction::None;
     const CompanionAction action = pending_;
     pending_ = CompanionAction::None;

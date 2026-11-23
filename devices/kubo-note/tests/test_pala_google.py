@@ -187,6 +187,30 @@ class PalaGoogleTests(unittest.TestCase):
                 self.assertEqual(classify_transcript(text)[0], "calendar")
         self.assertEqual(classify_transcript("Poznámka: zajtra si pozri kalendár.")[0], "general")
 
+    def test_calendar_command_accepts_a_spoken_day_before_the_destination(self):
+        for command in (
+            "Daj mi na dnes do kalandára o 18.00 vymeniť filter.",
+            "Daj mi na dnes do kalendára o 18.00 vymeniť filter.",
+            "Daj mi do kalandára na dnes o 18.00 vymeniť filter.",
+            "Zapíš mi, prosím, na piatok do Google kalendára údržbu o deviatej.",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(classify_transcript(command), ("calendar", [command]))
+
+        mention = "Daj mi vedieť, či si to už zapísal do kalendára."
+        self.assertEqual(classify_transcript(mention), ("general", [mention]))
+
+    def test_shopping_command_accepts_politeness_and_items_before_the_destination(self):
+        for command in (
+            "Daj mi, prosím, na nákup ovsené mlieko.",
+            "Pridaj mi ovsené mlieko na nákupný zoznam, prosím.",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(classify_transcript(command), ("shopping", ["ovsené mlieko"]))
+
+        mention = "Daj mi vedieť, čo už máš na nákupnom zozname."
+        self.assertEqual(classify_transcript(mention), ("general", [mention]))
+
     def test_personal_collection_defaults_work_topics_and_unbound_tasks_to_general(self):
         from pala_google import UsbGoogleDelivery
 

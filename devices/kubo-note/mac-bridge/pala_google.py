@@ -33,12 +33,22 @@ WORK = re.compile(
 )
 # The list word can lose voicing in a recording. Only accept these forms
 # in explicit shopping prefixes, never in the free-form note body.
+SPOKEN_COURTESY = r"(?:[\s,]+(?:mi|to|prosim)){0,3}"
 SHOPPING_LIST_WORD = r"[sz][ou][zs]n[ao]m"
+SHOPPING_LIST_TARGET = (
+    rf"(?:na\s+nakupny\s+{SHOPPING_LIST_WORD}|do\s+nakupneho\s+{SHOPPING_LIST_WORD}u"
+    rf"|do\s*{SHOPPING_LIST_WORD}u?\s+nakup)"
+)
+SHOPPING_VERB = r"(?:pridaj|daj|zapis|vloz)"
 SHOPPING = re.compile(
-    r"^(?:prosim[\s,:]+)?(?:(?:pridaj|daj|zapis|vloz)(?:\s+mi)?\s+"
-    rf"(?:na\s+nakup(?:ny\s+{SHOPPING_LIST_WORD})?|do\s+nakupneho\s+{SHOPPING_LIST_WORD}u"
-    rf"|do\s*{SHOPPING_LIST_WORD}u?\s+nakup)|nakup(?:ny\s+{SHOPPING_LIST_WORD})?)"
+    rf"^(?:prosim[\s,:]+)?(?:{SHOPPING_VERB}{SPOKEN_COURTESY}[\s,]+"
+    rf"(?:{SHOPPING_LIST_TARGET}|na\s+nakup)|nakup(?:ny\s+{SHOPPING_LIST_WORD})?)"
     r"(?:\s*[:,–-]\s*|\s+)(.+)$", re.IGNORECASE | re.DOTALL,
+)
+SHOPPING_SUFFIX = re.compile(
+    rf"^(?:prosim[\s,:]+)?{SHOPPING_VERB}{SPOKEN_COURTESY}[\s,]+"
+    rf"([^.!?;\n]+?)\s+{SHOPPING_LIST_TARGET}(?:\s*,?\s+prosim)?\s*[.!?]*$",
+    re.IGNORECASE,
 )
 TASK = re.compile(
     r"^(?:uloha|pridaj(?:\s+mi)?\s+(?:osobnu\s+)?ulohu)"
@@ -48,17 +58,24 @@ DOC = re.compile(
     r"^(?:uloz|zapis)(?:\s+mi)?\s+do\s+google\s+docs"
     r"(?:\s*[:,–-]\s*|\s+)(.+)$", re.IGNORECASE | re.DOTALL,
 )
+CALENDAR_VERB = r"(?:daj|pridaj|zapis|uloz|napis|vloz|zaznamenaj|naplanuj|vytvor)"
+# Keep date words in the route, and let the calendar handler interpret the time
+# using the capture date. The destination tolerates a known ASR vowel error.
+CALENDAR_DAY = (
+    r"(?:(?:na\s+)?(?:dnes|zajtra|pozajtra)"
+    r"|(?:na|v|vo)\s+(?:pondelok|utorok|stredu|stvrtok|piatok|sobotu|nedelu))"
+)
+CALENDAR_COMMAND = rf"{CALENDAR_VERB}{SPOKEN_COURTESY}(?:[\s,]+{CALENDAR_DAY})?[\s,]+"
+CALENDAR_TARGET = r"do\s+(?:google\s+)?kal[ea]ndara\b"
 CALENDAR = re.compile(
     r"^(?:prosim[\s,:]+)?(?:termin\s*[:,]"
-    r"|(?:pridaj|naplanuj|zapis|vytvor|napis|vloz)(?:\s+mi)?\s+(?:osobny\s+)?(?:termin|udalost)\b"
-    r"|(?:(?:daj|pridaj|zapis|uloz|napis|vloz|zaznamenaj|naplanuj)(?:\s+mi)?\s+)?"
-    r"do\s+(?:google\s+)?kalendara\b)",
+    rf"|(?:pridaj|naplanuj|zapis|vytvor|napis|vloz){SPOKEN_COURTESY}[\s,]+"
+    r"(?:osobny\s+)?(?:termin|udalost)\b"
+    rf"|(?:{CALENDAR_COMMAND})?{CALENDAR_TARGET})",
     re.IGNORECASE,
 )
 CALENDAR_SUFFIX = re.compile(
-    r"\b(?:daj|pridaj|zapis|uloz|napis|vloz|zaznamenaj|naplanuj)"
-    r"(?:\s+(?:mi|to)){0,2}\s+do\s+(?:google\s+)?kalendara"
-    r"(?:\s*,?\s*prosim)?[.!?]*$",
+    rf"\b{CALENDAR_COMMAND}{CALENDAR_TARGET}(?:\s*,?\s*prosim)?[.!?]*$",
     re.IGNORECASE,
 )
 NAMED_TARGET = re.compile(
@@ -113,12 +130,13 @@ def classify_transcript(text):
         if route != "needs-target" or not SHOPPING.fullmatch(command_text):
             return route, entries
 
-    for pattern, kind in ((SHOPPING, "shopping"), (TASK, "tasks"), (DOC, "docs")):
+    for pattern, kind in ((SHOPPING, "shopping"), (SHOPPING_SUFFIX, "shopping"),
+                          (TASK, "tasks"), (DOC, "docs")):
         match = pattern.fullmatch(command_text)
         if not match:
             continue
         # The command spelling may be accentless; the original payload is kept.
-        body = text[match.start(1):].strip()
+        body = text[match.start(1):match.end(1)].strip()
         if kind == "shopping":
             products = [value.strip(" .!?") for value in re.split(r"\s*(?:,|;)\s*|\s+(?:a|aj)\s+", body)]
             products = list(dict.fromkeys(value for value in products if value))

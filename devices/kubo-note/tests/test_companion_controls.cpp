@@ -38,6 +38,19 @@ constexpr bool wrapAndNoRepeatWhileHeld() {
   return control.poll(900, true, false, hold) == Action::None;
 }
 
+constexpr bool aNewPressDoesNotOverwriteTheLastVolumeStep() {
+  CompanionControls control;
+  control.poll(500, false, false, hold);
+  if (control.poll(600, true, false, hold) != Action::None) return false;
+  if (control.poll(645, false, false, hold) != Action::None) return false;
+  if (control.poll(670, false, true, hold) != Action::Louder) return false;
+  if (control.poll(715, false, false, hold) != Action::None) return false;
+  if (control.poll(730, true, false, hold) != Action::Quieter) return false;
+  if (control.poll(775, false, false, hold) != Action::None) return false;
+  return control.poll(870, false, false, hold) == Action::Louder;
+}
+
+static_assert(aNewPressDoesNotOverwriteTheLastVolumeStep());
 static_assert(entryRequiresReleaseAndChordWins());
 static_assert(staggeredReleaseAndFastTap());
 static_assert(wrapAndNoRepeatWhileHeld());

@@ -2,5 +2,5 @@
 
 #include "aquarium_state.h"
 
-int aquariumFrame(AquariumScene scene, uint32_t elapsed);
+int aquariumFrame(AquariumScene scene, AquariumReef reef, uint32_t elapsed);
 bool showAquariumFrame(int frame, void (*serviceWhileWaiting)());

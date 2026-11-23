@@ -131,17 +131,33 @@ permanently deletes the items in Trash and requires explicit confirmation.
 From the awake Home screen, press the lower button three times quickly.
 The clownfish peeks out of the anemone and swims beside it.
 
-- Press the upper button once to drop a flake.
-- After the fish swims out, tap the lower button once for a current.
-  The fish turns into the flow
+- Press the upper button once to drop a flake. Separate single presses
+  each request a new flake.
+- Press the lower button once for a current. The fish turns into the flow
   and circles the anemone as the water settles. The anemone polyps bend
   with the current and straighten as it fades.
+- Press the lower button twice to swim to the torch coral. Repeat
+  the double press to return to the anemone. Both sites support the same
+  feeding, current, and closing actions.
 - Press the upper button twice to end the visit. After inactivity the fish
   performs the same closing sequence and returns Home.
 
-Each action finishes before feeding or current can start again. Opening
-the aquarium is independent of recording, transcription, and Internet
-access.
+The aquarium keeps up to eight recognized commands while an animation plays.
+It starts them in the order pressed. Once the closing animation begins, it
+clears any later commands. The aquarium runs independently of recording, transcription, and
+Internet access.
+
+To regenerate both reefs' 200 × 200 frames and a preview, run the
+exporter from the repository root with the local Microsoft Edge executable
+and a build output directory.
+
+~~~powershell
+node devices/kubo-note/art/export_aquarium_reef.mjs $edgePath $outputDir
+~~~
+
+The exporter renders locally and writes both atlases to the output directory.
+Copy the verified aquarium_frames.inc and aquarium_reef_frames.inc into
+pala_note/src/app to use them in a firmware build.
 
 ## Bridge processing
 

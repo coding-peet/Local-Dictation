@@ -909,6 +909,14 @@ clear to the user, preserve original recognition, and keep manual edits dominant
   next each have a separate enable switch and position. Skip
   disabled pages, preserve paging through Tasks and Events, and return
   Home after the last view or a lower tap.
+  Queue at least eight independent clicks during slow rendering and
+  execute one action per click in the order pressed, even when alternating
+  the buttons or wrapping page navigation through Home. Apply the same
+  ordering to volume controls in Web Companion. A new press on the other
+  button ends a released tap sequence. Fresh Home gestures on one button
+  still use the normal single-, double- and triple-tap rules. Filter contact
+  bounce before it takes space in the queue and keep accepted input if it
+  fills. Pairing and other explicit confirmations still require new input.
   Holding the upper button on these pages starts a recording.
 - Set a persistent idle sleep timeout of 1 to 99 minutes for Home and
   Web Companion. Default restores 1 minute on Home, a 3-minute budget
@@ -917,7 +925,9 @@ clear to the user, preserve original recognition, and keep manual edits dominant
 - On awake Home, one lower tap opens Events when enabled, two lower taps
   play the weekly briefing, and holding the lower button asks Kubo.
   Three lower taps open the aquarium. Three upper taps request recording
-  synchronization in every timing mode.
+  synchronization in every timing mode. Keep upper-button taps made after
+  releasing a recording through WAV finalization and the saved-screen and
+  Home refreshes. Process the buffered gesture before automatic sync starts.
 - Persist the recording sync timing in Note settings. Offer immediately on
   wake, after recording, before sleep, and manual only. Default to before
   sleep. Start the before-sleep attempt when Home reaches its idle timeout,
@@ -979,6 +989,11 @@ clear to the user, preserve original recognition, and keep manual edits dominant
   Preserve Home's one-press agenda, two-press daily briefing and hold to
   record. Inside the aquarium, use upper once for a flake, lower once for
   current, and upper twice or inactivity for the closing scene and Home.
+  A lower double press scrolls to a torch coral with long tipped tentacles.
+  A second lower double press travels back to the shorter-tentacled anemone. Feeding, current
+  and hiding work at both locations. Classify clicks using their original
+  timestamps. Keep up to eight
+  recognized commands in order while another animation plays.
   Show the clownfish peeking, swimming calmly between actions, and hiding
   headfirst before its final peek. Bend the anemone polyps in the direction of
   the current and let them straighten as the water settles. Keep the aquarium

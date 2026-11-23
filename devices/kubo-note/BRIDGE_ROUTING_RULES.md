@@ -20,6 +20,10 @@ transcripts can be present without a decision log.
 - Use General for a note with no explicit destination. A shopping
   instruction uses the configured shopping list or a unique existing
   list named Nákup.
+- Recognize explicit calendar and shopping instructions in spoken Slovak,
+  including common word-order changes and ASR errors. A calendar day can
+  precede the destination. Shopping items can precede an explicit list
+  destination. Preserve the original wording in the transcript journal.
 - For an explicit calendar instruction, preserve the original recording
   time and require a concrete future start time. The Note asks for
   confirmation before a calendar write.
@@ -39,6 +43,14 @@ command as "pridaj dozusnom Nákup". Both initially went to General.
 Recognize these forms in explicit shopping prefixes. Check that an
 ordinary note mentioning shopping still uses General. The recognition
 cases are covered by test_pala_google.py.
+
+### Calendar request with the day before the destination
+
+A request with the shape "Daj mi na dnes do kalandara o 18.00 ..." went to
+General. The early router required the destination directly after the verb
+and expected the standard spelling. Both variants are covered by
+test_pala_google.py, together with a plain mention of the calendar and
+polite requests that place the item before the shopping list.
 
 ### Calendar instruction with date only
 

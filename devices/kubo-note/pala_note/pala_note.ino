@@ -67,11 +67,12 @@ bool stopPlayback = false;
 void resetActivity();
 bool recordingSyncAllowed();
 
-enum class PressResult { Released, LongSingle, Chord };
+enum class HomeButtonInput { Discard, Preserve };
 
 namespace {
 
 bool idleInputArmed = true;
+bool replayPageTaps = false;
 enum class PairingView { None, BluetoothWait, BluetoothCode, UsbWait, UsbPrompt };
 PairingView pairingView = PairingView::None;
 bool pairingButtonsArmed = false;
@@ -80,6 +81,7 @@ uint32_t companionGestureStartedAt = 0;
 uint32_t nextBackgroundAttemptAt = 0;
 uint32_t backlogRequestedAt = 0;
 bool backlogRequested = false;
+bool afterRecordingSyncPending = false;
 RecordingSyncSchedule recordingSync;
 struct BacklogScreen {
   BacklogLink link = BacklogLink::Deferred;
@@ -98,17 +100,35 @@ bool backlogSyncActive = false;
 int backlogSyncTotal = 0;
 uint32_t nextHomeClockCheckAt = 0;
 struct ButtonEdge { uint32_t at; bool down; };
-constexpr uint8_t kButtonEdgeCapacity = 32;
+// The ring holds debounced edges. Eight taps need 16 of its 63 usable slots.
+constexpr uint8_t kButtonEdgeCapacity = 64;
 struct ButtonInput {
   volatile ButtonEdge edges[kButtonEdgeCapacity];
   volatile uint8_t read = 0;
   volatile uint8_t write = 0;
+  volatile bool rawDown = false;
+  volatile bool stableDown = false;
+  volatile uint32_t rawAt = 0;
   volatile bool overflow = false;
+  volatile uint32_t overflowAt = 0;
   volatile bool pressLatched = false;
+  bool replayDown = false;
   ButtonGesture gesture;
+};
+struct BufferedButtonEdge {
+  ButtonInput* input = nullptr;
+  uint32_t at = 0;
+  bool down = false;
+  bool dropped = false;
+};
+struct BufferedButtonAction {
+  bool upper = true;
+  ButtonAction action = ButtonAction::None;
 };
 ButtonInput upperButton;
 ButtonInput lowerButton;
+ButtonInput* activeGestureButton = nullptr;
+bool bufferedChord = false;
 AquariumState aquarium;
 bool aquariumChord = false;
 int lastAquariumFrame = -1;
@@ -273,17 +293,35 @@ bool bothButtonsUp() {
   return digitalRead(BTN_REC) == HIGH && digitalRead(BTN_PWR) == HIGH;
 }
 
-void ARDUINO_ISR_ATTR latchButtonEdge(ButtonInput& button, int pin) {
-  const bool down = digitalRead(pin) == LOW;
-  if (down) button.pressLatched = true;
+// Called by the GPIO ISR or by the UI loop with GPIO interrupts disabled.
+void ARDUINO_ISR_ATTR settleButtonEdge(ButtonInput& button, uint32_t now) {
+  const bool down = button.rawDown;
+  const uint32_t at = button.rawAt;
+  if (down == button.stableDown || now - at < ButtonGesture::kDebounceMs) return;
+  button.stableDown = down;
+  // Preserve the accepted prefix. Once an edge is dropped, wait for the
+  // reader to drain the ring before accepting a new sequence.
+  if (button.overflow) return;
   const uint8_t next = (button.write + 1) % kButtonEdgeCapacity;
   if (next == button.read) {
+    button.overflowAt = at;
     button.overflow = true;
     return;
   }
-  button.edges[button.write].at = millis();
+  button.edges[button.write].at = at;
   button.edges[button.write].down = down;
   button.write = next;
+}
+
+void ARDUINO_ISR_ATTR latchButtonEdge(ButtonInput& button, int pin) {
+  const uint32_t now = millis();
+  const bool down = digitalRead(pin) == LOW;
+  settleButtonEdge(button, now);
+  if (down) button.pressLatched = true;
+  if (button.rawDown != down) {
+    button.rawDown = down;
+    button.rawAt = now;
+  }
 }
 
 void ARDUINO_ISR_ATTR latchUpperEdge() { latchButtonEdge(upperButton, BTN_REC); }
@@ -293,30 +331,114 @@ void ARDUINO_ISR_ATTR latchLowerEdge() { latchButtonEdge(lowerButton, BTN_PWR); 
 void clearButtonEdges(ButtonInput& button) {
   button.pressLatched = false;
   button.read = button.write;
+  button.stableDown = button.replayDown = button.rawDown;
   button.overflow = false;
   button.gesture.reset();
+  if (activeGestureButton == &button) activeGestureButton = nullptr;
 }
 
-ButtonAction pollButtonGesture(ButtonInput& button, uint8_t completeAt) {
+bool buttonInputPending(const ButtonInput& button) {
+  return button.read != button.write || button.rawDown != button.stableDown ||
+         button.overflow || button.gesture.pending();
+}
+
+// The next event is a queued edge, a known gap after overflow, or a time
+// limit up to which the gesture state may advance without an unseen edge.
+BufferedButtonEdge peekButtonEdge(ButtonInput& button, uint32_t now) {
+  settleButtonEdge(button, now);
+  if (button.read != button.write) {
+    const auto& edge = button.edges[button.read];
+    return {&button, edge.at, edge.down, false};
+  }
+  if (button.overflow) return {&button, button.overflowAt, false, true};
+  if (button.rawDown != button.stableDown) return {nullptr, button.rawAt, false, false};
+  button.pressLatched = false;
+  return {nullptr, now, false, false};
+}
+
+BufferedButtonEdge nextButtonEdge() {
+  noInterrupts();
+  const uint32_t now = millis();
+  const auto upper = peekButtonEdge(upperButton, now);
+  const auto lower = peekButtonEdge(lowerButton, now);
+  interrupts();
+  if (upper.input && lower.input) {
+    return static_cast<int32_t>(lower.at - upper.at) < 0 ? lower : upper;
+  }
+  if (upper.input) return upper;
+  if (lower.input) return lower;
+  return static_cast<int32_t>(lower.at - upper.at) < 0 ? lower : upper;
+}
+
+void consumeButtonEdge(const BufferedButtonEdge& next) {
+  auto& input = *next.input;
+  noInterrupts();
+  if (next.dropped) clearButtonEdges(input);
+  else {
+    input.read = (input.read + 1) % kButtonEdgeCapacity;
+    input.replayDown = next.down;
+  }
+  interrupts();
+}
+
+bool liveButtonHold(const ButtonInput& button, int pin) {
+  // Do not execute a historical hold if a later release is already queued.
+  return digitalRead(pin) == LOW && button.read == button.write &&
+         button.rawDown && button.stableDown && !button.overflow;
+}
+
+BufferedButtonAction pollBufferedButtons(uint8_t upperTaps, uint8_t lowerTaps) {
+  const auto tapLimit = [&](const ButtonInput* button) {
+    return button == &upperButton ? upperTaps : lowerTaps;
+  };
   for (;;) {
-    noInterrupts();
-    if (button.overflow) {
-      // A saturated ring cannot prove a complete gesture.
-      clearButtonEdges(button);
-      interrupts();
-      return ButtonAction::None;
+    const auto next = nextButtonEdge();
+    if (activeGestureButton && !bufferedChord) {
+      const bool upper = activeGestureButton == &upperButton;
+      auto& gesture = activeGestureButton->gesture;
+      const auto limit = tapLimit(activeGestureButton);
+      auto action = gesture.poll(next.at, limit);
+      if (action == ButtonAction::Hold && next.dropped) action = ButtonAction::None;
+      if (action == ButtonAction::None && next.input && next.input != activeGestureButton &&
+          !next.dropped && next.down && !activeGestureButton->replayDown) {
+        action = gesture.finishBeforeOtherPress(next.at, limit);
+      }
+      if (action != ButtonAction::None) return {upper, action};
     }
-    if (button.read == button.write) {
-      button.pressLatched = false;
-      const uint32_t now = millis();
-      interrupts();
-      return button.gesture.poll(now, completeAt);
+    if (!next.input) return {};
+    consumeButtonEdge(next);
+
+    if (next.dropped || (upperButton.replayDown && lowerButton.replayDown)) {
+      upperButton.gesture.reset();
+      lowerButton.gesture.reset();
+      activeGestureButton = nullptr;
+      bufferedChord = true;
     }
-    const ButtonEdge edge{button.edges[button.read].at, button.edges[button.read].down};
-    button.read = (button.read + 1) % kButtonEdgeCapacity;
-    interrupts();
-    const ButtonAction action = button.gesture.edge(edge.down, edge.at, completeAt);
-    if (action != ButtonAction::None) return action;
+    if (bufferedChord) {
+      bufferedChord = upperButton.replayDown || lowerButton.replayDown;
+      continue;
+    }
+    if (next.input != activeGestureButton) {
+      if (!next.down) continue;
+      activeGestureButton = next.input;
+      activeGestureButton->gesture.reset();
+    }
+    const auto action = activeGestureButton->gesture.edge(next.down, next.at, tapLimit(activeGestureButton));
+    if (action != ButtonAction::None) return {activeGestureButton == &upperButton, action};
+  }
+}
+
+CompanionAction pollBufferedCompanionControls() {
+  for (;;) {
+    const auto next = nextButtonEdge();
+    auto action = companionControls.poll(next.at, upperButton.replayDown, lowerButton.replayDown,
+                                         COMPANION_HOLD_MS);
+    if (action != CompanionAction::None || !next.input) return action;
+    consumeButtonEdge(next);
+    if (next.dropped) companionControls.reset();
+    action = companionControls.poll(next.at, upperButton.replayDown, lowerButton.replayDown,
+                                    COMPANION_HOLD_MS);
+    if (action != CompanionAction::None) return action;
   }
 }
 
@@ -324,6 +446,8 @@ void clearLatchedPresses() {
   noInterrupts();
   clearButtonEdges(upperButton);
   clearButtonEdges(lowerButton);
+  bufferedChord = upperButton.replayDown || lowerButton.replayDown;
+  replayPageTaps = false;
   interrupts();
 }
 
@@ -444,16 +568,20 @@ void returnFromBackgroundSync() {
   renderReadyHome();
 }
 
-void returnToReady() {
+void returnToReady(HomeButtonInput input) {
   stopWifi();
   state = STATE_IDLE;
   idleInputArmed = false;
   resetActivity();
-  // Discard the edge that selected Back, then retain any new edge occurring
-  // while the e-paper is busy redrawing Home.
-  clearLatchedPresses();
+  // Back and similar actions belong to the previous screen. Edges captured
+  // during the Home redraw are always retained.
+  if (input == HomeButtonInput::Discard) clearLatchedPresses();
   renderReadyHome();
   audio_idle_suspend();
+}
+
+void returnToReady() {
+  returnToReady(HomeButtonInput::Discard);
 }
 
 void browseAnswerPages(const String& answer, int sourceCount) {
@@ -716,6 +844,9 @@ void captureMemory() {
     return;
   }
 
+  // Lower-button presses mark the recording. Keep the upper button's held
+  // gesture and buffered edges so its release cannot count as a Home tap.
+  takeLatchedPress(false);
   if (!saveTag(lastRecNum, "Inbox", capturedUtc)) {
     // The WAV is retained for orphan recovery; never claim a failed index
     // commit succeeded or launch cloud work against an uncommitted capture.
@@ -730,8 +861,8 @@ void captureMemory() {
   backlogRequested = false;
   backlogSyncActive = false;
   backlogSyncTotal = 0;
-  returnToReady();
-  beginRecordingSync(SyncTiming::AfterRecording);
+  returnToReady(HomeButtonInput::Preserve);
+  afterRecordingSyncPending = true;
 }
 
 void askBrain() {
@@ -922,24 +1053,6 @@ void playWeeklyBriefing() {
   returnToReady();
 }
 
-PressResult classifyPress(int pin) {
-  if (digitalRead(pin) != LOW) return PressResult::Released;
-  delay(14);
-  if (digitalRead(pin) != LOW) return PressResult::Released;
-  const uint32_t pressedAt = millis();
-  while (digitalRead(pin) == LOW && millis() - pressedAt < REC_HOLD_MS) {
-    // A two-button gesture always wins, even when the fingers land a little
-    // apart. The old blocking hold detector missed this transition and began
-    // Capture/Ask before Companion could see both buttons.
-    if (bothButtonsDown()) {
-      companionGestureStartedAt = millis();
-      return PressResult::Chord;
-    }
-    delay(4);
-  }
-  return digitalRead(pin) == LOW ? PressResult::LongSingle : PressResult::Released;
-}
-
 void showAgendaPage() {
   if (displayPageIndex < 0) {
     showTodayAgenda(true, agendaPage, AgendaNavigation::EventsShortcut);
@@ -957,6 +1070,12 @@ void showAgendaPage() {
   agendaShownAt = millis();
 }
 
+void returnFromAgenda() {
+  returnToReady(HomeButtonInput::Preserve);
+  // A sequence entered while paging remains navigation through Home.
+  replayPageTaps = buttonInputPending(upperButton) || buttonInputPending(lowerButton);
+}
+
 void advanceDisplayPage(bool fromHome) {
   if (fromHome) {
     activeDisplayPages = palaDisplayPages();
@@ -968,10 +1087,9 @@ void advanceDisplayPage(bool fromHome) {
   if (next == displayPageIndex) return;
   displayPageIndex = next;
   if (displayPageIndex < 0) {
-    if (!fromHome) returnToReady();
+    if (!fromHome) returnFromAgenda();
     return;
   }
-  if (fromHome) takeLatchedPress(false);
   state = STATE_AGENDA;
   agendaPage = 0;
   showAgendaPage();
@@ -989,25 +1107,22 @@ void enterAquarium() {
 
 void handleAquarium() {
   const uint32_t now = millis();
-  ButtonAction upper = ButtonAction::None;
-  ButtonAction lower = ButtonAction::None;
   if (bothButtonsDown()) aquariumChord = true;
   if (aquariumChord) {
     clearLatchedPresses();
     if (bothButtonsUp()) aquariumChord = false;
   } else {
-    upper = pollButtonGesture(upperButton, 2);
-    // Real press and release times survive a blocking e-paper refresh.
-    lower = pollButtonGesture(lowerButton, 1);
+    // Classify the timestamped input before drawing the next frame. The game
+    // queues the resulting commands even when its current animation is busy.
+    for (;;) {
+      const auto input = pollBufferedButtons(2, 2);
+      if (input.action == ButtonAction::None) break;
+      const bool accepted = input.upper ? aquarium.upper(input.action, now)
+                                        : aquarium.lower(input.action, now);
+      if (accepted) resetActivity();
+    }
   }
-
-  if (upper != ButtonAction::None && upper != ButtonAction::Hold) {
-    aquarium.upper(upper, now);
-    resetActivity();
-  } else if (!upperButton.gesture.pending() && aquarium.lower(lower, now)) {
-    resetActivity();
-  }
-  aquarium.advance(now, upperButton.gesture.pending() || lowerButton.gesture.pending());
+  aquarium.advance(now, buttonInputPending(upperButton) || buttonInputPending(lowerButton));
   if (aquarium.scene == AquariumScene::Closed) {
     returnToReady();
     return;
@@ -1015,7 +1130,7 @@ void handleAquarium() {
 
   // The panel is the pacing limit. Skip late frames, never replay a backlog.
   if (lastAquariumFrame >= 0 && now - lastAquariumPaintAt < 170) return;
-  const int frame = aquariumFrame(aquarium.scene, now - aquarium.since);
+  const int frame = aquariumFrame(aquarium.scene, aquarium.reef, now - aquarium.since);
   if (frame == lastAquariumFrame) return;
   if (!showAquariumFrame(frame, pollUsbBacklog)) {
     Serial.println("Aquarium frame unavailable");
@@ -1063,9 +1178,13 @@ void handleIdle() {
 
   if (upperButton.pressLatched || lowerButton.pressLatched) resetActivity();
 
-  const ButtonAction upper = pollButtonGesture(upperButton, 3);
-  if (upper != ButtonAction::None) {
-    switch (upper) {
+  if (replayPageTaps && !buttonInputPending(upperButton) && !buttonInputPending(lowerButton)) {
+    replayPageTaps = false;
+  }
+  const uint8_t tapLimit = replayPageTaps ? 1 : 3;
+  const auto input = pollBufferedButtons(tapLimit, tapLimit);
+  if (input.upper) {
+    switch (input.action) {
       case ButtonAction::Single: advanceDisplayPage(true); break;
       case ButtonAction::Double:
         takeLatchedPress(false);
@@ -1075,7 +1194,7 @@ void handleIdle() {
         beginRecordingSync(SyncTiming::Manual);
         break;
       case ButtonAction::Hold:
-        if (digitalRead(BTN_REC) == LOW) {
+        if (liveButtonHold(upperButton, BTN_REC)) {
           // Recording wins over unfinished clicks on Home.
           takeLatchedPress(false);
           captureMemory();
@@ -1085,9 +1204,7 @@ void handleIdle() {
     }
     return;
   }
-  if (upperButton.gesture.pending()) return;
-
-  switch (pollButtonGesture(lowerButton, 3)) {
+  switch (input.action) {
     case ButtonAction::None: break;
     case ButtonAction::Single:
 #if PALA_BRIDGE_DISCOVERY
@@ -1105,7 +1222,7 @@ void handleIdle() {
       if (!backlogSyncActive && backlogScreen.link == BacklogLink::Deferred) enterAquarium();
       break;
     case ButtonAction::Hold:
-      if (digitalRead(BTN_PWR) == LOW) askBrain();
+      if (liveButtonHold(lowerButton, BTN_PWR)) askBrain();
       break;
   }
 }
@@ -1125,46 +1242,37 @@ void handleAgenda() {
     return;
   }
 
-  if (displayPageIndex >= 0) {
-    if (upperButton.pressLatched) agendaShownAt = millis();
-    // Preserve the press timestamps across blocking e-paper refreshes.
-    const ButtonAction upper = pollButtonGesture(upperButton, 1);
-    if (upper == ButtonAction::Hold) {
-      if (digitalRead(BTN_REC) == LOW) captureMemory();
-      return;
-    }
-    if (upper == ButtonAction::Single) {
-      resetActivity();
-      const auto page = static_cast<DisplayPage>(activeDisplayPages[displayPageIndex]);
-      if ((page == DisplayPage::Tasks || page == DisplayPage::Events) &&
-          agendaPage + 1 < todayAgendaPageCount(page == DisplayPage::Events)) {
-        ++agendaPage;
-        showAgendaPage();
-      } else {
-        advanceDisplayPage(false);
-      }
-      return;
-    }
-    if (upperButton.gesture.pending()) return;
-  } else if (digitalRead(BTN_REC) == LOW || (upperButton.pressLatched && !lowerButton.pressLatched)) {
-    takeLatchedPress(true);
-    if (digitalRead(BTN_REC) == LOW && classifyPress(BTN_REC) == PressResult::Chord) return;
-    returnToReady();
+  if (upperButton.pressLatched || lowerButton.pressLatched) agendaShownAt = millis();
+  const auto input = pollBufferedButtons(1, 1);
+  if (input.action == ButtonAction::None) {
+    if (!buttonInputPending(upperButton) && !buttonInputPending(lowerButton) &&
+        millis() - agendaShownAt >= 30000UL) returnToReady();
     return;
   }
+  const auto& button = input.upper ? upperButton : lowerButton;
+  const int pin = input.upper ? BTN_REC : BTN_PWR;
+  if (input.action == ButtonAction::Hold && !liveButtonHold(button, pin)) return;
 
-  if (digitalRead(BTN_PWR) == LOW || lowerButton.pressLatched) {
-    takeLatchedPress(false);
-    if (digitalRead(BTN_PWR) == LOW && classifyPress(BTN_PWR) == PressResult::Chord) return;
-    resetActivity();
-    if (displayPageIndex < 0 && agendaPage + 1 < todayAgendaPageCount(true)) {
+  resetActivity();
+  if (input.upper && displayPageIndex >= 0) {
+    if (input.action == ButtonAction::Hold) {
+      captureMemory();
+      return;
+    }
+    const auto page = static_cast<DisplayPage>(activeDisplayPages[displayPageIndex]);
+    if ((page == DisplayPage::Tasks || page == DisplayPage::Events) &&
+        agendaPage + 1 < todayAgendaPageCount(page == DisplayPage::Events)) {
       ++agendaPage;
       showAgendaPage();
-    } else returnToReady();
-    return;
+    } else {
+      advanceDisplayPage(false);
+    }
+  } else if (!input.upper && displayPageIndex < 0 && agendaPage + 1 < todayAgendaPageCount(true)) {
+    ++agendaPage;
+    showAgendaPage();
+  } else {
+    returnFromAgenda();
   }
-
-  if (millis() - agendaShownAt >= 30000UL) returnToReady();
 }
 
 #if PALA_BRIDGE_DISCOVERY
@@ -1469,7 +1577,9 @@ void handleCompanion() {
 
   const bool upperDown = digitalRead(BTN_REC) == LOW;
   const bool lowerDown = digitalRead(BTN_PWR) == LOW;
-  if (upperDown || lowerDown) resetActivity();
+  if (upperDown || lowerDown || buttonInputPending(upperButton) || buttonInputPending(lowerButton)) {
+    resetActivity();
+  }
   const uint32_t now = millis();
   if (now - lastActivityMs >= idleSleepPolicy(palaIdleSleepMinutes()).companionMs) {
     leaveCompanion();
@@ -1477,7 +1587,7 @@ void handleCompanion() {
     return;
   }
 
-  const CompanionAction action = companionControls.poll(now, upperDown, lowerDown, COMPANION_HOLD_MS);
+  const CompanionAction action = pollBufferedCompanionControls();
   if (action == CompanionAction::Exit) {
     leaveCompanion();
     return;
@@ -1756,7 +1866,7 @@ void loop() {
   if (state == STATE_IDLE) {
     handleIdle();
     // Let clicks settle before starting maintenance or a blocking network stage.
-    if (state != STATE_IDLE || upperButton.gesture.pending() || lowerButton.gesture.pending() ||
+    if (state != STATE_IDLE || buttonInputPending(upperButton) || buttonInputPending(lowerButton) ||
         upperButton.pressLatched || lowerButton.pressLatched || !bothButtonsUp()) {
       delay(8);
       return;
@@ -1771,6 +1881,10 @@ void loop() {
         backlogSyncTotal = 0;
         renderReadyHome();
       }
+    }
+    if (afterRecordingSyncPending) {
+      afterRecordingSyncPending = false;
+      beginRecordingSync(SyncTiming::AfterRecording);
     }
     if (idleInputArmed && millis() - lastActivityMs >= sleep.homeMs) {
       beginRecordingSync(SyncTiming::BeforeSleep);

@@ -48,6 +48,23 @@ constexpr bool clearingChordDropsAnIncompleteTapSequence() {
   return lower.poll(600, kHomeClickCount) == ButtonAction::None && !lower.pending();
 }
 
+constexpr bool recordingReleaseDoesNotConsumeBufferedManualSync() {
+  ButtonGesture upper;
+  upper.edge(true, 100, kHomeClickCount);
+  if (upper.poll(420, kHomeClickCount) != ButtonAction::Hold) return false;
+  upper.edge(false, 1000, kHomeClickCount);
+  upper.edge(true, 1060, kHomeClickCount);
+  upper.edge(false, 1100, kHomeClickCount);
+  upper.edge(true, 1200, kHomeClickCount);
+  upper.edge(false, 1240, kHomeClickCount);
+  upper.edge(true, 1340, kHomeClickCount);
+  upper.edge(false, 1380, kHomeClickCount);
+  // Replay the timestamped edges after several blocking screen updates.
+  if (upper.poll(2400, kHomeClickCount) != ButtonAction::Triple) return false;
+  return upper.poll(2600, kHomeClickCount) == ButtonAction::None && !upper.pending();
+}
+
+static_assert(recordingReleaseDoesNotConsumeBufferedManualSync());
 static_assert(distinguishesOneTwoAndThreeHomeClicks());
 static_assert(holdClearsEarlierTapsAndDoesNotBecomeOneOnRelease());
 static_assert(clearingChordDropsAnIncompleteTapSequence());

@@ -6,6 +6,8 @@ enum class ButtonAction { None, Single, Double, Triple, Hold };
 
 class ButtonGesture {
  public:
+  static constexpr uint32_t kDebounceMs = 14;
+
   constexpr void reset() { *this = ButtonGesture{}; }
 
   constexpr bool pending() const { return taps_ || (!held_ && (rawDown_ || settledDown_)); }
@@ -17,6 +19,16 @@ class ButtonGesture {
       rawAt_ = at;
     }
     return action;
+  }
+
+  // The other button has started a distinct press. A confirmed release
+  // from this button closes its tap sequence even within the multi-tap window.
+  constexpr ButtonAction finishBeforeOtherPress(uint32_t at, uint8_t completeAt) {
+    if (rawDown_) return ButtonAction::None;
+    if (settledDown_ && at - rawAt_ < kDebounceMs) at = rawAt_ + kDebounceMs;
+    const auto action = poll(at, completeAt);
+    if (action != ButtonAction::None) return action;
+    return taps_ ? finishTaps() : ButtonAction::None;
   }
 
   constexpr ButtonAction poll(uint32_t now, uint8_t completeAt) {
@@ -51,7 +63,6 @@ class ButtonGesture {
     return count == 1 ? ButtonAction::Single : count == 2 ? ButtonAction::Double : ButtonAction::Triple;
   }
 
-  static constexpr uint32_t kDebounceMs = 14;
   static constexpr uint32_t kHoldMs = 320;
   static constexpr uint32_t kInterTapMs = 360;
   uint32_t rawAt_ = 0;
