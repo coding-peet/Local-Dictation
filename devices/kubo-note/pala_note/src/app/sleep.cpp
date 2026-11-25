@@ -7,6 +7,7 @@
 #include "network.h"
 #include "notes.h"
 #include "battery.h"
+#include "memory_telemetry.h"
 #include "../../sounds.h"
 #include "WiFi.h"
 #include "SD_MMC.h"
@@ -82,5 +83,6 @@ void enterUltraSleep() {
   // involving the ESP32-S3 strapping/download pin while the device sleeps.
   Serial.printf("[Sleep] Entering deep sleep; wake=PWR GPIO%d; idle=%lu ms\n",
                 BTN_PWR, static_cast<unsigned long>(millis() - lastActivityMs));
+  retainMemoryPeaksForSleep();
   esp_deep_sleep_start();
 }

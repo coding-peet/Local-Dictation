@@ -78,8 +78,10 @@ def note_request(data):
         old = data.get("old")
         return {"op": op, "old": old if valid(old, r"[ -~]{0,48}") else "",
                 "password": password, "repeat": repeat}
-    if op in ("get", "trash.status", "auth.logout"):
+    if op in ("get", "trash.status", "auth.logout", "restart.status"):
         return {"op": op}
+    if op == "restart.request" and data.get("mode") in ("restart", "audit"):
+        return {"op": op, "mode": data["mode"]}
     if op == "trash.entry" and bounded_integer(data.get("index"), 0, NOTE_NUMBER_MAX):
         return {"op": op, "index": data["index"]}
     if op == "trash.restore" and bounded_integer(data.get("num"), 1, NOTE_NUMBER_MAX):
@@ -171,6 +173,22 @@ def note_response(reply, transport, op="get"):
         return {**result, "session": reply["session"]}
     if op.startswith("trash."):
         return {**result, **trash_response(reply, op)}
+    if op == "restart.request":
+        if reply.get("pending") is not True:
+            raise SettingsError("The Note did not open a restart confirmation.")
+        return {**result, "pending": True}
+    if op == "restart.status":
+        report = reply.get("storageAudit")
+        if (not isinstance(report, dict)
+                or report.get("state") not in ("never", "running", "incomplete", "complete")
+                or not bounded_integer(report.get("notes"), 0, NOTE_NUMBER_MAX)):
+            raise SettingsError("The Note returned an invalid storage check report.")
+        status = {"state": report["state"], "notes": report["notes"]}
+        for field in ("estimateSeconds", "checked", "wavIssues", "metadataIssues", "catalogIssues",
+                      "queueIssues", "firstNote", "repaired"):
+            if bounded_integer(report.get(field), 0, 2**32 - 1):
+                status[field] = report[field]
+        return {**result, "storageAudit": status}
     if "device" not in reply:
         return result
     device, wifi, peers = reply["device"], reply.get("wifi", []), reply.get("peers", [])
@@ -179,6 +197,8 @@ def note_response(reply, transport, op="get"):
     result["device"] = {"name": text(device.get("name"), 24), "language": text(device.get("language"), 8)}
     if type(device.get("memoryTrash")) is bool:
         result["device"]["memoryTrash"] = device["memoryTrash"]
+    if type(device.get("r")) is int and device["r"] == 1:
+        result["device"]["r"] = 1
     if type(device.get("webPasswordConfigured")) is bool:
         result["device"]["webPasswordConfigured"] = device["webPasswordConfigured"]
     if device.get("keepsWifiPassword") is True:
@@ -192,6 +212,14 @@ def note_response(reply, transport, op="get"):
             result["device"][field] = device[field]
     if valid_display_pages(device.get("displayPages")):
         result["device"]["displayPages"] = device["displayPages"]
+    if bounded_integer(device.get("batteryPercent"), 0, 100):
+        result["device"]["batteryPercent"] = device["batteryPercent"]
+    for field in ("ramUsage", "psramUsage"):
+        values = device.get(field)
+        if (isinstance(values, list) and len(values) == 2
+                and all(bounded_integer(value, 0, 100) for value in values)
+                and values[0] <= values[1]):
+            result["device"][field] = values
     if "bridgeAddress" in device:
         result["device"]["bridgeAddress"] = text(device["bridgeAddress"], 15, empty=True)
     result["wifi"] = [{"ssid": text(item["ssid"], 32)}

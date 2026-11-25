@@ -59,6 +59,8 @@ p { margin: .25rem 0 .75rem; }
 form, fieldset { display: grid; gap: .75rem; }
 fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 #bridge-address-form, #bridge-order { margin-top: .85rem; }
+#note-health { display: grid; gap: .45rem; margin: 0 0 .85rem; padding: 0 0 .85rem; border-bottom: 1px solid var(--line); }
+#note-health dd { margin: 0; font-variant-numeric: tabular-nums; }
 .setting-row {
   display: grid;
   grid-template-columns: min(15rem, 44%) minmax(0, 1fr);
@@ -356,6 +358,11 @@ dialog .actions { justify-content: end; }
 
 <section id="note" hidden>
   <h2>Note</h2>
+  <dl id="note-health" hidden>
+    <div id="note-battery-row" class="setting-row" hidden><dt>Battery</dt><dd id="note-battery"></dd></div>
+    <div id="note-ram-row" class="setting-row" hidden><dt>Internal RAM</dt><dd id="note-ram"></dd></div>
+    <div id="note-psram-row" class="setting-row" hidden><dt>PSRAM</dt><dd id="note-psram"></dd></div>
+  </dl>
   <form id="note-form">
     <label class="setting-row">Name <input id="note-name" maxlength="10" required></label>
     <label class="setting-row">Language
@@ -376,6 +383,16 @@ dialog .actions { justify-content: end; }
     </label>
     <div class="actions"><button class="primary" type="submit">Save Note settings</button></div>
   </form>
+</section>
+
+<section id="restart-note" hidden>
+  <h2>Restart Note</h2>
+  <p id="restart-status" class="muted" aria-live="polite"></p>
+  <p id="restart-estimate" class="muted">The storage check may take a long time. Recording is unavailable until it finishes.</p>
+  <div class="actions">
+    <button type="button" id="restart-normal">Restart</button>
+    <button type="button" id="restart-audit">Restart and check storage</button>
+  </div>
 </section>
 
 <section id="display-pages" hidden>
@@ -814,6 +831,22 @@ function drawDisplayPages() {
   }
 }
 
+function showNoteHealth(device) {
+  const percent = value => Number.isInteger(value) && value >= 0 && value <= 100;
+  const usageText = reading => Array.isArray(reading) && reading.length === 2 &&
+    reading.every(percent) && reading[0] <= reading[1]
+    ? reading[0] + '% current · ' + reading[1] + '% peak since restart' : '';
+  const battery = device && percent(device.batteryPercent) ? device.batteryPercent + '%' : '';
+  const ram = device ? usageText(device.ramUsage) : '';
+  const psram = device ? usageText(device.psramUsage) : '';
+
+  for (const [id, content] of [['note-battery', battery], ['note-ram', ram], ['note-psram', psram]]) {
+    el(id).textContent = content;
+    el(id + '-row').hidden = !content;
+  }
+  el('note-health').hidden = !(battery || ram || psram);
+}
+
 function show(data) {
   const caps = data.capabilities || {};
   const attached = Boolean(data.ok && data.device);
@@ -872,6 +905,9 @@ function show(data) {
   el('connection').textContent = 'Note disconnected';
   if (attached) el('connection').textContent = data.transport ? 'Connected via ' + data.transport : 'Connected';
   el('note').hidden = !attached;
+  showNoteHealth(attached ? data.device : null);
+  el('restart-note').hidden = !attached || data.device.r !== 1;
+  el('restart-status').textContent = '';
   const pages = attached ? data.device.displayPages : null;
   const legacyPages = typeof pages === 'string' && pages.length === 4;
   const expectedPages = legacyPages ? 'TECN' : 'TECNM';
@@ -1090,9 +1126,50 @@ function emptyTrash() {
   });
 }
 
+async function readStorageAudit() {
+  if (el('restart-note').hidden) return;
+  try {
+    const { storageAudit } = await request('restart.status', {});
+    if (!storageAudit) return;
+    const { notes, estimateSeconds, state, checked, firstNote, repaired } = storageAudit;
+    const count = new Intl.NumberFormat();
+    const timing = estimateSeconds
+      ? 'Estimated ' + count.format(Math.ceil(estimateSeconds / 60)) + ' min based on the previous check. Repairs can take longer.'
+      : 'The first check will measure its duration.';
+    el('restart-estimate').textContent = count.format(notes) + ' cataloged notes. ' + timing +
+      ' Recording is unavailable during the storage check.';
+    const incomplete = state === 'incomplete';
+    if (incomplete && !Number.isInteger(checked)) {
+      el('restart-status').textContent = 'The previous storage check did not finish. Confirm a new check to run it again.';
+    } else if ((incomplete || state === 'complete') && Number.isInteger(checked)) {
+      const issues = [
+        ['WAV', storageAudit.wavIssues], ['metadata', storageAudit.metadataIssues],
+        ['catalog', storageAudit.catalogIssues], ['sync queue', storageAudit.queueIssues]
+      ].filter(([, quantity]) => quantity > 0).map(([kind, quantity]) => count.format(quantity) + ' ' + kind);
+      el('restart-status').textContent = (incomplete ? 'Check incomplete. ' : 'Last check: ') + count.format(checked) + ' notes. ' +
+        (issues.length ? 'Reported ' + issues.join(', ') + ' issues.' : 'No issues found.') +
+        (firstNote ? ' First affected note: #' + firstNote + '.' : '') +
+        (repaired ? ' Rebuilt ' + count.format(repaired) + ' derived indexes.' : '');
+    }
+  } catch {
+    el('restart-status').textContent = 'Storage check status unavailable.';
+  }
+}
+
+function requestRestart(mode) {
+  return run(async () => {
+    const response = await request('restart.request', { mode });
+    if (response.pending !== true) throw new Error('The Note did not open the restart confirmation.');
+    const prompt = 'Confirm or cancel on the Note display.';
+    el('restart-status').textContent = prompt;
+    status(prompt);
+  });
+}
+
 async function showSettings(data) {
   const wasHidden = el('trash').hidden;
   show(data);
+  await readStorageAudit();
   if (el('settings-content').hidden || el('trash').hidden) {
     el('trash-disclosure').open = false;
     trashRead = false;
@@ -1233,6 +1310,8 @@ function pair(transport) {
 }
 
 el('refresh').addEventListener('click', refresh);
+el('restart-normal').addEventListener('click', () => requestRestart('restart'));
+el('restart-audit').addEventListener('click', () => requestRestart('audit'));
 el('display-pages-form').addEventListener('submit', event => {
   event.preventDefault();
   if (!el('display-pages').hidden) {

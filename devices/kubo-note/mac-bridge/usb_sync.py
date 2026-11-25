@@ -580,8 +580,25 @@ def _recording_time(port):
     return _captured(reply[1])
 
 
+def _recover_saved(port, stage_transcript, stop):
+    recover = getattr(stage_transcript, "recover_saved", None)
+    if recover is None:
+        return
+
+    def read(note):
+        _check_stop(stop)
+        try:
+            return _export_transcript(port, note, stop)
+        except UsbSyncError as error:
+            if _failure(error).FirmwareCode in ("NOTE", "COMMAND"):
+                return None
+            raise
+
+    recover(read)
+
+
 def sync_one(port, tokens, transcribe_local, *, note=None, stop=None, stage_transcript=None, activity=None,
-             session_open=False, organize=False):
+             session_open=False, organize=False, replay=None, device=None):
     """Use one already-open serial port. Return None for an empty queue."""
     if note is not None:
         _require_note(note)
@@ -590,6 +607,8 @@ def sync_one(port, tokens, transcribe_local, *, note=None, stop=None, stage_tran
         with _usb_phase("authenticating"):
             _paired_session(port, tokens)
     try:
+        if not session_open:
+            _recover_saved(port, stage_transcript, stop)
         with _usb_phase("selecting"):
             reply = _exchange(port, "NEXT" if note is None else f"SELECT {note}")
         if note is None and reply in (["EMPTY"], ["EMPTY", "RECHECK"]):
@@ -608,7 +627,8 @@ def sync_one(port, tokens, transcribe_local, *, note=None, stop=None, stage_tran
             audio = _download(port, size, stop)
         _check_stop(stop)
         with _usb_phase("transcribing"), activity_step(activity, "transcribing"):
-            result = transcribe_local(audio)
+            result = (replay(device, selected, audio, transcribe_local) if replay is not None
+                      else transcribe_local(audio))
         _check_stop(stop)
         text = result.get("text") if isinstance(result, dict) else None
         data = text.strip().encode("utf-8") if isinstance(text, str) else b""
@@ -755,10 +775,11 @@ def _transcribe_when_ready(bridge, stop, activity, audio):
     return bridge.transcribe_local(audio)
 
 
-def _drain_link(link, token, bridge, stop, stage_transcript=None, activity=None):
+def _drain_link(link, token, bridge, stop, stage_transcript=None, activity=None, *, device):
     while not stop.is_set():
         result = sync_one(link, (token,), lambda audio: _transcribe_when_ready(bridge, stop, activity, audio), stop=stop,
-                          stage_transcript=stage_transcript, activity=activity)
+                          stage_transcript=stage_transcript, activity=activity,
+                          device=device, replay=bridge.replay_transcription)
         if result is None:
             return link.recheck_when_empty
         print(f"Pala saved the transcript of note {result.note}.", flush=True)
@@ -810,6 +831,7 @@ def drain_bluetooth_backlog(link, token, bridge, device, stop, stage_transcript=
     _paired_session(link, (token,))
     saved = False
     try:
+        _recover_saved(link, stage_transcript or retain_transcript, stop)
         try:
             batch = _exchange(link, f"BATCH {mode}")
         except UsbSyncError as error:
@@ -833,7 +855,8 @@ def drain_bluetooth_backlog(link, token, bridge, device, stop, stage_transcript=
                         raise UsbSyncError("The Bluetooth backlog requested an unavailable recording stage.")
                     result = sync_one(link, (token,), lambda audio: _transcribe_when_ready(bridge, stop, activity, audio),
                                       note=note, stop=stop, stage_transcript=retain_transcript if process else stage_transcript,
-                                      activity=activity, session_open=True, organize=process)
+                                      activity=activity, session_open=True, organize=process,
+                                      replay=bridge.replay_transcription, device=device)
                     print(f"Pala saved the transcript of note {result.note}.", flush=True)
                     saved = True
                 elif not process:
@@ -848,7 +871,7 @@ def drain_bluetooth_backlog(link, token, bridge, device, stop, stage_transcript=
         with contextlib.suppress(OSError, UsbSyncError):
             _expect_ok(link, "CLOSE")
     if transcribe:
-        _drain_link(link, token, bridge, stop, stage_transcript, activity)
+        _drain_link(link, token, bridge, stop, stage_transcript, activity, device=device)
     return transcribe
 
 
@@ -1094,7 +1117,7 @@ def main():
 
             def drain(link, device, token, activity):
                 stage = router.stager(device) if router is not None else None
-                return _drain_link(link, token, bridge, stop, stage, activity)
+                return _drain_link(link, token, bridge, stop, stage, activity, device=device)
 
             def drain_usb(port, token):
                 with transfer_lock, paired_link(port, token) as link:
@@ -1188,18 +1211,16 @@ def main():
             return
         if not bridge.local_transcription_ready():
             raise UsbSyncError("Local Dictation is unavailable or busy.")
-        stage = None
-        staged = []
-        selected_tokens = tokens.values()
-        if router is not None:
-            from serial.tools.list_ports import comports
+        from serial.tools.list_ports import comports
 
-            device, token = paired_port(comports(), args.port, tokens)
-            selected_tokens = (token,)
-            stage = router.stager(device, staged)
-        with _open_link(args.port) as link:
+        staged = []
+        device, token = paired_port(comports(), args.port, tokens)
+        selected_tokens = (token,)
+        stage = router.stager(device, staged) if router is not None else None
+        with paired_link(args.port, token) as link:
             result = sync_one(link, selected_tokens, bridge.transcribe_local, note=args.note,
-                              stage_transcript=stage, activity=usb_activity)
+                              stage_transcript=stage, activity=usb_activity, replay=bridge.replay_transcription,
+                              device=device)
             try:
                 send_holidays(link, selected_tokens)
             except (OSError, ValueError, UsbSyncError) as error:

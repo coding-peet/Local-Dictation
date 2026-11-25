@@ -4,11 +4,17 @@
 #include <string_view>
 
 constexpr int64_t kHomeUsageMinimumUtc = 1704067200;
+constexpr int kHomeWeeklyGaugeSegments = 7;
 
 struct HomeCodexDisplay {
   int remaining = -1;
   int segments = 0;
   int filled = 0;
+
+  constexpr bool segmentFilled(int index) const {
+    if (segments == kHomeWeeklyGaugeSegments) return index >= segments - filled;
+    return index < filled;
+  }
 
   constexpr bool operator!=(const HomeCodexDisplay& other) const {
     return remaining != other.remaining || segments != other.segments || filled != other.filled;
@@ -38,7 +44,7 @@ struct HomeDeliveryCounts {
     const auto& window = useWeekly ? weekly : fiveHours;
     if (!window.isLive(utc, sampleExpiresAt)) return {};
     if (!window.resetsAt) return {window.remaining, 0, 0};
-    const int segments = useWeekly ? 7 : 5;
+    const int segments = useWeekly ? kHomeWeeklyGaugeSegments : 5;
     const int secondsPerSegment = useWeekly ? 86400 : 3600;
     const int64_t filled = (window.resetsAt - utc + secondsPerSegment - 1) / secondsPerSegment;
     return {window.remaining, segments, filled > segments ? segments : static_cast<int>(filled)};

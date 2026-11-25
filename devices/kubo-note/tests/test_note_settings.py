@@ -65,6 +65,24 @@ class IdleSleepSettingsTests(unittest.TestCase):
         self.assertNotIn("sleepMinutes", note_response({"ok": True, "device": old}, "USB")["device"])
 
 
+class DeviceHealthSettingsTests(unittest.TestCase):
+    def test_battery_and_heap_utilization_are_visible_with_existing_settings(self):
+        base = {"name": "Willow", "language": "en"}
+        health = {"batteryPercent": 0, "ramUsage": [43, 78], "psramUsage": [12, 91]}
+        for transport in ("USB", "BLE"):
+            with self.subTest(transport=transport):
+                reply = {"ok": True, "device": {**base, **health}}
+                self.assertEqual(note_response(reply, transport)["device"], {**base, **health})
+
+    def test_old_and_invalid_readings_do_not_hide_existing_settings(self):
+        base = {"name": "Willow", "language": "en"}
+        for health in ({}, {"batteryPercent": True, "ramUsage": [62, 40], "psramUsage": [0, 101]},
+                       {"batteryPercent": 101, "ramUsage": [True, 8], "psramUsage": [5]}):
+            with self.subTest(health=health):
+                reply = {"ok": True, "device": {**base, **health}}
+                self.assertEqual(note_response(reply, "BLE")["device"], base)
+
+
 class LoopbackSettingsTests(unittest.TestCase):
     def setUp(self):
         def route(data):

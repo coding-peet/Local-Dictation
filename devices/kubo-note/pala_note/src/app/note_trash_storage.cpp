@@ -1,4 +1,7 @@
 #include "notes.h"
+#include "audit_progress.h"
+#include "sync_queue.h"
+#include "tasks.h"
 #include "../../config.h"
 #include "../../globals.h"
 #include "../../types.h"
@@ -52,7 +55,9 @@ bool directoryNumbers(const char* path, bool folders, std::vector<int>& numbers)
   if (folders && !SD_MMC.exists(path)) return true;
   File dir = SD_MMC.open(path);
   if (!dir || !dir.isDirectory()) return false;
+  uint32_t examined = 0;
   for (File file = dir.openNextFile(); file; file = dir.openNextFile()) {
+    noteAuditWork(NoteStorageAuditPhase::Trash, ++examined);
     if (folders != file.isDirectory()) continue;
     const String name = entryBasename(file.name());
     const int num = folders ? note_trash::folderNumber(name.c_str()) : note_trash::fileNumber(name.c_str());
@@ -348,7 +353,9 @@ void discoverNoteTrash() {
   highestReserved = readHighWater();
   std::vector<int> numbers;
   if (!directoryNumbers(kTrashRoot, true, numbers)) return;
+  uint32_t examined = 0;
   for (const int num : numbers) {
+    noteAuditWork(NoteStorageAuditPhase::Trash, examined++, numbers.size());
     highestReserved = std::max(highestReserved, num);
     const String folder = trashFolder(num);
     if (phaseOf(folder) != Phase::None || hasFiles(num, folder)) markHidden(num);
@@ -369,19 +376,27 @@ int highestTrashedNoteNumber() { return highestReserved; }
 bool noteHasLiveBundle(int num) { return hasFiles(num, String(NOTES_DIR)); }
 
 bool deleteNote(int num) {
+  SyncQueueChange change(num);
+  if (!change || !beginAgendaIndexChange(num)) return false;
   const bool parked = parkNote(num);
   if (!parked && !noteIsTrashed(num)) return false;
-  return saveIndex() && parked;
+  const bool saved = saveIndex();
+  if (saved && parked) finishAgendaIndexChange(num);
+  return saved && parked;
 }
 
 bool deleteAllNotes() {
+  SyncQueueChange change(0);
+  if (!change || !beginAgendaIndexChange(0)) return false;
   std::vector<int> numbers;
   if (!directoryNumbers(NOTES_DIR, false, numbers)) return false;
   bool done = true;
   for (const int num : numbers) {
     if (!noteIsTrashed(num) || phaseOf(trashFolder(num)) == Phase::Moving) done = parkNote(num) && done;
   }
-  return saveIndex() && done;
+  const bool saved = saveIndex();
+  if (saved && done) finishAgendaIndexChange(0);
+  return saved && done;
 }
 
 bool listTrashedNotes(std::vector<TrashedNote>& entries) {
@@ -416,6 +431,8 @@ File openParkedNoteFile(int num, ParkedNoteFile kind) {
 
 bool restoreTrashedNote(int num) {
   if (num <= 0) return false;
+  SyncQueueChange change(num);
+  if (!change || !beginAgendaIndexChange(num)) return false;
   const String folder = trashFolder(num);
   const Phase state = phaseOf(folder);
   if (state == Phase::Parked) {
@@ -425,7 +442,9 @@ bool restoreTrashedNote(int num) {
   } else if (state != Phase::Restoring) {
     return false;
   }
-  return finishRestore(num, folder);
+  const bool restored = finishRestore(num, folder);
+  if (restored) finishAgendaIndexChange(num);
+  return restored;
 }
 
 int trashRetentionDays() {

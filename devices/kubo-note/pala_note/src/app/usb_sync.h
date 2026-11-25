@@ -6,6 +6,11 @@ bool recordingSyncAllowed();
 bool usbSyncActive();
 bool usbSyncWorking();
 void cancelUsbSync();
+int activeUsbOrBluetoothNote();
+int preferredRecordingSyncNote();
+void finishDrainedRecordingSync();
+void rememberRecordingSyncNote(int note);
+void finishTransportRecording(int note);
 bool takeSyncHomeChanged();
 
 using BluetoothSyncReply = void (*)(const String&);

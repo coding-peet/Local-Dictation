@@ -1,10 +1,15 @@
 #include "../../config.h"
 #include "provider.h"
 #include "ui.h"
+#include "network.h"
+#include "calendar_button.h"
+#include "record.h"
+#include "restart_maintenance.h"
 #include "../../globals.h"
 #include "draw.h"
 #include "notes.h"
 #include "tasks.h"
+#include "agenda_index.h"
 #include "task_visibility.h"
 #include "settings.h"
 #include "calendar_week.h"
@@ -327,9 +332,11 @@ const char* askPhaseCopy(const char* action) {
   return uiText("DENKE NACH", "THINKING");
 }
 
-std::vector<String> answerLines(const String& raw) {
+template <class Emit>
+void visitAnswerLines(const String& raw, Emit emit) {
   const String text = normalizeForDisplay(raw);
-  std::vector<String> lines;
+  bool any = false;
+  const auto output = [&](const String& line) { any = true; return emit(line); };
   String line;
   int pos = 0;
   while (pos < static_cast<int>(text.length())) {
@@ -342,16 +349,21 @@ std::vector<String> answerLines(const String& raw) {
     while (textW(word.c_str(), 1) > kContentWidth) {
       int cut = word.length();
       while (cut > 1 && textW((word.substring(0, cut) + "-").c_str(), 1) > kContentWidth) cut--;
-      if (line.length()) { lines.push_back(line); line = ""; }
-      lines.push_back(word.substring(0, cut) + "-");
+      if (line.length()) { if (!output(line)) return; line = ""; }
+      if (!output(word.substring(0, cut) + "-")) return;
       word = word.substring(cut);
     }
     const String candidate = line.length() ? line + " " + word : word;
     if (textW(candidate.c_str(), 1) <= kContentWidth) line = candidate;
-    else { if (line.length()) lines.push_back(line); line = word; }
+    else { if (line.length()) if (!output(line)) return; line = word; }
   }
-  if (line.length()) lines.push_back(line);
-  if (lines.empty()) lines.push_back(uiText("KEINE ANTWORT", "NO ANSWER"));
+  if (line.length()) if (!output(line)) return;
+  if (!any) output(uiText("KEINE ANTWORT", "NO ANSWER"));
+}
+
+std::vector<String> answerLines(const String& raw) {
+  std::vector<String> lines;
+  visitAnswerLines(raw, [&](const String& line) { lines.push_back(line); return true; });
   return lines;
 }
 
@@ -385,42 +397,117 @@ String nextTodayItem(const std::vector<BrainTaskRecord>& tasks, const String& to
   return normalizeForDisplay(candidate);
 }
 
-std::vector<BrainTaskRecord> todayAgendaItems(bool events) {
-  const String nowUtc = currentUtcIso();
-  const String localNow = utcToLocalDeviceLabel(nowUtc);
-  const String todayKey = localNow.length() >= 10 && localNow != "time not set"
-                            ? localNow.substring(0, 10) : "";
-  std::vector<BrainTaskRecord> items;
-  for (const BrainTaskRecord& item : loadBrainTasks()) {
-    if (item.done) continue;
-    if (!item.dueUtc.length()) {
-      if (!events && undatedTaskVisible(item.type == "event", item.done)) items.push_back(item);
-      continue;
-    }
-    if (!todayKey.length()) continue;
-    const String localDue = utcToLocalDeviceLabel(item.dueUtc);
-    if (localDue.length() < 10 || localDue == "time not set") continue;
-    const String dueDay = localDue.substring(0, 10);
-    if (events ? (item.type == "event" && dueDay == todayKey && eventStillRelevant(
-                   dueDay.c_str(), todayKey.c_str(), item.dueUtc.c_str(), nowUtc.c_str(),
-                   item.datePrecision == "day"))
-               : (item.type != "event" && dueDay <= todayKey)) items.push_back(item);
-  }
-  std::sort(items.begin(), items.end(), [](const BrainTaskRecord& a, const BrainTaskRecord& b) {
-    return a.dueUtc < b.dueUtc;
-  });
-  return items;
-}
-
 constexpr int kAgendaLinesPerPage = 5;
 
-int agendaPages(const std::vector<BrainTaskRecord>& items) {
-  int pages = 0;
-  for (const BrainTaskRecord& item : items) {
-    const int lines = max(1, static_cast<int>(answerLines(item.text).size()));
-    pages += (lines + kAgendaLinesPerPage - 1) / kAgendaLinesPerPage;
+struct AgendaScreenPage {
+  std::array<String, kAgendaLinesPerPage> lines;
+  String label;
+  bool filled = false;
+};
+
+struct AgendaScreen {
+  AgendaIndexCursor cursor;
+  AgendaScreenPage current;
+  AgendaScreenPage next;
+  String nowUtc;
+  String today;
+  int page = -1;
+  int item = 0;
+  int linesRead = 0;
+  bool events = false;
+  bool end = false;
+};
+AgendaScreen agendaScreen;
+
+struct AgendaTaskRead {
+  AgendaScreen& screen;
+  BrainTaskRecord task;
+  bool found = false;
+};
+
+bool readAgendaTask(const BrainTaskRecord& item, void* context) {
+  auto& read = *static_cast<AgendaTaskRead*>(context);
+  auto& screen = read.screen;
+  if (item.done) return true;
+  const bool event = item.type == "event";
+  if (event != screen.events) return true;
+  if (item.dueUtc.isEmpty()) {
+    if (screen.events) return true;
+  } else {
+    if (screen.today.isEmpty()) { screen.end = true; return false; }
+    const String localDue = utcToLocalDeviceLabel(item.dueUtc);
+    if (localDue.length() < 10 || localDue == "time not set") return true;
+    const String day = localDue.substring(0, 10);
+    if (day > screen.today) { screen.end = true; return false; }
+    if (screen.events && (day != screen.today ||
+        !eventStillRelevant(day.c_str(), screen.today.c_str(), item.dueUtc.c_str(),
+                            screen.nowUtc.c_str(), item.datePrecision == "day"))) return true;
   }
-  return max(1, pages);
+  read.task = item;
+  read.found = true;
+  return false;
+}
+
+AgendaScreenPage readAgendaScreenPage() {
+  auto& screen = agendaScreen;
+  AgendaScreenPage page;
+  if (screen.end) return page;
+  AgendaTaskRead read{screen};
+  if (screen.linesRead) {
+    // A long task spans pages. Keep its cursor rather than the remaining text.
+    AgendaIndexCursor sameTask = screen.cursor;
+    --sameTask.next;
+    if (!visitAgendaIndex(sameTask, readAgendaTask, &read)) return page;
+  } else {
+    if (!visitAgendaIndex(screen.cursor, readAgendaTask, &read)) return page;
+    if (read.found) ++screen.item;
+  }
+  if (!read.found) {
+    screen.end = true;
+    return page;
+  }
+  const auto& task = read.task;
+  const String localDue = utcToLocalDeviceLabel(task.dueUtc);
+  page.label = screen.events && task.datePrecision != "day" && localDue.length() >= 16
+      ? localDue.substring(11, 16) : String(screen.item);
+  int seen = 0;
+  int kept = 0;
+  bool more = false;
+  visitAnswerLines(task.text, [&](const String& line) {
+    if (seen++ < screen.linesRead) return true;
+    if (kept == kAgendaLinesPerPage) { more = true; return false; }
+    page.lines[kept++] = line;
+    return true;
+  });
+  page.filled = true;
+  screen.linesRead = more ? screen.linesRead + kept : 0;
+  return page;
+}
+
+bool beginAgendaScreen(bool events) {
+  agendaScreen = AgendaScreen{};
+  auto& screen = agendaScreen;
+  screen.events = events;
+  screen.nowUtc = currentUtcIso();
+  const String localNow = utcToLocalDeviceLabel(screen.nowUtc);
+  if (localNow.length() >= 10 && localNow != "time not set") screen.today = localNow.substring(0, 10);
+  char previousDay[11]{};
+  if (events && !screen.today.isEmpty()) {
+    const int year = localNow.substring(0, 4).toInt();
+    const int month = localNow.substring(5, 7).toInt();
+    const int day = localNow.substring(8, 10).toInt();
+    if (calendarWeek(year, month, day).number) {
+      const auto previous = calendarDateInWeek(year, month, day, -1);
+      snprintf(previousDay, sizeof(previousDay), "%04d-%02d-%02d", previous.year, previous.month, previous.day);
+    }
+  }
+  if (!openAgendaIndex(screen.cursor, false, *previousDay ? previousDay : nullptr)) return false;
+  screen.cursor.mask = 3;
+  screen.cursor.match = events ? 1 : 0;
+  screen.current = readAgendaScreenPage();
+  screen.next = readAgendaScreenPage();
+  screen.page = 0;
+  return true;
 }
 
 void drawSunGlyph(int x, int y, bool rays) {
@@ -742,7 +829,7 @@ void showIdle(int pendingCount, int batteryPercent) {
     const int gaugeY = percentY + kHomeQuotaHeight + gaugeGap;
     for (int i = 0; i < codex.segments; ++i) {
       const int x = center - gaugeWidth / 2 + i * segmentStep;
-      if (i < codex.filled) fillRect(x, gaugeY, segmentWidth, segmentHeight, BLACK);
+      if (codex.segmentFilled(i)) fillRect(x, gaugeY, segmentWidth, segmentHeight, BLACK);
       else hline(x, gaugeY + segmentHeight - 1, segmentWidth, BLACK);
     }
   }
@@ -784,52 +871,55 @@ void showIdle(int pendingCount, int batteryPercent) {
   homeBridgeStatus.drawn(bridgeLink);
 }
 
+void resetTodayAgenda() {
+  agendaScreen = AgendaScreen{};
+}
+
 int todayAgendaPageCount(bool events) {
-  return agendaPages(todayAgendaItems(events));
+  const auto& screen = agendaScreen;
+  return screen.page >= 0 && screen.events == events
+      ? screen.page + (screen.next.filled ? 2 : 1) : 1;
 }
 
 void showTodayAgenda(bool events, int page, AgendaNavigation navigation) {
   clearWhite();
-  const std::vector<BrainTaskRecord> items = todayAgendaItems(events);
-  const int pages = agendaPages(items);
-  page = constrain(page, 0, pages - 1);
+  auto& screen = agendaScreen;
+  const bool invalid = screen.page < 0 || screen.events != events ||
+                       screen.cursor.generation != agendaIndexGeneration() || page < screen.page;
+  const bool available = !invalid || beginAgendaScreen(events);
+  if (available) {
+    while (screen.page < page && screen.next.filled) {
+      screen.current = std::move(screen.next);
+      screen.next = readAgendaScreenPage();
+      ++screen.page;
+    }
+  }
+
   char pageLabel[12];
-  snprintf(pageLabel, sizeof(pageLabel), "%d/%d", page + 1, pages);
-  drawHeader(items.empty() ? nullptr : pageLabel, BLACK);
+  snprintf(pageLabel, sizeof(pageLabel), "%d", screen.page + 1);
+  drawHeader(available && screen.current.filled ? pageLabel : nullptr, BLACK);
   labelLeft(kContentTop, events ? uiText("TERMINE", "EVENTS") : uiText("AUFGABEN", "TASKS"), 1, BLACK, 112);
 
-  if (items.empty()) {
+  if (!available) {
+    drawTwoLineHero("INDEX", uiText("AKTUALISIERT", "UPDATING"), 76, BLACK);
+  } else if (!screen.current.filled) {
     drawTwoLineHero(events ? uiText("KEINE", "NO") : uiText("NICHTS", "ALL"),
                     events ? uiText("TERMINE", "EVENTS") : uiText("OFFEN", "DONE"),
                     76, BLACK);
   } else {
-    int remaining = page;
-    int selected = 0;
-    int firstLine = 0;
-    std::vector<String> lines;
-    for (int i = 0; i < static_cast<int>(items.size()); i++) {
-      lines = answerLines(items[i].text);
-      const int itemPages = max(1, (static_cast<int>(lines.size()) + kAgendaLinesPerPage - 1) /
-                                       kAgendaLinesPerPage);
-      if (remaining < itemPages) {
-        selected = i;
-        firstLine = remaining * kAgendaLinesPerPage;
-        break;
-      }
-      remaining -= itemPages;
+    labelRight(kContentTop, screen.current.label.c_str(), 1, BLACK, 58);
+    for (int i = 0; i < kAgendaLinesPerPage; ++i) {
+      const auto& line = screen.current.lines[i];
+      if (!line.isEmpty()) drawStr(kInset, 68 + i * 19, line.c_str(), 1, BLACK);
     }
-    const String localDue = utcToLocalDeviceLabel(items[selected].dueUtc);
-    String meta = events && items[selected].datePrecision != "day" && localDue.length() >= 16 ? localDue.substring(11, 16)
-                                                    : String(selected + 1);
-    labelRight(kContentTop, meta.c_str(), 1, BLACK, 58);
-    for (int i = 0; i < kAgendaLinesPerPage && firstLine + i < static_cast<int>(lines.size()); i++)
-      drawStr(kInset, 68 + i * 19, lines[firstLine + i].c_str(), 1, BLACK);
   }
+
+  const bool hasNext = available && screen.next.filled;
   if (navigation != AgendaNavigation::EventsShortcut) {
-    if (page + 1 < pages || navigation == AgendaNavigation::MoreDisplayPages)
+    if (hasNext || navigation == AgendaNavigation::MoreDisplayPages)
       drawFooter("NEXT", "HOME", BLACK);
     else drawFooterCentered("HOME", BLACK);
-  } else if (items.empty() || pages == 1) {
+  } else if (!hasNext) {
     drawFooterCentered(uiText("NOCHMAL: ZURUECK", "AGAIN: BACK"), BLACK);
   } else {
     drawFooter(uiText("WEITER", "NEXT"), uiText("ZURUECK", "BACK"), BLACK);
@@ -907,7 +997,7 @@ void showSaved(int noteNumber) {
   clearWhite();
   char number[12];
   snprintf(number, sizeof(number), "#%03d", noteNumber % 1000);
-  drawHeader(number, BLACK);
+  drawHeader(noteNumber > 0 ? number : "PALA NOTE", BLACK);
   strokeCircle(36, 67, 14, 2, BLACK);
   thickLine(29, 67, 34, 73, 2, BLACK);
   thickLine(34, 73, 44, 60, 2, BLACK);
@@ -1011,6 +1101,35 @@ void showNoteUsbPairingPrompt(const String& peer) {
   drawStrFit(kInset, 82, kContentWidth, normalizeForDisplay(peer).c_str(), 2, BLACK);
   labelLeft(132, "UPPER: YES", 1, BLACK);
   drawFooter("LOWER: CANCEL", nullptr, BLACK);
+  refresh();
+}
+
+void showNoteRestartPrompt(bool audit) {
+  clearWhite();
+  drawHeader("RESTART", BLACK);
+  drawStrC(W / 2, 66, audit ? "Restart and check?" : "Restart Note?", 1, BLACK);
+  if (audit) drawStrC(W / 2, 94, "This may take time", 1, BLACK);
+  drawFooter("UPPER: YES", "LOWER: NO", BLACK);
+  refresh();
+}
+
+void showNoteStorageAuditProgress(const NoteStorageAuditProgress& progress) {
+  clearWhite();
+  drawHeader("STORAGE", BLACK);
+  using namespace note_maintenance;
+  drawStrFit(kInset, 54, kContentWidth, auditCaption(progress.phase).phase, 1, BLACK);
+  char count[48];
+  auditCountText(progress, count, sizeof(count));
+  drawStrC(W / 2, 88, count, 1, BLACK);
+  constexpr int left = 12, width = 176;
+  if (progress.total || progress.phase == NoteStorageAuditPhase::Finished) {
+    strokeRect(left, 120, width, 15, 1, BLACK);
+    const int filled = static_cast<int>(auditBarPercent(progress) * (width - 4) / 100);
+    if (filled) fillRect(left + 2, 122, filled, 11, BLACK);
+  }
+  snprintf(count, sizeof(count), "%lus   %lu issues", static_cast<unsigned long>(progress.elapsedSeconds),
+           static_cast<unsigned long>(progress.problems));
+  drawStrC(W / 2, 150, count, 1, BLACK);
   refresh();
 }
 
@@ -1156,25 +1275,11 @@ void showUltraSleepScreen() {
 }
 
 static int calendarButtonChoice(bool (*serviceConnection)()) {
-  bool armed = false;
-  const uint32_t since = millis();
-  while (millis() - since < 30000UL) {
-    if (serviceConnection && !serviceConnection()) return -1;
-    const bool up = digitalRead(BTN_REC) == LOW, down = digitalRead(BTN_PWR) == LOW;
-    if (!up && !down) armed = true;
-    if (armed && (up != down)) {
-      delay(35);
-      const int pin = up ? BTN_REC : BTN_PWR;
-      if (digitalRead(pin) != LOW) continue;
-      while (digitalRead(pin) == LOW && millis() - since < 30000UL) {
-        if (serviceConnection && !serviceConnection()) return -1;
-        delay(10);
-      }
-      return up ? 0 : 1;
-    }
-    delay(10);
-  }
-  return -1;
+  return calendar_button::choose(millis, [] {
+    return (digitalRead(BTN_REC) == LOW ? 1 : 0) | (digitalRead(BTN_PWR) == LOW ? 2 : 0);
+  }, delay, [&] {
+    return !recordingRequestedDuringSync() && (!serviceConnection || serviceConnection());
+  });
 }
 
 static bool parseCalendarMinute(const String& text, struct tm& fields) {
@@ -1205,6 +1310,7 @@ static String calendarProposalLine(const CalendarProposalTime& time) {
 
 int chooseCalendarEventDate(const String& title, const CalendarProposalTime& first, const CalendarProposalTime& second,
                             bool (*serviceConnection)()) {
+  RecordingWindow microphone;
   const bool sk = palaUiLanguage() == "sk";
   clearWhite();
   drawHeader(sk ? "VYBER DATUM" : "CHOOSE DATE", BLACK);
@@ -1219,6 +1325,7 @@ int chooseCalendarEventDate(const String& title, const CalendarProposalTime& fir
 // 1 accepts, 0 declines, -1 leaves the proposal pending at the Bridge.
 int confirmCalendarEvent(const String& title, const CalendarProposalTime& time, int minutes,
                          bool (*serviceConnection)()) {
+  RecordingWindow microphone;
   const bool sk = palaUiLanguage() == "sk";
   clearWhite();
   drawHeader(sk ? "KALENDAR" : "CALENDAR", BLACK);

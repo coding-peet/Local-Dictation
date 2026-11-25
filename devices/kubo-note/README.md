@@ -46,7 +46,9 @@ read the quota as soon as Bridge starts in Kubo processing mode.
 
 The percentage is the remaining allowance. The small blocks underneath show
 the time until reset in approximate hours or days. A partially remaining hour
-or day counts as one block. The blocks appear when Codex reports a reset time.
+or day counts as one block. In the weekly view, blocks become low marks from
+left to right as the week elapses. The rightmost block stays tall until the
+reset. The blocks appear when Codex reports a reset time.
 The pending recording count and waveform sit just left of the connection
 and battery indicators. The percentage and blocks stay visible as long as
 the name and recording count leave enough room in the header.
@@ -125,6 +127,39 @@ supports restoring items and changing retention over USB or Bluetooth.
 The default retention is 90 days. Change it to any value from 1 to 3650 days. Expiry is
 checked while the Note is awake with a valid clock. **Empty Trash**
 permanently deletes the items in Trash and requires explicit confirmation.
+
+## Storage indexes and manual sync
+
+The Note keeps its recordings, transcripts, and task state on the SD card.
+Tasks and Events use a rebuildable disk index with a limited page buffer.
+The sync queue is separate and retains recordings that are still pending.
+
+Home and recording are available during routine recovery. A manual sync
+requested during recovery starts when the queue is ready. Rebooting clears
+that request and retains any recordings still waiting for a new sync.
+
+To record during sync, hold the upper button as usual. The Note releases
+the active transport at a safe boundary. After saving the recording, it
+resumes the interrupted item before continuing through the queue, including
+the recording just saved.
+
+## Restart and storage checks
+
+In **Note settings**, choose **Restart** or **Restart and check storage**.
+Approve with the upper button on the Note or decline with the lower button.
+
+The full check can take several minutes. It verifies the catalog, queue,
+metadata, and WAV headers and sizes. The screen shows check progress.
+Recording is available after completion. The Note reports source-file
+problems and can rebuild derived indexes. It leaves audio payloads alone.
+
+After a power loss during the check, the Note starts normally and Settings
+reports that the check is incomplete. When a previous run has supplied a
+timing measurement, Settings shows an estimate for the current archive.
+
+Companion shows current and peak internal RAM and PSRAM under the battery.
+Note settings show the same values and battery percentage. The peaks
+survive normal deep sleep and reset on a restart or power cycle.
 
 ## Aquarium
 

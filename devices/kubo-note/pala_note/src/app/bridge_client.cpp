@@ -6,6 +6,8 @@
 #include <HTTPClient.h>
 #include <WiFi.h>
 #include "bridge_address.h"
+#include "network.h"
+#include "usb_sync.h"
 #include "home_bridge_status.h"
 #include "settings.h"
 
@@ -63,20 +65,24 @@ WifiBacklog probe(const NotePeer& peer, bool& transcribeOnly) {
   http.setConnectTimeout(1500);
   http.setTimeout(2000);
   http.addHeader("Authorization", "Bearer " + peer.token);
+  http.addHeader("X-Pala-Receipts", "1");
   const int status = http.GET();
+  int receipt = 0;
   const int length = http.getSize();
   WifiBacklog readiness = WifiBacklog::Unavailable;
   if ((status == HTTP_CODE_OK || status == HTTP_CODE_SERVICE_UNAVAILABLE) &&
-      length > 0 && length <= 64) {
+      length > 0 && length <= 96) {
     const String payload = http.getString();
     JsonDocument document;
     if (payload.length() == static_cast<size_t>(length) && !deserializeJson(document, payload)) {
       const JsonVariantConst ready = document["ready"];
       readiness = classifyWifiReadiness(status, ready.is<bool>(), ready.as<bool>());
+      receipt = document["receipt"] | 0;
       transcribeOnly = readiness != WifiBacklog::Unavailable && document["processing"] == "transcribe";
     }
   }
   http.end();
+  if (receipt > 0 && recordingSyncAllowed()) confirmWifiTranscriptReceipt(receipt, peer.id);
   if (readiness != WifiBacklog::Unavailable) homeBridgeStatus.verified(HomeBridgeLink::Wifi);
   return readiness;
 }

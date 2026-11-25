@@ -1,0 +1,32 @@
+from pathlib import Path
+import unittest
+
+SKETCH = Path(__file__).resolve().parents[1] / "pala_note"
+APP = SKETCH / "src" / "app"
+
+
+class InterruptedCaptureWiring(unittest.TestCase):
+    def test_direct_carries_timestamp_from_button_to_journal(self):
+        main = (SKETCH / "pala_note.ino").read_text(encoding="utf8")
+        self.assertIn("record(capturedUtc)", main)
+        rec = (APP / "record.cpp").read_text(encoding="utf8")
+        entry = rec.split("bool record(const String& capturedUtc) {",1)[1].split("bool recordQuestion",1)[0]
+        self.assertLess(entry.index("beginNoteRecording(num, capturedUtc)"), entry.index("recordHeldToPath("))
+        notes = (APP / "notes.cpp").read_text(encoding="utf8")
+        self.assertIn("note_catalog::reserveRecording(",notes)
+        recovery = notes.split("bool recoverCaptureIntent() {",1)[1].split("bool loadCatalogBase",1)[0]
+        self.assertLess(recovery.index("capture_wav::recover("), recovery.index("repairCatalogRecording("))
+        self.assertIn("capture_wav::restoreTimestamp(meta.c_str(), utc",recovery)
+        self.assertIn('writeNoteMeta(note, "Inbox", captured)',recovery)
+
+    def test_spool_repairs_before_catalog_ack(self):
+        rec = (APP / "record.cpp").read_text(encoding="utf8")
+        self.assertIn("rec_spool::promotePartial(",rec)
+        entry=rec.split("bool adopt(String name,",1)[1].split("bool readSpoolNames",1)[0]
+        self.assertIn("beginNoteRecording(note, utc)",entry)
+        self.assertIn("utc = rec_spool::captureUtc(seconds)",entry)
+        self.assertLess(entry.index("capture_wav::recover("),entry.index("saveTag("))
+
+
+if __name__ == "__main__":
+    unittest.main()

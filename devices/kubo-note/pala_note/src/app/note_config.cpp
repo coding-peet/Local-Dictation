@@ -2,11 +2,15 @@
 
 #include "note_access.h"
 
+#include "battery.h"
 #include "bluetooth_sync.h"
 #include "bridge_client.h"
 #include "display_pages.h"
+#include "memory_telemetry.h"
 #include "note_peers.h"
 #include "notes.h"
+#include "restart_maintenance.h"
+#include "../../globals.h"
 #include "settings.h"
 #include "sleep.h"
 #include "sleep_policy.h"
@@ -90,6 +94,14 @@ void addPeer(JsonArray rows, int index) {
   row["wifi"] = !peer.host.isEmpty();
 }
 
+void addHeapUsage(JsonObject device, const char* key, const HeapUsage& usage) {
+  if (!usage.totalBytes) return;
+  // Two percentages keep the base settings reply within the BLE frame.
+  JsonArray values = device[key].to<JsonArray>();
+  values.add(usage.usedPercent());
+  values.add(usage.peakPercent());
+}
+
 void getSettings(JsonVariantConst request, NoteConfigTransport link, JsonDocument& result) {
   const String section = request["section"] | "";
   const int wifiCount = palaWifiProfileCount();
@@ -115,12 +127,18 @@ void getSettings(JsonVariantConst request, NoteConfigTransport link, JsonDocumen
   device["weeklyCodexLimit"] = palaPrefersWeeklyCodexLimit();
   device["keepsWifiPassword"] = true;
   device["memoryTrash"] = true;
+  device["r"] = 1;  // Compact wire capability within the BLE settings frame.
   device["webPasswordConfigured"] = noteAccessConfigured();
   device["displayPages"] = palaDisplayPages();
   device["sleepMinutes"] = palaIdleSleepMinutes();
   device["syncTiming"] = static_cast<int>(palaSyncTiming());
   device["pageWrap"] = palaDisplayPagesWrap();
   device["wifiEnabled"] = palaWifiEnabled();
+  const BatteryReading battery = readBattery();
+  if (battery.valid) device["batteryPercent"] = battery.percent;
+  const MemoryTelemetry memory = readMemoryTelemetry();
+  addHeapUsage(device, "ramUsage", memory.internal);
+  addHeapUsage(device, "psramUsage", memory.psram);
 #if PALA_BRIDGE_DISCOVERY
   device["preferBluetooth"] = palaPreferBluetooth();
   device["bluetoothEnabled"] = palaBluetoothEnabled();
@@ -358,6 +376,17 @@ void dispatch(JsonVariantConst request, NoteConfigTransport link, bool authentic
     if (link == NoteConfigTransport::Web) csrf = "";
   } else if (op == "get") getSettings(request, link, result);
   else if (op.startsWith("trash.")) trashSettings(op, request, result);
+  else if (op == "restart.status")
+    addNoteStorageAuditSettings(result["storageAudit"].to<JsonObject>(), noteIndex.size());
+  else if (op == "restart.request") {
+    const String mode = accessField(request["mode"]);
+    const auto restart = mode == "restart" ? NoteRestartMode::Restart
+        : mode == "audit" ? NoteRestartMode::Audit : NoteRestartMode::None;
+    if (restart == NoteRestartMode::None) fillResult(result, "Choose a supported restart.");
+    else if ((state != STATE_IDLE && state != STATE_TRANSFER) || !requestNoteRestart(restart))
+      fillResult(result, "Finish the current activity or confirmation first.");
+    else result["pending"] = true;
+  }
   else if (op == "pair.enableBle" && link == NoteConfigTransport::Web && bluetoothEnrollmentAvailable()) {
     bleEnableRequested = true;
     result["state"] = "listening";

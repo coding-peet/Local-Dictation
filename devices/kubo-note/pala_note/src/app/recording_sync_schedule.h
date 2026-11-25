@@ -32,13 +32,25 @@ class RecordingSyncSchedule {
     return now - activityAt < sleep.queuedMs;
   }
 
+  // Capture suspends the actual request, including a manual request still
+  // waiting for discovery. A metadata session never begins this schedule.
+  constexpr void pauseForRecording() {
+    resumeAfterCapture_ = running_ && event_ != SyncTiming::BeforeSleep;
+    running_ = false;
+  }
+  constexpr bool resumeAfterRecording(SyncTiming mode, uint32_t activityAt) {
+    if (!resumeAfterCapture_) return false;
+    resumeAfterCapture_ = false;
+    return begin(mode, event_, activityAt);
+  }
   constexpr bool running() const { return running_; }
   constexpr bool beforeSleep() const { return running_ && event_ == SyncTiming::BeforeSleep; }
-  constexpr void finish() { running_ = false; }
+  constexpr void finish() { running_ = false; resumeAfterCapture_ = false; }
 
  private:
   SyncTiming event_ = SyncTiming::Manual;
   uint32_t beforeSleepActivityAt_ = 0;
   bool running_ = false;
+  bool resumeAfterCapture_ = false;
   bool triedBeforeSleep_ = false;
 };

@@ -3,6 +3,7 @@
 #include "../../globals.h"
 #include "../../types.h"
 #include "notes.h"
+#include "record.h"
 #include "local_transcript_policy.h"
 #include "rtc.h"
 #include "draw.h"
@@ -10,121 +11,58 @@
 #include "SD_MMC.h"
 #include <algorithm>
 #include <map>
+#include <dirent.h>
+#include <cerrno>
 #include "retry_policy.h"
 #include "storage_commit.h"
+#include "catalog_storage.h"
+#include "audit_progress.h"
+#include "capture_wav_recovery.h"
+#include <sys/stat.h>
+#include "sync_queue.h"
 #include "note_trash_policy.h"
 
 // ─── Index ────────────────────────────────────────────────────────────────
 
 namespace {
 constexpr const char* kIndexTemp = "/notes/index.tmp";
-constexpr const char* kIndexBackup = "/notes/index.bak";
+constexpr char catalogMigratedPath[] = NOTES_DIR "/catalog.fast.v2";
+note_catalog::Snapshot catalogSnapshot;
+bool catalogChanged = false;
+
+note_catalog::Source catalogVisibility(int num) {
+  yieldToPriorityMicrophone();
+  using note_catalog::Source;
+  if (noteIsTrashed(num)) return Source::Absent;
+  if (num > highestTrashedNoteNumber()) return Source::Present;
+  // An old catalog may include a purged note. Only filter it when the card
+  // positively reports that every possible live bundle member is absent.
+  for (const char* extension : note_trash::bundleExtensions) {
+    for (const char* suffix : note_trash::commitSuffixes) {
+      char path[96];
+      snprintf(path, sizeof(path), "/sdcard" NOTES_DIR "/note_%03d.%s%s", num, extension, suffix);
+      struct stat info;
+      if (stat(path, &info) == 0) return Source::Present;
+      if (errno != ENOENT) return Source::Error;
+    }
+  }
+  return Source::Absent;
+}
 
 bool replaceNoteFileAtomically(const String& path, const String& temp) {
   return commitStoredFile(SD_MMC, path, temp);
 }
 }
 
-void loadIndex(bool recoverOrphans) {
-  if (recoverOrphans) discoverNoteTrash();
-  noteIndex.clear();
-  bool repaired = false;
-  // Recover the last complete catalog after an interrupted FAT rename.
-  if (!SD_MMC.exists(INDEX_FILE)) {
-    if (SD_MMC.exists(kIndexBackup)) SD_MMC.rename(kIndexBackup, INDEX_FILE);
-    else if (SD_MMC.exists(kIndexTemp)) SD_MMC.rename(kIndexTemp, INDEX_FILE);
-  }
-  File f = SD_MMC.open(INDEX_FILE);
-  if (f) {
-    while (f.available()) {
-      String ln = f.readStringUntil('\n'); ln.trim();
-      if (!ln.length()) continue;
-      int c1=ln.indexOf(','), c2=ln.indexOf(',',c1+1), c3=ln.indexOf(',',c2+1);
-      if (c1<0||c2<0) continue;
-      NoteEntry e = {};
-      e.num = ln.substring(0,c1).toInt();
-      if (e.num <= 0) continue;
-      if (noteIsTrashed(e.num) ||
-          (e.num <= highestTrashedNoteNumber() && !noteHasLiveBundle(e.num))) {
-        repaired = true;
-        continue;
-      }
-      strncpy(e.tag, ln.substring(c1+1,c2).c_str(), sizeof(e.tag)-1);
-      e.tag[sizeof(e.tag)-1]='\0';
-      e.hasText = (ln.substring(c2+1, c3 >= 0 ? c3 : ln.length()).toInt()==1);
-      e.momentCount = c3 >= 0 ? (uint16_t)ln.substring(c3+1).toInt() : 0;
-      noteIndex.push_back(e);
-    }
-    f.close();
-  }
-
-  if (recoverOrphans) recoverNoteTrash();
-
-  // The WAV is the source of truth. Reinsert an orphaned recording if power
-  // failed after audio close but before the small catalog was committed.
-  File directory;
-  if (recoverOrphans) directory = SD_MMC.open(NOTES_DIR);
-  if (directory && directory.isDirectory()) {
-    File entry;
-    while ((entry = directory.openNextFile())) {
-      String name = entry.name();
-      const bool usableAudio = !entry.isDirectory() && entry.size() > 1044;
-      entry.close();
-      const int slash = name.lastIndexOf('/');
-      if (slash >= 0) name = name.substring(slash + 1);
-      if (!usableAudio || name.length() < 4 ||
-          !note_trash::equalsAscii(name.c_str() + name.length() - 4, ".wav")) continue;
-      const int num = note_trash::fileNumber(name.c_str());
-      if (num <= 0 || noteIsTrashed(num)) continue;
-      bool known = false;
-      for (const NoteEntry& item : noteIndex) if (item.num == num) { known = true; break; }
-      if (known) continue;
-      NoteEntry recovered = {};
-      recovered.num = num;
-      strncpy(recovered.tag, "Inbox", sizeof(recovered.tag) - 1);
-      char textPath[64];
-      snprintf(textPath, sizeof(textPath), "%s/note_%03d.txt", NOTES_DIR, num);
-      recovered.hasText = SD_MMC.exists(textPath);
-      recovered.momentCount = static_cast<uint16_t>(noteMomentCount(num));
-      noteIndex.push_back(recovered);
-      repaired = true;
-      Serial.printf("[Storage] recovered note %03d into catalog\n", num);
-    }
-    directory.close();
-  }
-  std::sort(noteIndex.begin(), noteIndex.end(),
-            [](const NoteEntry& a, const NoteEntry& b) { return a.num < b.num; });
-  if (recoverOrphans) {
-    for (NoteEntry& note : noteIndex) {
-      char textPath[64];
-      snprintf(textPath, sizeof(textPath), "%s/note_%03d.txt", NOTES_DIR, note.num);
-      recoverStoredFile(SD_MMC, String(textPath));
-      File text = SD_MMC.open(textPath);
-      const bool hasText = text && text.size() > 0;
-      if (text) text.close();
-      if (note.hasText != hasText) { note.hasText = hasText; repaired = true; }
-    }
-  }
-  if (repaired || !SD_MMC.exists(INDEX_FILE)) saveIndex();
-}
-
 bool saveIndex() {
+  if (!catalogSnapshot.loaded) return false;
   if (SD_MMC.exists(kIndexTemp)) SD_MMC.remove(kIndexTemp);
   File f = SD_MMC.open(kIndexTemp, FILE_WRITE);
   if (!f) return false;
   size_t expected = 0;
-  bool complete = true;
-  // A blank line represents an empty catalog and is ignored by loadIndex.
-  // Materialize it explicitly instead of relying on a zero-write FAT file.
-  if (noteIndex.empty()) {
-    expected = 1;
-    complete = f.print("\n") == 1;
-  }
-  for (const NoteEntry& note : noteIndex) {
-    const String line = String(note.num) + "," + note.tag + "," + (note.hasText ? "1" : "0") + "," + String(note.momentCount) + "\n";
-    expected += line.length();
-    complete &= f.print(line) == line.length();
-  }
+  bool complete = note_catalog::writeRows(noteIndex, [&](const char* data, size_t size) {
+    return f.write(reinterpret_cast<const uint8_t*>(data), size);
+  }, expected);
   f.flush();
   complete &= f.size() == expected;
   f.close();
@@ -146,41 +84,216 @@ bool addToIndex(int num, const char* tag, bool hasText) {
 }
 
 bool updateIndexHasText(int num) {
-  const char* foundTag = "";
-  for (int i=0; i<(int)noteIndex.size(); i++) {
-    if (noteIndex[i].num==num) {
-      noteIndex[i].hasText=true;
-      foundTag = noteIndex[i].tag;
-      break;
-    }
+  auto item = std::lower_bound(noteIndex.begin(), noteIndex.end(), num,
+                               [](const NoteEntry& row, int id) { return row.num < id; });
+  if (item == noteIndex.end() || item->num != num) return false;
+  if (!item->hasText) {
+    item->hasText = true;
+    if (!saveIndex()) { item->hasText = false; return false; }
   }
-  if (!saveIndex()) {
-    for (NoteEntry& note : noteIndex) if (note.num == num) note.hasText = false;
-    return false;
-  }
-  return writeNoteMeta(num, foundTag);
+  return writeNoteMeta(num, item->tag);
+}
+
+namespace {
+constexpr char transcriptJournal[] = "/sdcard" NOTES_DIR "/transcript.pending";
+bool transcriptRepairPending = false;
+
+void transcriptPath(int num, char (&path)[64]) {
+  snprintf(path, sizeof(path), "/sdcard" NOTES_DIR "/note_%03d.txt", num);
+}
+
+bool replayTranscript() {
+  transcriptRepairPending = !note_transcript::replay(transcriptJournal, [](int id) {
+    if (noteIsTrashed(id)) return true;
+    char path[64];
+    transcriptPath(id, path);
+    SyncQueueChange change(id);
+    return change && note_transcript::repairCommitted(path,
+        [&] { return updateIndexHasText(id); },
+        [&] { return noteQueueState(id); },
+        [&] { return writeNoteQueueState(id, "organizing", nullptr, false, true); });
+  });
+  return !transcriptRepairPending;
+}
+}
+
+note_transcript::Stored storedNoteTranscript(int num) {
+  char path[64];
+  transcriptPath(num, path);
+  return note_transcript::inspect(path);
+}
+
+bool reconcileNoteTranscript(int num) {
+  if (!replayTranscript() || !note_transcript::reserve(transcriptJournal, num)) return false;
+  return replayTranscript();
 }
 
 bool saveNoteTranscript(int num, const String& text) {
-  if (noteIsTrashed(num)) return false;
+  if (noteIsTrashed(num) || text.isEmpty() || !replayTranscript()) return false;
+  SyncQueueChange change(num);
+  if (!change || !note_transcript::reserve(transcriptJournal, num)) return false;
+  // Either the journal or the dirty queue survives every boundary until the
+  // catalog, route metadata and derived queue agree with the published bytes.
+  transcriptRepairPending = true;
   char path[64];
-  snprintf(path, sizeof(path), "%s/note_%03d.txt", NOTES_DIR, num);
-  const String temp = String(path) + ".tmp";
-  SD_MMC.remove(temp.c_str());
-  File file = SD_MMC.open(temp.c_str(), FILE_WRITE);
-  if (!file) return false;
-  const size_t written = file.print(text);
-  file.flush();
-  const bool complete = written == text.length() && file.size() == text.length();
-  file.close();
-  if (!complete || !commitStoredFile(SD_MMC, String(path), temp)) {
-    SD_MMC.remove(temp.c_str());
-    return false;
+  transcriptPath(num, path);
+  const bool stored = note_transcript::storeOnce(path, {text.c_str(), text.length()});
+  const bool repaired = replayTranscript();
+  return stored && repaired;
+}
+
+namespace {
+constexpr char captureIntentPath[] = NOTES_DIR "/capture.pending";
+enum class CatalogRecovery { Load, Intent, Directory, Transcripts, Publish, Ready };
+CatalogRecovery catalogRecovery = CatalogRecovery::Load;
+bool recoverCatalogSources = true;
+DIR* recoveryDirectory = nullptr;
+int checkedTranscript = 0;
+
+bool repairCatalogRecording(int num, bool interrupted = false) {
+  if (num <= 0 || noteIsTrashed(num)) return true;
+  char wavPath[64];
+  snprintf(wavPath, sizeof(wavPath), "/sdcard" NOTES_DIR "/note_%03d.wav", num);
+  return note_catalog::recoverRecording(noteIndex, num, wavPath, [&](auto pos) {
+    SyncQueueChange queueChange(num);
+    if (!queueChange) return false;
+    NoteEntry recovered{};
+    recovered.num = num;
+    strncpy(recovered.tag, "Inbox", sizeof(recovered.tag) - 1);
+    recovered.hasText = noteHasCommittedTranscript(num);
+    recovered.momentCount = static_cast<uint16_t>(noteMomentCount(num));
+    noteIndex.insert(pos, recovered);
+    catalogChanged = true;
+    return true;
+  }, std::fopen, interrupted ? 2 : 1001);
+}
+
+bool recoverCaptureIntent() {
+  return note_catalog::recoverReservation("/sdcard" NOTES_DIR "/capture.pending", [](int note, const char* utc) {
+    if (noteIsTrashed(note)) return true;
+    char wav[72];
+    snprintf(wav, sizeof(wav), "/sdcard" NOTES_DIR "/note_%03d.wav", note);
+    const auto state = capture_wav::recover(wav);
+    if (state == capture_wav::State::Empty || state == capture_wav::State::Missing) return true;
+    if (state != capture_wav::State::Ready) return false;
+    const String meta = String("/sdcard") + noteMetaPath(note);
+    if (!capture_wav::restoreTimestamp(meta.c_str(), utc, [&](const char* captured) {
+          return writeNoteMeta(note, "Inbox", captured);
+        })) return false;
+    if (!repairCatalogRecording(note, true) || (catalogChanged && !saveIndex())) return false;
+    catalogChanged = false;
+    return true;
+  });
+}
+
+bool loadCatalogBase() {
+  bool filtered = false;
+  uint32_t examined = 0;
+  if (!catalogSnapshot.load(noteIndex, "/sdcard" INDEX_FILE, "/sdcard" INDEX_FILE ".bak",
+                            "/sdcard" NOTES_DIR "/index.bak", "/sdcard" NOTES_DIR "/catalog.fast.v2",
+                            [&](int num) {
+                              noteAuditWork(NoteStorageAuditPhase::LoadCatalog, ++examined);
+                              const auto visible = catalogVisibility(num);
+                              if (visible == note_catalog::Source::Absent) filtered = true;
+                              return visible;
+                            })) return false;
+  catalogChanged |= filtered || catalogSnapshot.needsDirectory;
+  if (recoverCatalogSources) recoverNoteTrash();
+  return true;
+}
+
+bool startCatalogRecovery() {
+  if (catalogRecovery == CatalogRecovery::Load) {
+    if (!loadCatalogBase()) return false;
+    catalogRecovery = CatalogRecovery::Intent;
   }
-  return updateIndexHasText(num);
+  if (recoverCatalogSources && (!recoverCaptureIntent() || !recoverSpooledRecordings() || !replayTranscript())) return false;
+  File marker = SD_MMC.open(catalogMigratedPath, FILE_READ);
+  if (!catalogChanged && !catalogSnapshot.needsDirectory && marker && marker.size() == 1 && marker.read() == 1) {
+    catalogRecovery = CatalogRecovery::Ready;
+  } else {
+    if (!requestSyncQueueRebuild()) return false;
+    catalogRecovery = CatalogRecovery::Directory;
+  }
+  return true;
+}
+}  // namespace
+
+void initializeNoteCatalog(bool recoverSources) {
+  recoverCatalogSources = recoverSources;
+  discoverNoteTrash();
+  startCatalogRecovery();
+}
+
+bool noteCatalogBaseLoaded() { return catalogSnapshot.loaded; }
+
+bool noteCatalogReady() { return catalogRecovery == CatalogRecovery::Ready && !transcriptRepairPending; }
+
+bool maintainNoteCatalog() {
+  if (transcriptRepairPending && !replayTranscript()) return false;
+  if (catalogRecovery == CatalogRecovery::Load || catalogRecovery == CatalogRecovery::Intent) {
+    if (!startCatalogRecovery()) return false;
+  }
+  if (catalogRecovery == CatalogRecovery::Directory) {
+    if (!recoveryDirectory) recoveryDirectory = opendir("/sdcard" NOTES_DIR);
+    if (!recoveryDirectory) return false;
+    // Enumerate directory entries without reopening each named WAV. Only
+    // candidates missing from the sorted catalog need to be opened.
+    for (int examined = 0; examined < 24; ++examined) {
+      if (pendingPriorityRecording()) return false;
+      errno = 0;
+      const auto* entry = readdir(recoveryDirectory);
+      if (!entry) {
+        const bool complete = errno == 0;
+        closedir(recoveryDirectory);
+        recoveryDirectory = nullptr;
+        if (complete) catalogRecovery = CatalogRecovery::Transcripts;
+        break;
+      }
+      const std::string_view name = entry->d_name;
+      if (name.size() >= 4 && note_trash::equalsAscii(name.substr(name.size() - 4), ".wav") &&
+          !repairCatalogRecording(note_trash::fileNumber(name))) {
+        closedir(recoveryDirectory);
+        recoveryDirectory = nullptr;
+        return false;
+      }
+    }
+  } else if (catalogRecovery == CatalogRecovery::Transcripts) {
+    auto pos = std::upper_bound(noteIndex.begin(), noteIndex.end(), checkedTranscript,
+                                [](int num, const NoteEntry& item) { return num < item.num; });
+    for (int examined = 0; pos != noteIndex.end() && examined < 4; ++pos, ++examined) {
+      if (pendingPriorityRecording()) return false;
+      const auto source = storedNoteTranscript(pos->num);
+      if (source == note_transcript::Stored::Error) return false;
+      const bool hasText = note_transcript::committed(source);
+      if (hasText && recoverCatalogSources && (!pos->hasText || source == note_transcript::Stored::Backup)) {
+        if (!reconcileNoteTranscript(pos->num)) return false;
+      } else if (pos->hasText != hasText) {
+        pos->hasText = hasText;
+        catalogChanged = true;
+      }
+      checkedTranscript = pos->num;
+    }
+    if (pos == noteIndex.end()) catalogRecovery = CatalogRecovery::Publish;
+  }
+  if (catalogRecovery == CatalogRecovery::Publish) {
+    if (catalogChanged && (!requestSyncQueueRebuild() || !saveIndex())) return false;
+    File marker = SD_MMC.open(catalogMigratedPath, FILE_WRITE);
+    if (!marker || marker.write(static_cast<uint8_t>(1)) != 1) return false;
+    marker.flush();
+    catalogChanged = false;
+    catalogRecovery = CatalogRecovery::Ready;
+  }
+  return noteCatalogReady();
+}
+
+bool beginNoteRecording(int num, const String& capturedUtc) {
+  return catalogSnapshot.loaded && recoverCaptureIntent() &&
+      note_catalog::reserveRecording("/sdcard" NOTES_DIR "/capture.pending", num, capturedUtc.c_str());
 }
 
 int nextNoteNumber() {
+  if (!catalogSnapshot.loaded) return -1;
   int maxNum = highestTrashedNoteNumber();
   for (const NoteEntry& note : noteIndex) maxNum = std::max(maxNum, note.num);
   do {
@@ -191,9 +304,14 @@ int nextNoteNumber() {
 }
 
 bool saveTag(int num, const char* tag, const String& capturedUtc) {
+  SyncQueueChange change(num);
+  if (!change) return false;
   if (!writeNoteMeta(num, tag, capturedUtc)) return false;
   if (!addToIndex(num, tag, false)) return false;
-  return writeNoteQueueState(num, "queued");
+  if (!writeNoteQueueState(num, "queued")) return false;
+  if (SD_MMC.exists(captureIntentPath) && !SD_MMC.remove(captureIntentPath))
+    Serial.println("[Storage] capture recovery marker will be reconciled at next startup");
+  return true;
 }
 
 // ─── Tags ─────────────────────────────────────────────────────────────────
@@ -223,7 +341,9 @@ String readNoteMetaValue(int num, const char* key) {
 bool writeNoteMeta(int num, const char* tag, const String& capturedUtc) {
   String path = noteMetaPath(num);
   String temp = path + ".tmp";
-  const String existingCreated = readNoteMetaValue(num, "created_utc");
+  std::string priorTime;
+  if (!note_transcript::readField((String("/sdcard") + path).c_str(), "created_utc=", priorTime)) return false;
+  const String existingCreated(priorTime.c_str());
   // Only the recording caller supplies a capture time. A later index repair or
   // transcription cannot turn an unknown capture time into its processing time.
   const String& created = existingCreated.length() ? existingCreated : capturedUtc;
@@ -265,37 +385,32 @@ static String readQueueValue(int num, const char* key) {
 }
 
 bool noteHasCommittedTranscript(int num) {
-  char base[48];
-  snprintf(base, sizeof(base), "%s/note_%03d", NOTES_DIR, num);
-  return note_transcript::hasCommittedTranscript([&](const char* extension) {
-    const String path = String(base) + extension;
-    File text = SD_MMC.open(path.c_str(), FILE_READ);
-    return text && !text.isDirectory() && text.size() > 0;
-  });
+  return note_transcript::committed(storedNoteTranscript(num));
 }
 
 String noteQueueState(int num) {
-  const String state = readQueueValue(num, "state");
+  std::string stored;
+  if (!note_transcript::readField((String("/sdcard") + queuePath(num)).c_str(), "state=", stored))
+    return "storage-error";
+  const String state(stored.c_str());
   if (state == "usb-local") {
     // A local-route marker intentionally reaches the card before the text.
     // Without committed text the recording must remain eligible after a failure.
-    return note_transcript::localRouteState(noteHasCommittedTranscript(num));
+    const auto source = storedNoteTranscript(num);
+    if (source == note_transcript::Stored::Error) return "storage-error";
+    return note_transcript::localRouteState(note_transcript::committed(source));
   }
   return state.length() ? state : "queued";
 }
 
 bool notePendingTranscription(const NoteEntry& note) {
-  if (note.hasText) return false;
+  if (!note_transcript::canSendAudio(storedNoteTranscript(note.num), note.hasText)) return false;
   const String state = noteQueueState(note.num);
   return note_transcript::pendingRecording(note.hasText, state.c_str());
 }
 
 int pendingTranscriptionCount() {
-  int count = 0;
-  for (const NoteEntry& note : noteIndex) {
-    if (notePendingTranscription(note)) count++;
-  }
-  return count;
+  return syncQueueCounts().audio;
 }
 
 String noteQueueError(int num) { return readQueueValue(num, "error"); }
@@ -328,7 +443,7 @@ void resumeBlockedCloudNotes() {
 
 bool noteQueueRetryDue(int num) {
   const String state = noteQueueState(num);
-  if (state == "blocked" || state == "usb-local") return false;
+  if (state == "blocked" || state == "usb-local" || state == "storage-error") return false;
   if (state != "retry" && noteQueueFailureCount(num) <= 0) return true;
   const int failures = max(1, noteQueueFailureCount(num));
   String failedUtc = readQueueValue(num, "last_failure_utc");
@@ -343,6 +458,8 @@ bool noteQueueRetryDue(int num) {
 }
 
 bool writeNoteQueueState(int num, const char* state, const char* error, bool incrementRetry, bool progressMade) {
+  SyncQueueChange change(num);
+  if (!change) return false;
   const String path = queuePath(num);
   const String temp = path + ".tmp";
   int retries = noteQueueRetries(num);

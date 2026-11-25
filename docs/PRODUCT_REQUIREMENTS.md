@@ -862,10 +862,31 @@ clear to the user, preserve original recognition, and keep manual edits dominant
   of a five-hour or weekly window in Note settings. The five-hour setting
   falls back to the weekly window when necessary. Below the percentage, show
   five hour blocks or seven day blocks for the remaining time until reset.
+  In the weekly view, elapsed days are low marks on the left and the time
+  remaining is shown by tall blocks on the right.
   Right-align the pending recordings indicator before connection and battery
   status. Hide the percentage and blocks only when the full Note name and
   recording count need the header space. Carry both quota windows through
   the paired Home snapshot.
+- Keep an SD-based task and event index and a separate durable recording
+  queue. Bound task and calendar paging buffers. Preserve existing recordings,
+  transcripts, tasks and completion state during index migration or repair.
+  Home and recording remain available during routine index recovery.
+- Keep a manual sync request in the current awake session while its queue
+  is being recovered. Holding REC during a sync takes priority over the
+  active transport. Resume the interrupted item first and then include the
+  newly saved recording. A restart clears the manual request and retains
+  pending recordings.
+- Show current and peak internal RAM and PSRAM under the Companion battery
+  indicator and in Note settings. Include battery percentage in Note
+  settings. Retain peaks over deep sleep and reset them on a reboot.
+- Provide Restart and Restart and check storage in Note settings. Both
+  require confirmation on the Note screen. A full check validates index,
+  queue, metadata and WAV headers and sizes, reports source defects, and
+  can repair derived indexes. Show progress on the display and use previous
+  measured runs for an estimate when available. A power cut ends maintenance
+  mode and leaves an incomplete result. Recording resumes after a normal
+  startup or the completion of a confirmed full check.
 - Set **Weather location** in the shared web settings opened from Connections.
   Bridge uses the saved town, with an optional two-letter country code.
   Clearing it disables forecast updates. The automatic source is open.

@@ -636,8 +636,29 @@ class Bridge:
                 raise ValueError("Potvrdenie termínu sa už spracúva.")
         return {"ok": True}
 
-    def transcribe(self, body, content_type):
-        # The firmware uploads exactly two multipart fields and a PCM WAV.
+    def replay_transcription(self, device, note, audio, recognize):
+        """Return one durable result across USB, BLE and HTTP workers/processes."""
+        if not device or type(note) is not int or not 0 < note <= 2147483647:
+            raise ValueError("Invalid paired recording identity.")
+        key = (device.casefold(), note, hashlib.sha256(audio).hexdigest())
+        # Independent of delivery/settings databases. Hold the write lock across
+        # inference so a reconnect cannot start a second ASR while HTTP is still running.
+        with contextlib.closing(sqlite3.connect(self.state / "transcriptions.sqlite", timeout=300)) as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("""CREATE TABLE IF NOT EXISTS results (
+                device TEXT, note INTEGER, wav_hash TEXT, result TEXT NOT NULL,
+                PRIMARY KEY(device, note, wav_hash))""")
+            row = db.execute("SELECT result FROM results WHERE device=? AND note=? AND wav_hash=?", key).fetchone()
+            if row:
+                return json.loads(row[0])
+            result = recognize(audio)
+            if not isinstance(result, dict) or not isinstance(result.get("text"), str):
+                raise ValueError("Invalid transcription result.")
+            db.execute("INSERT INTO results VALUES(?,?,?,?)", (*key, json.dumps(result, ensure_ascii=False)))
+            return result
+
+    def transcribe(self, body, content_type, *, device=None):
+        # An authenticated recording has an additional note-number field.
         boundary = re.fullmatch(r"multipart/form-data; boundary=([\w-]{1,70})", content_type)
         if not boundary:
             raise ValueError("multipart")
@@ -651,6 +672,18 @@ class Bridge:
         with wave.open(io.BytesIO(audio)) as wav:
             if wav.getnchannels() != 1 or wav.getsampwidth() != 2:
                 raise ValueError("PCM mono required")
+        identity_field = b'Content-Disposition: form-data; name="pala_note"\r\n\r\n'
+        prefix = body[:offset]
+        if identity_field in prefix:
+            value = prefix.split(identity_field, 1)[1].split(b"\r\n", 1)[0]
+            if not re.fullmatch(rb"[1-9][0-9]{0,9}", value):
+                raise ValueError("Invalid recording number.")
+            # Legacy Wi-Fi pairing has only the shared profile credential.
+            # Its cache remains disjoint from identities of individually paired Notes.
+            return self.replay_transcription(device or "@legacy-wifi", int(value), audio, self._recognize_upload)
+        return self._recognize_upload(audio)
+
+    def _recognize_upload(self, audio):
         if os.name == "nt":
             return self.transcribe_local(audio)
         with tempfile.TemporaryDirectory() as work:
@@ -720,8 +753,24 @@ class Bridge:
 
     def dispatch(self, route, body, content_type, *, device=None):
         if route == "/v1/audio/transcriptions":
+            if device:
+                return self.transcribe(body, content_type, device=device)
             return self.transcribe(body, content_type)
         doc = json.loads(body)
+        if route == "/pala/transcript-receipt":
+            from pala_google import UsbGoogleDelivery
+            if not device or type(doc.get("note")) is not int:
+                raise ValueError("Invalid transcript receipt.")
+            router = UsbGoogleDelivery(self.state, self.config)
+            for note, captured, text, route_enabled in router.queue.unconfirmed(device):
+                if note != doc["note"]:
+                    continue
+                if (doc.get("captured") != captured or
+                        hashlib.sha256(text.encode("utf-8")).hexdigest() != doc.get("sha256")):
+                    raise ValueError("The committed text does not match the Bridge receipt.")
+                router.stager(device, route=bool(route_enabled))(note, captured, text)()
+                break
+            return {"ok": True}
         with self.lock:
             config = processing_config(self.state, self.config) if hasattr(self, "state") else {}
             if config.get("processing_mode") == "transcribe":
@@ -865,7 +914,15 @@ class Handler(BaseHTTPRequestHandler):
                 # The Note waits on a busy API and tries another link if the API is unavailable.
                 status = bridge.local_transcription_status()
                 mode = processing_config(bridge.state, bridge.config)["processing_mode"]
-                self.send_json(status, {"ready": status == HTTPStatus.OK, "processing": mode})
+                reply = {"ready": status == HTTPStatus.OK, "processing": mode}
+                if self.headers.get("X-Pala-Receipts") == "1":
+                    device = paired_device(bridge, self.headers.get("Authorization", ""))
+                    if device and (bridge.state / "google-delivery.sqlite").is_file():
+                        from pala_google import DeliveryQueue
+                        pending = DeliveryQueue(bridge.state).next_unconfirmed_note(device)
+                        if pending:
+                            reply["receipt"] = pending
+                self.send_json(status, reply)
             return
 
         path = bridge.state / "phone-token"

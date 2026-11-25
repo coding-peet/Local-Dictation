@@ -1,4 +1,5 @@
 #include "usb_sync.h"
+#include "record.h"
 #include "provider.h"
 #include "usb_data_frame.h"
 
@@ -39,6 +40,7 @@ void reply(const String& message) {
 #include "home_holidays.h"
 #include "holiday_calendar.h"
 #include "home_bridge_status.h"
+#include "sync_queue.h"
 #include "rtc.h"
 #include "settings.h"
 #include "storage_commit.h"
@@ -73,18 +75,17 @@ bool readingWeather = false;
 bool bluetoothDrained = false;
 
 struct BluetoothBacklog {
-  std::vector<int> notes;
+  int currentNote = 0;
+  int preferred = 0;
+  size_t total = 0;
   size_t completed = 0;
+  bool audio = false;
   bool process = false;
   bool planned = false;
   bool changed = false;
 
-  int current() const { return completed < notes.size() ? notes[completed] : 0; }
-  void saved(int note) {
-    if (note != current()) return;
-    ++completed;
-    changed = true;
-  }
+  int current() const { return currentNote; }
+  void saved(int note);
 } bluetoothBacklog;
 
 enum class OrganizationState { Idle, Scheduled, Running, Done, Deferred };
@@ -238,33 +239,70 @@ String captureTimestamp(int note) {
 }
 
 bool canTranscribe(const NoteEntry& note) {
-  if (!notePendingTranscription(note) || noteHasCommittedTranscript(note.num)) return false;
+  if (!note_transcript::canSendAudio(storedNoteTranscript(note.num), note.hasText)) return false;
   File wav = SD_MMC.open(notePath(note.num, "wav").c_str(), FILE_READ);
   return wav && !wav.isDirectory() && wav.size() > 44 && wav.size() <= kMaximumWav;
 }
 
 bool canOrganize(const NoteEntry& note) {
-  if (!note.hasText || !noteQueueRetryDue(note.num) || brainMemoryIsCurrent(note.num)) return false;
+  if (!note.hasText || !noteQueueRetryDue(note.num)) return false;
   File text = openCommittedReadOnly(notePath(note.num, "txt"));
   return text && !text.isDirectory() && text.size() && text.size() <= kMaximumText;
 }
 
+const NoteEntry* queuedNote(int number) {
+  const auto at = std::lower_bound(noteIndex.begin(), noteIndex.end(), number,
+                                   [](const NoteEntry& note, int id) { return note.num < id; });
+  return at != noteIndex.end() && at->num == number ? &*at : nullptr;
+}
+
+bool bluetoothWorkEligible(const SyncQueueEntry& entry) {
+  if (entry.kind != SyncQueueKind::Audio && entry.kind != SyncQueueKind::Organization) return false;
+  const auto* note = queuedNote(entry.note);
+  if (!note) return false;
+  return entry.kind == SyncQueueKind::Audio ? bluetoothBacklog.audio && canTranscribe(*note)
+                                            : bluetoothBacklog.process && canOrganize(*note);
+}
+
+void BluetoothBacklog::saved(int note) {
+  if (note != current()) return;
+  ++completed;
+  changed = true;
+  currentNote = 0;
+  const bool wasPreferred = note == preferred;
+  if (completed >= total) return;
+  visitSyncQueue(true, [&](const SyncQueueEntry& entry) {
+    if (entry.note == preferred || (!wasPreferred && entry.note >= note) ||
+        !bluetoothWorkEligible(entry)) return true;
+    currentNote = entry.note;
+    return false;
+  });
+}
+
 void planBluetoothBacklog(const String& mode) {
+  RecordingWindow microphone;
   if (bluetoothBacklog.planned || (mode != "AUDIO" && mode != "TEXT" && mode != "FULL")) {
     reply("ERROR COMMAND");
     return;
   }
+  if (!noteCatalogReady() || !syncQueueReady()) { reply("ERROR BUSY"); return; }
   bluetoothBacklog.planned = true;
+  bluetoothBacklog.audio = mode != "TEXT";
   bluetoothBacklog.process = mode != "AUDIO";
   bluetoothBacklog.changed = true;
   if (recordingSyncAllowed()) {
-    for (auto note = noteIndex.rbegin(); note != noteIndex.rend(); ++note) {
-      if ((mode != "TEXT" && canTranscribe(*note)) || (bluetoothBacklog.process && canOrganize(*note))) {
-        bluetoothBacklog.notes.push_back(note->num);
-      }
-    }
+    const int preferred = preferredRecordingSyncNote();
+    const bool read = visitSyncQueue(true, [&](const SyncQueueEntry& entry) {
+      if (recordingRequestedDuringSync()) return false;
+      if (!bluetoothWorkEligible(entry)) return true;
+      ++bluetoothBacklog.total;
+      if (!bluetoothBacklog.currentNote || entry.note == preferred) bluetoothBacklog.currentNote = entry.note;
+      if (entry.note == preferred) bluetoothBacklog.preferred = entry.note;
+      return true;
+    });
+    if (!read || recordingRequestedDuringSync()) { bluetoothBacklog = {}; reply("ERROR BUSY"); return; }
   }
-  reply(String("BATCH ") + bluetoothBacklog.notes.size());
+  reply(String("BATCH ") + bluetoothBacklog.total);
 }
 
 void nextBluetoothWork() {
@@ -273,16 +311,20 @@ void nextBluetoothWork() {
       bluetoothOrganization.state == OrganizationState::Scheduled) {
     reply("ERROR BUSY");
   } else if (!note) {
+    finishDrainedRecordingSync();
     bluetoothDrained = true;
     reply("EMPTY");
   } else {
-    reply(String("WORK ") + note + (noteHasCommittedTranscript(note) ? " TEXT" : " AUDIO"));
+    const auto source = storedNoteTranscript(note);
+    if (source == note_transcript::Stored::Error) { reply("ERROR BUSY"); return; }
+    reply(String("WORK ") + note + (note_transcript::committed(source) ? " TEXT" : " AUDIO"));
   }
 }
 
-bool selectNote(const NoteEntry& note) {
+// True means the selection command has received its response (NOTE or ERROR).
+bool offerRecording(const NoteEntry& note) {
   // Detect text committed before an interrupted index update.
-  if (note.hasText || noteHasCommittedTranscript(note.num)) return false;
+  if (!note_transcript::canSendAudio(storedNoteTranscript(note.num), note.hasText)) return false;
   const String path = notePath(note.num, "wav");
   download = SD_MMC.open(path.c_str(), FILE_READ);
   if (!download) return false;
@@ -290,6 +332,12 @@ bool selectNote(const NoteEntry& note) {
     download.close();
     return false;
   }
+  if (recordingBridge(note.num, sessionPeer) != sessionPeer) {
+    download.close();
+    reply("ERROR OWNER");
+    return true;
+  }
+  rememberRecordingSyncNote(note.num);
   selectedNote = note.num;
   downloadBytes = download.size();
   reply(String("NOTE ") + selectedNote + " " + downloadBytes);
@@ -299,10 +347,28 @@ bool selectNote(const NoteEntry& note) {
 void selectRecording(bool next, const String& value) {
   resetTransfer();
   if (next) {
+    if (!noteCatalogReady() || !syncQueueReady()) { reply("ERROR BUSY"); return; }
     if (recordingSyncAllowed()) {
-      for (auto note = noteIndex.rbegin(); note != noteIndex.rend(); ++note) {
-        if (notePendingTranscription(*note) && selectNote(*note)) return;
+      const auto selectQueued = [&](const SyncQueueEntry& entry) {
+        if (entry.kind != SyncQueueKind::Audio) return false;
+        const auto* note = queuedNote(entry.note);
+        return note && offerRecording(*note);
+      };
+      bool selected = false;
+      const int preferred = preferredRecordingSyncNote();
+      if (preferred > 0) {
+        if (!visitSyncQueue(false, [&](const SyncQueueEntry& entry) {
+              if (entry.note < preferred) return true;
+              if (entry.note == preferred) selected = selectQueued(entry);
+              return false;
+            })) { reply("ERROR BUSY"); return; }
       }
+      if (!selected && !visitSyncQueue(true, [&](const SyncQueueEntry& entry) {
+            selected = selectQueued(entry);
+            return !selected;
+          })) { reply("ERROR BUSY"); return; }
+      if (selected) return;
+      finishDrainedRecordingSync();
     }
     if (owner == Link::Bluetooth) {
       bluetoothDrained = true;
@@ -314,7 +380,7 @@ void selectRecording(bool next, const String& value) {
   }
   const NoteEntry* note = findIndexedNote(value);
   if (!note || (owner == Link::Bluetooth && bluetoothBacklog.planned && bluetoothBacklog.current() != note->num) ||
-      !selectNote(*note)) reply("ERROR NOTE");
+      !offerRecording(*note)) reply("ERROR NOTE");
 }
 
 void exportTranscript(const String& value) {
@@ -411,13 +477,16 @@ void commitTranscript(bool organizeCalendar) {
   const bool needsOrganization = organizeCalendar || (plannedBluetooth && bluetoothBacklog.process);
   // Persist the route before the text so a reboot cannot skip organization.
   const char* route = needsOrganization ? "organizing" : "usb-local";
-  if (noteHasCommittedTranscript(note) || !writeNoteQueueState(note, route, nullptr, false, true) ||
+  const auto source = storedNoteTranscript(note);
+  if (source == note_transcript::Stored::Error ||
+      (source == note_transcript::Stored::Missing && !writeNoteQueueState(note, route, nullptr, false, true)) ||
       !saveNoteTranscript(note, transcript)) {
     reply("ERROR SAVE");
     resetTransfer();
     return;
   }
   homeChanged = true;
+  if (!needsOrganization) finishTransportRecording(note);
   if (plannedBluetooth && !bluetoothBacklog.process) bluetoothBacklog.saved(note);
   reply(String("SAVED ") + note);
   resetTransfer();
@@ -431,6 +500,8 @@ void scheduleBluetoothOrganization(const String& value) {
     reply("ERROR NOTE");
     return;
   }
+  if (recordingBridge(note->num, sessionPeer) != sessionPeer) { reply("ERROR OWNER"); return; }
+  rememberRecordingSyncNote(note->num);
   bluetoothOrganization = BluetoothOrganization{};
   bluetoothOrganization.state = OrganizationState::Scheduled;
   reply("OK");
@@ -506,14 +577,15 @@ bool handleBluetoothWork(const String& command, const String& first, const Strin
 }
 
 bool serviceOrganizationConnection() {
-  return pollBluetoothSync() && bluetoothSyncActive();
+  return !recordingRequestedDuringSync() && pollBluetoothSync() && bluetoothSyncActive();
 }
 
 bool bluetoothOrganizationPost(const char* endpoint, const String& payload, String& response,
-                               uint16_t, String* failure, const String&) {
+                               uint16_t, String* failure, const String& requiredOwner) {
   auto& job = bluetoothOrganization;
   if (failure) *failure = "organization: Bluetooth Bridge response interrupted";
-  if (job.state != OrganizationState::Running || !payload.length() || payload.length() > kOrganizationLimit)
+  if (sessionPeer.isEmpty() || requiredOwner != sessionPeer || job.state != OrganizationState::Running ||
+      !payload.length() || payload.length() > kOrganizationLimit)
     return false;
   if (!strcmp(endpoint, "/v1/responses")) job.route = "MEMORY";
   else if (!strcmp(endpoint, "/pala/event")) job.route = "EVENT";
@@ -678,6 +750,7 @@ void handleCommand(const String& command, const String& first, const String& sec
     return;
   }
   if (!authenticated) { reply("ERROR AUTH"); return; }
+  RecordingWindow microphone;
   activityAt = millis();
   if (command == "DELIVERY") {
     if (storeDeliveryCounts(first, second) && deliveryOnly) bluetoothDrained = true;
@@ -740,7 +813,7 @@ bool takeBluetoothSyncDrained() {
 bool takeBluetoothBacklogProgress(int& completed, int& total) {
   if (!bluetoothBacklog.changed) return false;
   completed = static_cast<int>(bluetoothBacklog.completed);
-  total = static_cast<int>(bluetoothBacklog.notes.size());
+  total = static_cast<int>(bluetoothBacklog.total);
   bluetoothBacklog.changed = false;
   return true;
 }
@@ -749,8 +822,9 @@ bool pollBluetoothOrganization() {
   if (bluetoothOrganization.state != OrganizationState::Scheduled) return false;
   const int note = bluetoothBacklog.current();
   bluetoothOrganization.state = OrganizationState::Running;
-  const bool saved = understandNoteOverBluetooth(note, bluetoothOrganizationPost, serviceOrganizationConnection);
+  const bool saved = understandNoteOverBluetooth(note, bluetoothOrganizationPost, serviceOrganizationConnection, sessionPeer);
   if (saved) {
+    finishTransportRecording(note);
     writeNoteQueueState(note, "indexing", nullptr, false, true);
     homeChanged = true;
   }
@@ -764,6 +838,8 @@ bool pollBluetoothOrganization() {
 }
 
 void cancelUsbSync() { if (owner == Link::Usb) resetSession(); }
+int activeUsbOrBluetoothNote() { return owner == Link::Bluetooth && bluetoothBacklog.planned
+    ? bluetoothBacklog.current() : selectedNote; }
 void cancelBluetoothSync() { if (owner == Link::Bluetooth) resetSession(); }
 
 bool takeSyncHomeChanged() {
@@ -821,6 +897,7 @@ bool takeBluetoothSyncDrained() { return false; }
 bool takeBluetoothBacklogProgress(int&, int&) { return false; }
 bool pollBluetoothOrganization() { return false; }
 void cancelUsbSync() {}
+int activeUsbOrBluetoothNote() { return -1; }
 bool takeSyncHomeChanged() { return false; }
 bool bluetoothSyncActive() { return false; }
 void cancelBluetoothSync() {}

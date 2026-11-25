@@ -100,6 +100,29 @@ constexpr bool selectsCodexWindowAndShowsTimeUntilReset() {
 }
 static_assert(selectsCodexWindowAndShowsTimeUntilReset());
 
+constexpr bool showsTimeGauge(HomeCodexDisplay display, std::string_view expected) {
+  if (display.segments != static_cast<int>(expected.size())) return false;
+  for (int i = 0; i < display.segments; ++i) {
+    if (display.segmentFilled(i) != (expected[i] == 'H')) return false;
+  }
+  return true;
+}
+
+constexpr HomeDeliveryCounts allowanceGaugeWindows() {
+  HomeDeliveryCounts counts;
+  counts.fiveHours = {32, 1795003600};
+  counts.weekly = {29, 1795604800};
+  return counts;
+}
+
+constexpr auto kAllowanceGaugeWindows = allowanceGaugeWindows();
+static_assert(showsTimeGauge(kAllowanceGaugeWindows.codexAt(1795000000, true), "HHHHHHH"));
+static_assert(showsTimeGauge(kAllowanceGaugeWindows.codexAt(1795086399, true), "HHHHHHH"));
+static_assert(showsTimeGauge(kAllowanceGaugeWindows.codexAt(1795086400, true), "_HHHHHH"));
+static_assert(showsTimeGauge(kAllowanceGaugeWindows.codexAt(1795518400, true), "______H"));
+static_assert(showsTimeGauge(kAllowanceGaugeWindows.codexAt(1795604799, true), "______H"));
+static_assert(showsTimeGauge(kAllowanceGaugeWindows.codexAt(1795000000, false), "H____"));
+
 constexpr bool boundsUnsuccessfulRefreshes() {
   HomeDeliveryRefresh refresh;
   refresh.attempted(123);

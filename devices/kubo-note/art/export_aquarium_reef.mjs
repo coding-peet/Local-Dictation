@@ -44,8 +44,15 @@ preview.height = SIZE * 2;
 const previewContext = preview.getContext('2d');
 const atlas = [];
 const ranges = {};
+const paintFish = drawFish;
+let scales = [];
+drawFish = pose => {
+  scales.push(pose.scale);
+  paintFish(pose);
+};
 
 for (const [name, count, render] of scenes) {
+  scales = [];
   ranges[name] = [atlas.length, count];
   for (let i = 0; i < count; i++) {
     ctx.save();
@@ -65,6 +72,19 @@ for (const [name, count, render] of scenes) {
     const position = picks.indexOf(name + ':' + i);
     if (position >= 0) previewContext.putImageData(image, (position % 5) * SIZE, Math.floor(position / 5) * SIZE);
   }
+  if (scales.length !== count) throw new Error(name + ': expected one fish per frame');
+  for (let i = 0; i < count; ++i) {
+    const scale = scales[i];
+    const t = count > 1 ? i / (count - 1) : 0;
+    const orbit = (name === 'Current' || name === 'ReefCurrent') && t > .57 && i < count - 1;
+    if (!Number.isFinite(scale) || (orbit ? (scale < .78 || scale > .93) : scale !== CRUISE.scale))
+      throw new Error(name + ' frame ' + i + ': unexpected body scale ' + scale);
+    if (i && Math.abs(scale - scales[i-1]) > .045)
+      throw new Error(name + ' frame ' + i + ': abrupt change of scale');
+  }
+  if ((name === 'Current' || name === 'ReefCurrent') &&
+      !(Math.min(...scales) < CRUISE.scale && Math.max(...scales) > CRUISE.scale))
+    throw new Error(name + ': expected both the far and near parts of the orbit');
 }
 document.getElementById('result').textContent = JSON.stringify({
   ranges, atlas, preview: preview.toDataURL('image/png').split(',')[1]

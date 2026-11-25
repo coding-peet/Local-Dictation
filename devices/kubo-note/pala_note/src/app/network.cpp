@@ -6,10 +6,14 @@
 #include "provider.h"
 #include "bridge_address.h"
 #include "bridge_client.h"
+#include "recording_owner.h"
+#include <mbedtls/md.h>
 #include "home_delivery.h"
 #include "note_config.h"
 #include "note_access.h"
 #include "notes.h"
+#include "catalog_storage.h"
+#include "sync_queue.h"
 #include "rtc.h"
 #include "ui.h"
 #include "WiFi.h"
@@ -32,7 +36,10 @@
 #include "settings.h"
 #include "brain.h"
 #include "battery.h"
+#include "memory_telemetry.h"
 #include "tasks.h"
+#include "agenda_index.h"
+#include "calendar_week.h"
 #include "task_visibility.h"
 #include "viewer_i18n.h"
 #include "memory_response.h"
@@ -162,6 +169,46 @@ static String shiftedLocalDate(const String& utcIso, int days) {
   return label.length() >= 10 && label != "time not set" ? label.substring(0, 10) : "";
 }
 
+static bool postBackgroundJson(ProviderClient& client, const char* endpoint,
+                               const String& apiKey, const String& payload, String& response,
+                               uint16_t timeoutMs, String* failure) {
+  if (recordingRequestedDuringSync() || !connectProvider(client, 6000)) return false;
+  const String headers = String("POST ") + endpoint + " HTTP/1.1\r\n" +
+      "Host: " + providerAuthority(client) + "\r\nAuthorization: Bearer " + apiKey +
+      "\r\nContent-Type: application/json\r\nAccept-Encoding: identity\r\nConnection: close\r\n" +
+      "Content-Length: " + String(payload.length()) + "\r\n\r\n";
+  const auto send = [&](const String& data) {
+    for (size_t at = 0; at < data.length();) {
+      if (recordingRequestedDuringSync()) return false;
+      const size_t size = std::min(static_cast<size_t>(2048), static_cast<size_t>(data.length() - at));
+      const size_t sent = client.write(reinterpret_cast<const uint8_t*>(data.c_str()) + at, size);
+      if (!sent) return false;
+      at += sent;
+    }
+    return true;
+  };
+  if (!send(headers) || !send(payload)) return false;
+  PalaHttpResponse framed(256UL * 1024UL);
+  const uint32_t started = millis();
+  const uint32_t limit = timeoutMs ? timeoutMs : 20000UL;
+  while (!framed.done() && !framed.failed() && millis() - started < limit) {
+    if (recordingRequestedDuringSync()) return false;
+    for (int budget = 1024; budget > 0 && client.available() && !framed.done() && !framed.failed(); --budget) {
+      const int byte = client.read();
+      if (byte < 0) break;
+      framed.feed(static_cast<char>(byte));
+    }
+    if (!framed.done() && !client.available() && !client.connected()) framed.eof();
+    delay(1);
+  }
+  if (!framed.done() || framed.failed()) return false;
+  permanentCloudFailure = permanentHttpStatus(framed.status);
+  if (failure) *failure = String("organization: HTTP ") + framed.status;
+  if (framed.status < 200 || framed.status >= 300) return false;
+  response = framed.body.c_str();
+  return response.length() > 0;
+}
+
 static bool openAiJsonPost(const char* endpoint, const String& payload, String& response,
                            uint16_t timeoutMs = 0, String* failure = nullptr,
                            const String& bridgeId = "") {
@@ -178,8 +225,12 @@ static bool openAiJsonPost(const char* endpoint, const String& payload, String& 
   const String apiKey = providerCredential(client);
   if (apiKey.length() < 10) return false;
   const String url = "https://" + providerAuthority(client) + endpoint;
-  const int maxAttempts = palaBackgroundNetworkMode() ? 1 : 2;
+  const int maxAttempts = 2;
   secureClient(client);
+  if (palaBackgroundNetworkMode()) {
+    client.setTimeout(timeoutMs ? timeoutMs : 20000UL);
+    return postBackgroundJson(client, endpoint, apiKey, payload, response, timeoutMs, failure);
+  }
   for (int attempt = 1; attempt <= maxAttempts; attempt++) {
     HTTPClient http;
     if (!http.begin(client, url)) return false;
@@ -293,10 +344,63 @@ static String parseWhisperText(const String& resp) {
   return text;
 }
 
-static bool transcribeTextOnce(const String& wavPath, String& text) {
+#if PALA_BRIDGE_DISCOVERY
+String recordingBridge(int note, const String& candidate) {
+  char path[80];
+  snprintf(path, sizeof(path), "/sdcard" NOTES_DIR "/note_%03d.bridge-owner", note);
+  std::string owner;
+  return recording_owner::resolve(path, candidate.c_str(), owner) ? String(owner.c_str()) : String();
+}
+
+void confirmWifiTranscriptReceipt(int note, const String& peer) {
+  if (peer.isEmpty() || recordingBridge(note, "") != peer || recordingRequestedDuringSync()) return;
+  const auto source = storedNoteTranscript(note);
+  if (!note_transcript::committed(source)) return;
+  char path[80];
+  snprintf(path, sizeof(path), NOTES_DIR "/note_%03d.txt%s", note,
+           source == note_transcript::Stored::Backup ? ".bak" : "");
+  File file = SD_MMC.open(path, FILE_READ);
+  if (!file || !file.size() || file.size() > 32000) return;
+  mbedtls_md_context_t hash;
+  mbedtls_md_init(&hash);
+  bool ok = mbedtls_md_setup(&hash, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 0) == 0 &&
+            mbedtls_md_starts(&hash) == 0;
+  uint8_t block[512], digest[32];
+  size_t remaining = file.size();
+  while (ok && remaining && !recordingRequestedDuringSync()) {
+    const size_t count = std::min(remaining, sizeof(block));
+    ok = file.read(block, count) == count && mbedtls_md_update(&hash, block, count) == 0;
+    remaining -= count;
+  }
+  ok = ok && !remaining && mbedtls_md_finish(&hash, digest) == 0;
+  mbedtls_md_free(&hash);
+  file.close();
+  if (!ok) return;
+  char checksum[65];
+  for (size_t i = 0; i < sizeof(digest); ++i) snprintf(checksum + 2 * i, 3, "%02x", digest[i]);
+  JsonDocument doc;
+  doc["note"] = note;
+  const String captured = noteCreatedUtc(note);
+  if (validUtcTimestamp(captured.c_str())) doc["captured"] = captured;
+  doc["sha256"] = checksum;
+  String body, response;
+  serializeJson(doc, body);
+  ProviderClient client(notePeerById(peer));
+  secureClient(client);
+  client.setTimeout(3000);
+  postBackgroundJson(client, "/pala/transcript-receipt", providerCredential(client), body, response, 3000, nullptr);
+}
+#endif
+
+static bool transcribeTextOnce(const String& wavPath, String& text, int noteNum = 0) {
   permanentCloudFailure = false;
   transcriptionHadNoSpeech = false;
+#if PALA_BRIDGE_DISCOVERY
+  const auto selected = selectedWifiBridge();
+  ProviderClient client(noteNum > 0 ? notePeerById(recordingBridge(noteNum, selected.id)) : selected);
+#else
   ProviderClient client;
+#endif
   const String apiKey = providerCredential(client);
   if (apiKey.length() < 10) return false;
   File f = SD_MMC.open(wavPath.c_str());
@@ -311,6 +415,10 @@ static bool transcribeTextOnce(const String& wavPath, String& text) {
   String bnd = "----PalaBoundary";
   String pre = "--" + bnd + "\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ngpt-4o-mini-transcribe\r\n"
                "--" + bnd + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"note.wav\"\r\nContent-Type: audio/wav\r\n\r\n";
+#if PALA_BRIDGE_DISCOVERY
+  if (noteNum > 0) pre = "--" + bnd + "\r\nContent-Disposition: form-data; name=\"pala_note\"\r\n\r\n" +
+                         String(noteNum) + "\r\n" + pre;
+#endif
   String post = "\r\n--" + bnd + "--\r\n";
   size_t totalLen = pre.length() + fileSize + post.length();
 
@@ -334,7 +442,8 @@ static bool transcribeTextOnce(const String& wavPath, String& text) {
   auto writeAll = [&client, connectedAt](const uint8_t* data, size_t length) {
     size_t sent = 0;
     while (sent < length) {
-      if (millis() - connectedAt >= 120000UL || !client.connected()) return false;
+      if ((palaBackgroundNetworkMode() && recordingRequestedDuringSync()) ||
+          millis() - connectedAt >= 120000UL || !client.connected()) return false;
       const size_t written = client.write(data + sent, length - sent);
       if (written == 0) return false;
       sent += written;
@@ -380,6 +489,10 @@ static bool transcribeTextOnce(const String& wavPath, String& text) {
   bool receivedAny = false;
   PalaHttpResponse response;
   while (!response.done() && !response.failed() && millis() - responseStarted < (PALA_MAC_BRIDGE ? 250000UL : 60000UL)) {
+    if (palaBackgroundNetworkMode() && recordingRequestedDuringSync()) {
+      client.stop();
+      return false;
+    }
     int budget = 1024;
     while (budget-- > 0 && client.available() && !response.done() && !response.failed()) {
       const int value = client.read();
@@ -421,12 +534,12 @@ static bool transcribeTextOnce(const String& wavPath, String& text) {
 }
 
 bool transcribe(const String& wavPath, int noteNum) {
-  String text;
-  // Recordings are durable and retry through the queue. Repeating the entire
-  // upload immediately could hold the UI for another 30 seconds while adding
-  // little value on a weak WLAN or service error.
-  if (!transcribeTextOnce(wavPath, text)) return false;
-  return saveNoteTranscript(noteNum, text);
+  return note_transcript::useCommittedOrTranscribe(storedNoteTranscript(noteNum),
+      [&] { return reconcileNoteTranscript(noteNum); },
+      [&] {
+        String text;
+        return transcribeTextOnce(wavPath, text, noteNum) && saveNoteTranscript(noteNum, text);
+      });
 }
 
 bool transcribeQuestion(const String& wavPath, String& question) {
@@ -435,39 +548,9 @@ bool transcribeQuestion(const String& wavPath, String& question) {
   return transcribeTextOnce(wavPath, question);
 }
 
-#if PALA_BRIDGE_DISCOVERY
-// Retrying an organization request can repeat an external write if its reply
-// was lost. Once dispatched, retry through the same Bridge and its journal.
-bool organizationBridge(int note, String& owner) {
-  char buffer[64];
-  snprintf(buffer, sizeof(buffer), "%s/note_%03d.bridge-owner", NOTES_DIR, note);
-  const String path(buffer);
-  const String backup = path + ".bak";
-  if (SD_MMC.exists(path.c_str()) || SD_MMC.exists(backup.c_str())) {
-    if (!recoverStoredFile(SD_MMC, path)) return false;
-    File file = SD_MMC.open(path, FILE_READ);
-    if (!file || file.isDirectory() || file.size() > 48) return false;
-    owner = file.readString();
-    return notePeerIdValid(owner);
-  }
-
-  const auto peer = selectedWifiBridge();
-  if (!notePeerIdValid(peer.id)) return false;
-  const String temporary = path + ".tmp";
-  SD_MMC.remove(temporary);
-  File file = SD_MMC.open(temporary, FILE_WRITE);
-  if (!file) return false;
-  const size_t written = file.print(peer.id);
-  file.close();
-  if (written != peer.id.length() || !commitStoredFile(SD_MMC, path, temporary)) return false;
-  owner = peer.id;
-  return true;
-}
-#endif
-
 static String lastOrganizationError;
 
-static bool understandNoteWithPost(int noteNum, OrganizationPost post, bool (*serviceConnection)()) {
+static bool understandNoteWithPost(int noteNum, OrganizationPost post, bool (*serviceConnection)(), const String& sessionPeer) {
   lastOrganizationError = "organization: transcript unavailable";
   char transcriptPath[64];
   snprintf(transcriptPath, sizeof(transcriptPath), "%s/note_%03d.txt", NOTES_DIR, noteNum);
@@ -607,7 +690,8 @@ static bool understandNoteWithPost(int noteNum, OrganizationPost post, bool (*se
   String response;
   String bridgeId;
 #if PALA_BRIDGE_DISCOVERY
-  if (!serviceConnection && !organizationBridge(noteNum, bridgeId)) {
+  bridgeId = recordingBridge(noteNum, serviceConnection ? sessionPeer : selectedWifiBridge().id);
+  if (bridgeId.isEmpty() || (serviceConnection && bridgeId != sessionPeer)) {
     lastOrganizationError = "organization: no verified Bridge for this recording";
     return false;
   }
@@ -694,11 +778,11 @@ static bool understandNoteWithPost(int noteNum, OrganizationPost post, bool (*se
 }
 
 bool understandNote(int noteNum) {
-  return understandNoteWithPost(noteNum, openAiJsonPost, nullptr);
+  return understandNoteWithPost(noteNum, openAiJsonPost, nullptr, "");
 }
 
-bool understandNoteOverBluetooth(int noteNum, OrganizationPost post, bool (*serviceConnection)()) {
-  return understandNoteWithPost(noteNum, post, serviceConnection);
+bool understandNoteOverBluetooth(int noteNum, OrganizationPost post, bool (*serviceConnection)(), const String& peer) {
+  return understandNoteWithPost(noteNum, post, serviceConnection, peer);
 }
 
 bool answerFromBrain(const String& question, String& answer, std::vector<int>& sourceNotes) {
@@ -1451,29 +1535,51 @@ int processPendingNotes(int preferredNote, int maxNotes) {
 #else
   constexpr bool transcribeOnly = false;
 #endif
-  static size_t backgroundCursor = 0;
   if (maxNotes <= 0) return 0;
   int done = 0;
-  int attempted = 0;
-  std::vector<int> queue;
-  if (preferredNote >= 0) queue.push_back(preferredNote);
-  for (int i = static_cast<int>(noteIndex.size()) - 1; i >= 0; i--) {
-    if (noteIndex[i].num != preferredNote) queue.push_back(noteIndex[i].num);
-  }
-  // A broken or unusually large newest recording must not starve every older
-  // memory forever. Background passes rotate fairly through all candidates.
-  if (preferredNote < 0 && queue.size() > 1) {
-    backgroundCursor %= queue.size();
-    std::rotate(queue.begin(), queue.begin() + backgroundCursor, queue.end());
-    backgroundCursor = (backgroundCursor + 1) % queue.size();
-  }
-  for (int noteNum : queue) {
-    if (attempted >= maxNotes) break;
-    if (!noteQueueRetryDue(noteNum)) continue;
-    auto entry = std::find_if(noteIndex.begin(), noteIndex.end(), [noteNum](const NoteEntry& note) {
-      return note.num == noteNum;
-    });
-    if (entry == noteIndex.end() || (transcribeOnly && entry->hasText)) continue;
+  // Each pass selects one item without keeping the backlog in memory. Writes
+  // take place only after the queue reader closes its snapshot.
+  static int afterLast = 0;
+  const auto eligible = [&](const SyncQueueEntry& entry) {
+    return (!transcribeOnly || entry.kind == SyncQueueKind::Audio) && noteQueueRetryDue(entry.note);
+  };
+  for (int attempted = 0; attempted < maxNotes && !recordingRequestedDuringSync(); ++attempted) {
+    SyncQueueEntry selected;
+    if (attempted == 0 && preferredNote > 0) {
+      visitSyncQueue(false, [&](const SyncQueueEntry& entry) {
+        if (entry.note < preferredNote) return true;
+        if (entry.note == preferredNote && eligible(entry)) selected = entry;
+        return false;
+      });
+    }
+    if (!selected.note) {
+      visitSyncQueue(false, [&](const SyncQueueEntry& entry) {
+        if (entry.note <= afterLast || !eligible(entry)) return true;
+        selected = entry;
+        return false;
+      });
+    }
+    if (!selected.note && afterLast > 0 && attempted == 0) {
+      visitSyncQueue(false, [&](const SyncQueueEntry& entry) {
+        if (!eligible(entry)) return true;
+        selected = entry;
+        return false;
+      });
+    }
+    if (!selected.note) break;
+    const int noteNum = selected.note;
+    afterLast = noteNum;
+    auto entry = std::lower_bound(noteIndex.begin(), noteIndex.end(), noteNum,
+                                  [](const NoteEntry& note, int id) { return note.num < id; });
+    if (entry == noteIndex.end() || entry->num != noteNum) continue;
+    if (!entry->hasText) {
+      const auto source = storedNoteTranscript(noteNum);
+      if (source == note_transcript::Stored::Error) continue;
+      if (note_transcript::committed(source)) {
+        if (reconcileNoteTranscript(noteNum)) ++done;
+        continue;
+      }
+    }
     permanentCloudFailure = false;
     const bool memoryCurrent = entry->hasText && brainMemoryIsCurrent(noteNum);
     if (memoryCurrent) {
@@ -1481,17 +1587,15 @@ int processPendingNotes(int preferredNote, int maxNotes) {
         writeNoteQueueState(noteNum, "ready");
         continue;
       }
-      attempted++;
       if (!writeNoteQueueState(noteNum, "indexing")) continue;
       if (ensureBrainEmbedding(noteNum)) {
         writeNoteQueueState(noteNum, "ready");
         done++;
-      } else {
+      } else if (!recordingRequestedDuringSync()) {
         writeNoteQueueState(noteNum, permanentCloudFailure ? "blocked" : "retry", "indexing failed", true);
       }
       continue;
     }
-    attempted++;
     char wavPath[64];
     snprintf(wavPath, sizeof(wavPath), "%s/note_%03d.wav", NOTES_DIR, noteNum);
     if (!entry->hasText) {
@@ -1515,7 +1619,7 @@ int processPendingNotes(int preferredNote, int maxNotes) {
       if (transcribe(String(wavPath), noteNum)) {
         writeNoteQueueState(noteNum, "organizing", nullptr, false, true);
         done++;
-      } else {
+      } else if (!recordingRequestedDuringSync()) {
         writeNoteQueueState(noteNum, permanentCloudFailure ? "blocked" : "retry",
                             transcriptionHadNoSpeech ? "no speech recognized" : "transcription failed", !transcriptionHadNoSpeech);
       }
@@ -1525,7 +1629,7 @@ int processPendingNotes(int preferredNote, int maxNotes) {
     if (understandNote(noteNum)) {
       writeNoteQueueState(noteNum, "indexing", nullptr, false, true);
       done++;
-    } else {
+    } else if (!recordingRequestedDuringSync()) {
       writeNoteQueueState(noteNum, permanentCloudFailure ? "blocked" : "retry", lastOrganizationError.c_str(), true);
     }
   }
@@ -1575,6 +1679,7 @@ static String portalCss() {
     "h1{font-size:clamp(56px,8vw,92px);letter-spacing:-.048em;line-height:.95;margin:0;font-weight:820;overflow-wrap:anywhere;}"
     ".sub{font-size:12px;text-transform:uppercase;letter-spacing:.14em;color:var(--muted);margin:0 0 14px;font-weight:750;}"
     ".pill{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;padding:8px 12px;font-size:12px;background:var(--surface);white-space:nowrap;}"
+    ".portal-health{display:grid;justify-items:start;gap:5px}.portal-heap{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}"
     ".stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:0 0 24px}.stat{background:var(--surface-high);border:0;border-radius:22px;padding:17px}.stat b{display:block;font-size:26px;font-weight:780;letter-spacing:-.025em}.stat span{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);font-weight:750}"
     ".grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;}"
     ".card{background:var(--surface);border:0;border-radius:26px;padding:22px;box-shadow:0 10px 32px rgba(49,44,36,.045)}.card.lilac{background:var(--selected);color:var(--selected-ink)}.card.sand{background:var(--surface-high)}"
@@ -1741,10 +1846,14 @@ static void appendMemoryBrowserScript(String& html) {
           "</script>";
 }
 
+static void addPortalHeapUsage(String& html, const char* label, const HeapUsage& usage) {
+  if (!usage.totalBytes) return;
+  html += "<div class='portal-heap'>" + String(label) + " " + String(usage.usedPercent()) +
+          "% " + viewerText("aktuell", "current") + " &middot; " + String(usage.peakPercent()) +
+          "% " + viewerText("Spitze seit Neustart", "peak since restart") + "</div>";
+}
+
 static void handlePortalRoot() {
-  loadIndex();
-  const bool de = palaUiLanguage() == "de";
-  BrainStats brainStats = readBrainStats();
   const BatteryReading battery = readBattery();
   const MemoryPage page = memoryPage(static_cast<int>(noteIndex.size()), 20);
 
@@ -1754,62 +1863,105 @@ static void handlePortalRoot() {
   html += "<div class='top'><div><div class='sub'>" +
           String(viewerText("TERMINE, AUFGABEN UND GEDANKEN", "APPOINTMENTS, TASKS AND MEMORIES")) + "</div><h1>" +
           String(viewerText("Heute.", "Today.")) + "</h1></div>"
-          "<div class='pill'>" + String(battery.valid ? String(battery.percent) + "% / " +
+          "<div class='portal-health'><div class='pill'>" + String(battery.valid ? String(battery.percent) + "% / " +
           String(battery.millivolts / 1000.0f, 2) + " V · " : "") +
-          String(brainStats.memories) + " memories · " +
-          String(brainStats.totalBytes > 0 ? (int)(((brainStats.totalBytes - brainStats.usedBytes) * 100ULL) / brainStats.totalBytes) : 0) +
-          "% free</div></div>";
+          String(noteIndex.size()) + " " + viewerText("Gedanken", "memories") + "</div>";
+  const MemoryTelemetry memory = readMemoryTelemetry();
+  addPortalHeapUsage(html, viewerText("Interner RAM", "Internal RAM"), memory.internal);
+  addPortalHeapUsage(html, "PSRAM", memory.psram);
+  html += "</div></div>";
 
   const String nowUtc = currentUtcIso();
   const String localNow = utcToLocalDeviceLabel(nowUtc);
-  const String today = localNow.length() >= 10 ? localNow.substring(0, 10) : "";
-  std::vector<BrainTaskRecord> allTasks = loadBrainTasks();
-  std::vector<BrainTaskRecord> todayEvents;
-  std::vector<BrainTaskRecord> openTodos;
-  for (const BrainTaskRecord& item : allTasks) {
-    const String localDue = item.dueUtc.length() ? utcToLocalDeviceLabel(item.dueUtc) : "";
-    const bool dueToday = today.length() && localDue.startsWith(today);
-    if (item.type == "event" && !item.done && dueToday && eventStillRelevant(
-        localDue.substring(0, 10).c_str(), today.c_str(), item.dueUtc.c_str(),
-        nowUtc.c_str(), item.datePrecision == "day")) todayEvents.push_back(item);
-    else if (item.type != "event" && !item.done && (!item.dueUtc.length() ||
-             (localDue.length() >= 10 && today.length() && localDue.substring(0, 10) <= today)))
-      openTodos.push_back(item);
+  const String today = localNow.length() >= 10 && localNow != "time not set" ? localNow.substring(0, 10) : "";
+  // A local day can start on the previous UTC date.
+  char eventsFrom[11]{};
+  if (!today.isEmpty()) {
+    const auto previous = calendarDateInWeek(today.substring(0, 4).toInt(),
+        today.substring(5, 7).toInt(), today.substring(8, 10).toInt(), -1);
+    snprintf(eventsFrom, sizeof(eventsFrom), "%04d-%02d-%02d", previous.year, previous.month, previous.day);
   }
-  std::sort(todayEvents.begin(), todayEvents.end(), [](const BrainTaskRecord& a, const BrainTaskRecord& b) {
-    return a.dueUtc < b.dueUtc;
-  });
-  if (openTodos.size() > 4) openTodos.resize(4);
+  struct Preview {
+    const String& today;
+    const String& nowUtc;
+    bool events;
+    String rows;
+    unsigned shown = 0;
+  };
+  const auto readPreview = [](Preview& summary, const char* fromUtc = nullptr) {
+    AgendaIndexCursor cursor;
+    if (!openAgendaIndex(cursor, false, fromUtc)) return false;
+    cursor.mask = 3;  // Exclude completed records and select tasks or events before reading their text.
+    cursor.match = summary.events ? 1 : 0;
+    return visitAgendaIndex(cursor, [](const BrainTaskRecord& item, void* context) {
+      auto& page = *static_cast<Preview*>(context);
+      const String localDue = item.dueUtc.isEmpty() ? "" : utcToLocalDeviceLabel(item.dueUtc);
+      if (!item.dueUtc.isEmpty()) {
+        if (page.today.isEmpty()) return false;
+        if (localDue.length() < 10 || localDue == "time not set") return true;
+        const String day = localDue.substring(0, 10);
+        if (day > page.today) return false;
+        if (page.events && (day != page.today || !eventStillRelevant(day.c_str(), page.today.c_str(),
+            item.dueUtc.c_str(), page.nowUtc.c_str(), item.datePrecision == "day"))) return true;
+      } else if (page.events) {
+        return true;
+      }
+      if (page.events) {
+        const String time = item.datePrecision == "day" ? "" :
+            (localDue.length() >= 16 ? localDue.substring(11, 16) : "--:--");
+        page.rows += "<div class='todayitem'><time>" + htmlEscape(time) +
+            "</time><span>" + htmlEscape(item.text) + "</span></div>";
+      } else {
+        page.rows += "<div class='todayitem'><form class='checkform' action='/task/status' method='post'>"
+            "<input type='hidden' name='id' value='" + htmlEscape(item.id) + "'>"
+            "<input type='hidden' name='done' value='1'><input type='hidden' name='return' value='/'><button "
+            "class='check' aria-label='" + String(viewerText("Erledigen", "Complete")) + "' type='submit'></button></form>"
+            "<span>" + htmlEscape(item.text) + "</span></div>";
+      }
+      return ++page.shown < 4;
+    }, &summary);
+  };
+  Preview events{today, nowUtc, true, {}};
+  Preview tasks{today, nowUtc, false, {}};
+  const bool indexReady = agendaIndexReady();
+  uint32_t taskCount = 0, openTasks = 0;
+  if (indexReady) agendaTaskCounts(taskCount, openTasks);
+  const bool eventsReady = indexReady && (!*eventsFrom || readPreview(events, eventsFrom));
+  const bool tasksReady = indexReady && (!openTasks || readPreview(tasks));
+  const char* updating = viewerText("Index wird aktualisiert.", "The agenda index is updating.");
   html += "<div class='todaygrid'><section class='card lilac'><div class='num'>" +
           String(viewerText("TERMINE HEUTE", "TODAY'S SCHEDULE")) + "</div><h2 class='title'>" +
-          String(todayEvents.empty() ? (viewerText("Ein freier Tag.", "A clear day."))
-                                     : (viewerText("Dein Tag auf einen Blick.", "Your day at a glance."))) +
+          String(!eventsReady || events.shown ? viewerText("Dein Tag auf einen Blick.", "Your day at a glance.")
+                                            : viewerText("Ein freier Tag.", "A clear day.")) +
           "</h2><div class='todaylist'>";
-  for (const BrainTaskRecord& event : todayEvents) {
-    const String localDue = utcToLocalDeviceLabel(event.dueUtc);
-    html += "<div class='todayitem'><time>" + htmlEscape(event.datePrecision == "day" ? "" : (localDue.length() >= 16 ? localDue.substring(11,16) : "--:--")) +
-            "</time><span>" + htmlEscape(event.text) + "</span></div>";
-  }
-  if (todayEvents.empty()) html += "<p class='text'>" + String(viewerText("Heute ist noch kein Termin eingetragen.", "No appointments are scheduled today.")) + "</p>";
+  if (!eventsReady)
+    html += "<p class='text'>" + String(updating) + "</p>";
+  else if (today.isEmpty())
+    html += "<p class='text'>" + String(viewerText("Datum fehlt.", "Date not set.")) + "</p>";
+  else if (events.shown)
+    html += events.rows;
+  else
+    html += "<p class='text'>" + String(viewerText("Heute ist noch kein Termin eingetragen.", "No appointments are scheduled today.")) + "</p>";
   html += "</div><div class='actions'><a class='btn primary' href='/calendar'>" + String(viewerText("Kalender öffnen", "Open calendar")) + "</a></div></section>";
   html += "<section class='card sand'><div class='num'>" + String(viewerText("OFFENE AUFGABEN", "OPEN TASKS")) +
-          "</div><h2 class='title'>" + String(openTodos.empty() ? (viewerText("Alles erledigt.", "All caught up."))
-                                                               : (viewerText("Als Nächstes.", "Up next."))) +
+          "</div><h2 class='title'>" + String(!tasksReady || tasks.shown ? viewerText("Als Nächstes.", "Up next.")
+                                                                        : viewerText("Alles erledigt.", "All caught up.")) +
           "</h2><div class='todaylist'>";
-  for (const BrainTaskRecord& task : openTodos) {
-    html += "<div class='todayitem'><form class='checkform' action='/task/status' method='post'>"
-            "<input type='hidden' name='id' value='" + htmlEscape(task.id) + "'><input type='hidden' name='done' value='1'>"
-            "<input type='hidden' name='return' value='/'><button class='check' aria-label='" + String(viewerText("Erledigen", "Complete")) + "' type='submit'></button></form>"
-            "<span>" + htmlEscape(task.text) + "</span></div>";
-  }
-  if (openTodos.empty()) html += "<p class='text'>" + String(viewerText("Du hast gerade keine offene Aufgabe.", "You have no open tasks right now.")) + "</p>";
+  if (!tasksReady)
+    html += "<p class='text'>" + String(updating) + "</p>";
+  else if (tasks.shown)
+    html += tasks.rows;
+  else
+    html += "<p class='text'>" + String(viewerText("Du hast gerade keine offene Aufgabe.", "You have no open tasks right now.")) + "</p>";
   html += "</div><div class='actions'><a class='btn' href='/tasks'>" + String(viewerText("Alle Aufgaben", "All tasks")) + "</a></div></section></div>";
 
-  html += "<div class='stats'><div class='stat'><b>" + String(brainStats.memories) +
-          "</b><span>" + String(viewerText("Gedanken", "Memories")) + "</span></div><div class='stat'><b>" + String(brainStats.understood) +
-          "</b><span>" + String(viewerText("Sortiert", "Ready")) + "</span></div><div class='stat'><b>" + String(brainStats.openTasks) +
-          "</b><span>" + String(viewerText("Offene Aufgaben", "Open tasks")) + "</span></div><div class='stat'><b>" + String(brainStats.pending) +
-          "</b><span>" + String(viewerText("In Arbeit", "Processing")) + "</span></div></div>";
+  const SyncQueueCounts pending = syncQueueCounts();
+  html += "<div class='stats'><div class='stat'><b>" + String(noteIndex.size()) +
+          "</b><span>" + String(viewerText("Gedanken", "Memories")) + "</span></div><div class='stat'><b>" +
+          (tasksReady ? String(openTasks) : String("—")) + "</b><span>" +
+          String(viewerText("Offene Aufgaben", "Open tasks")) + "</span></div><div class='stat'><b>" +
+          (syncQueueReady() ? String(pending.audio + pending.organization) : String("—")) +
+          "</b><span>" + String(viewerText("Wartet auf Sync", "Pending sync")) + "</span></div></div>";
   html += "<form class='card ask' action='/ask' method='post'>"
           "<input name='question' maxlength='240' placeholder='" + String(viewerText("Frag deine Gedanken…", "Ask your second brain…")) + "' required>"
           "<button type='submit'>" + htmlEscape(viewerNamedText("{name} fragen", "Ask {name}")) + "</button></form>";
@@ -1918,25 +2070,22 @@ static void handlePortalRoot() {
 }
 
 static void handlePortalJson() {
-  loadIndex();
   const int requestedOffset = transferServer.hasArg("offset") ? transferServer.arg("offset").toInt() : 0;
   const int requestedLimit = transferServer.hasArg("limit") ? transferServer.arg("limit").toInt() : 25;
-  const int offset = constrain(requestedOffset, 0, max(0, static_cast<int>(noteIndex.size())));
-  const int limit = constrain(requestedLimit, 1, 50);
+  const note_catalog::PortalPage page(noteIndex, requestedOffset, requestedLimit);
   JsonDocument document;
   document["total"] = noteIndex.size();
-  document["offset"] = offset;
-  document["limit"] = limit;
+  document["offset"] = page.offset;
+  document["limit"] = page.limit;
   JsonArray memories = document["items"].to<JsonArray>();
-  const int end = min(static_cast<int>(noteIndex.size()), offset + limit);
-  for (int v = offset; v < end; v++) {
-    int i = (int)noteIndex.size() - 1 - v;
+  for (int v = page.offset; v < page.end; v++) {
+    const auto& note = page.at(v);
     JsonObject item = memories.add<JsonObject>();
-    item["num"] = noteIndex[i].num;
-    item["hasText"] = noteIndex[i].hasText;
-    item["momentCount"] = noteIndex[i].momentCount;
-    item["createdUtc"] = noteCreatedUtc(noteIndex[i].num);
-    BrainMemory memory = loadBrainMemory(noteIndex[i].num);
+    item["num"] = note.num;
+    item["hasText"] = note.hasText;
+    item["momentCount"] = note.momentCount;
+    item["createdUtc"] = noteCreatedUtc(note.num);
+    BrainMemory memory = loadBrainMemory(note.num);
     item["understood"] = memory.valid;
     if (memory.valid) {
       item["schemaVersion"] = memory.schemaVersion;
@@ -1958,7 +2107,7 @@ static void handlePortalJson() {
       addValues("questions", memory.questions);
     }
     JsonArray momentsJson = item["momentsMs"].to<JsonArray>();
-    std::vector<uint32_t> moments = loadNoteMoments(noteIndex[i].num);
+    std::vector<uint32_t> moments = loadNoteMoments(note.num);
     for (uint32_t moment : moments) momentsJson.add(moment);
   }
   String json;
@@ -1967,7 +2116,6 @@ static void handlePortalJson() {
 }
 
 static void handleExportTxt() {
-  loadIndex();
   String filter = "All";
   if (transferServer.hasArg("tag")) filter = transferServer.arg("tag");
 
@@ -2046,107 +2194,13 @@ static void handleNoteDelete() {
   transferServer.send(303);
 }
 
-static void handleTasksPage() {
-  loadIndex();
-  const bool de = palaUiLanguage() == "de";
-  std::vector<BrainTaskRecord> tasks = loadBrainTasks();
-  tasks.erase(std::remove_if(tasks.begin(), tasks.end(),
-    [](const BrainTaskRecord& task) { return task.type == "event"; }), tasks.end());
-  String html = portalPageStart(palaNoteName() + " · " + viewerText("Aufgaben", "Tasks"));
-  html += portalNav("tasks");
-  html += "<div class='top'><div><div class='sub'>" + String(viewerText("OFFENE UND ERLEDIGTE AUFGABEN", "OPEN AND COMPLETED TASKS")) +
-          "</div><h1>" + String(viewerText("Aufgaben.", "Tasks.")) + "</h1></div></div>";
-  int open = 0; for (const BrainTaskRecord& task : tasks) if (!task.done) open++;
-  html += "<div class='pill'>" + String(open) + " " + String(viewerText("offen", "open")) + " · " + String(tasks.size()) + " " + String(viewerText("gesamt", "total")) + "</div>";
-  if (tasks.empty()) html += "<div class='empty' style='margin-top:18px'>" + String(viewerText("Noch keine Aufgaben gespeichert.", "No tasks remembered yet.")) + "</div>";
-  else {
-    html += "<div class='tasklist'>";
-    for (auto it = tasks.rbegin(); it != tasks.rend(); ++it) {
-      const BrainTaskRecord& task = *it;
-      if (task.type == "event") continue;
-      html += "<article class='taskrow " + String(task.done ? "completed" : "") + "'>"
-              "<form class='checkform' action='/task/status' method='post'><input type='hidden' name='id' value='" + htmlEscape(task.id) + "'>"
-              "<input type='hidden' name='done' value='" + String(task.done ? "0" : "1") + "'><input type='hidden' name='return' value='/tasks'>"
-              "<button class='check " + String(task.done ? "done" : "") + "' type='submit'>" + String(task.done ? "&#10003;" : "") + "</button></form>"
-              "<div class='taskcopy'><b>" + htmlEscape(task.text) + "</b><div class='taskmeta'>";
-      if (task.dueUtc.length()) html += String(viewerText("Fällig ", "Due ")) + "<span data-day='" + utcToLocalDeviceLabel(task.dueUtc).substring(0,10) + "' data-day-only='" + String(task.datePrecision == "day" ? "1" : "0") + "' data-utc='" + task.dueUtc + "'>" + task.dueUtc + "</span> · ";
-      html += String(viewerText("Gedanke #", "Memory #")) + String(task.noteNum) + "</div></div><span class='badge'>" +
-              String(task.done ? (viewerText("Erledigt", "Done")) : (viewerText("Offen", "Open"))) + "</span></article>";
-    }
-    html += "</div>";
-  }
-  html += "<script>document.querySelectorAll('[data-utc]').forEach(function(el){var dayOnly=el.dataset.dayOnly==='1',d=new Date(dayOnly?el.dataset.day+'T12:00:00':el.dataset.utc);if(!isNaN(d))el.textContent=dayOnly?d.toLocaleDateString():d.toLocaleString();});</script>";
-  html += "</div></body></html>";
-  transferServer.send(200, "text/html", html);
-}
-
-static void handleTaskStatus() {
-  const String id = transferServer.arg("id");
-  const bool done = transferServer.arg("done") == "1";
-  if (!setBrainTaskDone(id, done)) { transferServer.send(400, "text/plain", "Invalid task"); return; }
-  String returnTo = transferServer.arg("return");
-  if (returnTo != "/" && returnTo != "/tasks" && returnTo != "/calendar") returnTo = "/tasks";
-  transferServer.sendHeader("Location", returnTo);
-  transferServer.send(303);
-}
-
-static void handleCalendarPage() {
-  std::vector<BrainTaskRecord> items = loadBrainTasks();
-  std::sort(items.begin(), items.end(), [](const BrainTaskRecord& a, const BrainTaskRecord& b) {
-    if (!a.dueUtc.length()) return false;
-    if (!b.dueUtc.length()) return true;
-    return a.dueUtc < b.dueUtc;
-  });
-  String html = portalPageStart(palaNoteName() + " · " + viewerText("Kalender", "Calendar"));
-  html += portalNav("calendar");
-  html += "<div class='top'><div><div class='sub'>" + String(viewerText("TERMINE UND DATIERTE AUFGABEN", "APPOINTMENTS AND DATED TASKS")) +
-          "</div><h1>" + String(viewerText("Kalender.", "Calendar.")) + "</h1></div>"
-          "<div class='monthnav'><button id='month-prev' type='button' aria-label='" + String(viewerText("Vorheriger Monat", "Previous month")) + "'>&lsaquo;</button>"
-          "<div class='pill' id='month-label'></div>"
-          "<button id='month-next' type='button' aria-label='" + String(viewerText("Nächster Monat", "Next month")) + "'>&rsaquo;</button>"
-          "<button class='todaybutton' id='month-today' type='button' aria-label='" + String(viewerText("Aktueller Monat", "Current month")) + "'><svg viewBox='0 0 24 24' aria-hidden='true'><rect x='3' y='5' width='18' height='16' rx='2'/><path d='M16 3v4M8 3v4M3 10h18'/><path d='M8 14h.01'/></svg><span>" + String(viewerText("Heute", "Today")) + "</span></button></div></div>";
-  html += "<section class='calendar'><div class='calhead'>";
-  const char* weekdaysDe[] = {"Mo","Di","Mi","Do","Fr","Sa","So"};
-  const char* weekdaysEn[] = {"Mon","Tue","Wed","Thu","Fri","Sat","Sun"};
-  for (int i=0;i<7;i++) html += "<span>" + String(viewerText(weekdaysDe[i], weekdaysEn[i])) + "</span>";
-  html += "</div><div class='calgrid' id='calendar-grid'></div></section>";
-  html += "<div class='sectionhead'><div><h2>" + String(viewerText("Agenda", "Agenda")) + "</h2><p>" +
-          String(viewerText("Termine und datierte Aufgaben im ausgewählten Monat.", "Appointments and dated tasks in the selected month.")) + "</p></div></div><div class='agenda'>";
-  int visible = 0;
-  for (const BrainTaskRecord& item : items) {
-    if (!item.dueUtc.length()) continue;
-    const String localDue = utcToLocalDeviceLabel(item.dueUtc);
-    if (localDue.length() < 10) continue;
-    const String day = localDue.substring(0,10);
-    html += "<article class='agendarow agenda-item' data-day='" + day + "' data-kind='" + htmlEscape(item.type) + "'>"
-            "<div class='agendadate'><span data-day-only='" + String(item.datePrecision == "day" ? "1" : "0") + "' data-utc='" + item.dueUtc + "'>" + item.dueUtc + "</span></div>"
-            "<div class='agendacopy'><b>" + htmlEscape(item.text) + "</b><span>" +
-            String(item.type == "event" ? (viewerText("Termin", "Appointment")) : (viewerText("Aufgabe", "Task"))) +
-            " · #" + String(item.noteNum) + "</span></div><span class='badge'>" +
-            String(item.type == "event" ? (viewerText("Termin", "Event")) : (viewerText("Aufgabe", "Task"))) + "</span></article>";
-    visible++;
-  }
-  html += "<div class='empty" + String(visible ? " hidden" : "") + "' id='agenda-empty'>" +
-          String(viewerText("In diesem Monat gibt es noch keine Termine oder datierten Aufgaben.", "No appointments or dated tasks in this month yet.")) + "</div>";
-  html += "</div><script>"
-          "(function(){var now=new Date(),view=new Date(now.getFullYear(),now.getMonth(),1),locale='" + String(viewerLocale()) + "';"
-          "var grid=document.getElementById('calendar-grid'),label=document.getElementById('month-label'),empty=document.getElementById('agenda-empty'),items=[].slice.call(document.querySelectorAll('.agenda-item')),counts={};"
-          "items.forEach(function(el){var d=el.dataset.day;if(!counts[d])counts[d]=[];counts[d].push(el.dataset.kind);var stamp=el.querySelector('[data-utc]'),dayOnly=stamp.dataset.dayOnly==='1',date=new Date(dayOnly?d+'T12:00:00':stamp.dataset.utc);if(!isNaN(date))stamp.textContent=dayOnly?date.toLocaleDateString(locale,{weekday:'short',day:'2-digit',month:'short'}):date.toLocaleString(locale,{weekday:'short',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});});"
-          "function render(){var y=view.getFullYear(),m=view.getMonth(),first=new Date(y,m,1),days=new Date(y,m+1,0).getDate(),prefix=y+'-'+String(m+1).padStart(2,'0');label.textContent=first.toLocaleDateString(locale,{month:'long',year:'numeric'});grid.innerHTML='';"
-          "var lead=(first.getDay()+6)%7;for(var i=0;i<lead;i++){var b=document.createElement('div');b.className='calday blank';grid.appendChild(b);}"
-          "for(var d=1;d<=days;d++){var cell=document.createElement('div'),key=prefix+'-'+String(d).padStart(2,'0'),isToday=y===now.getFullYear()&&m===now.getMonth()&&d===now.getDate();cell.className='calday'+(isToday?' today':'');cell.appendChild(document.createTextNode(d));var dots=document.createElement('div');dots.className='dots';(counts[key]||[]).slice(0,5).forEach(function(k){var dot=document.createElement('i');dot.className='dot '+(k==='event'?'':'task');dots.appendChild(dot);});cell.appendChild(dots);grid.appendChild(cell);}"
-          "var shown=0;items.forEach(function(el){var isVisible=el.dataset.day.indexOf(prefix)===0;el.classList.toggle('hidden',!isVisible);if(isVisible)shown++;});empty.classList.toggle('hidden',shown!==0);}"
-          "document.getElementById('month-prev').onclick=function(){view.setMonth(view.getMonth()-1);render();};document.getElementById('month-next').onclick=function(){view.setMonth(view.getMonth()+1);render();};document.getElementById('month-today').onclick=function(){view=new Date(now.getFullYear(),now.getMonth(),1);render();};render();})();"
-          "</script></div></body></html>";
-  transferServer.send(200, "text/html", html);
-}
+#include "agenda_web.inc"
 
 static String recapCachePath(const String& period) {
   return String(NOTES_DIR) + "/.recap-" + period + ".txt";
 }
 
 static void handleRecap() {
-  loadIndex();
   String period = transferServer.arg("period") == "month" ? "month" : "day";
   String now = currentUtcIso();
   String localNow = utcToLocalDeviceLabel(now);

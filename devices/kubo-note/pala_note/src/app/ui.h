@@ -8,6 +8,7 @@ void showIdle(int pendingCount = 0, int batteryPercent = -1);
 enum class AgendaNavigation { EventsShortcut, LastDisplayPage, MoreDisplayPages };
 void showTodayAgenda(bool events, int page, AgendaNavigation navigation);
 void showCalendarMonth(int monthOffset, bool moreDisplayPages);
+void resetTodayAgenda();
 int todayAgendaPageCount(bool events);
 void showRecording();
 void showRecordingProgress(uint32_t elapsedMs, int moments);
@@ -25,6 +26,9 @@ void showAskSpeakingPage(const String& answer, int sourceCount, int page);
 void showTransferConnecting(int batteryPercent);
 void showNotePairingWait(bool bluetooth);
 void showNoteUsbPairingPrompt(const String& peer);
+void showNoteRestartPrompt(bool audit);
+struct NoteStorageAuditProgress;
+void showNoteStorageAuditProgress(const NoteStorageAuditProgress& progress);
 void showNoteBluetoothPairingNumber(uint32_t code);
 enum class CompanionLink { Offline, Wifi, Hotspot };
 void showTransferMode(CompanionLink link, const String& network, const String& ip,

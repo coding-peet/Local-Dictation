@@ -7,6 +7,7 @@ enum class ButtonAction { None, Single, Double, Triple, Hold };
 class ButtonGesture {
  public:
   static constexpr uint32_t kDebounceMs = 14;
+  static constexpr uint32_t kHoldMs = 320;
 
   constexpr void reset() { *this = ButtonGesture{}; }
 
@@ -63,7 +64,6 @@ class ButtonGesture {
     return count == 1 ? ButtonAction::Single : count == 2 ? ButtonAction::Double : ButtonAction::Triple;
   }
 
-  static constexpr uint32_t kHoldMs = 320;
   static constexpr uint32_t kInterTapMs = 360;
   uint32_t rawAt_ = 0;
   uint32_t pressedAt_ = 0;

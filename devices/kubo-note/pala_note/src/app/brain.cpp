@@ -4,11 +4,13 @@
 #include "notes.h"
 #include "rtc.h"
 #include "tasks.h"
+#include "sync_queue.h"
 #include "date_validation.h"
 #include "task_identity.h"
 #include "storage_commit.h"
 #include "utf8_excerpt.h"
 #include "checked_file_write.h"
+#include "task_state_storage.h"
 #include "memory_response.h"
 #include "../../config.h"
 #include "../../globals.h"
@@ -76,14 +78,14 @@ String nextCalendarDay(const String& localLabel) {
 }
 
 String sourceFingerprint(int noteNum) {
-  File file = SD_MMC.open(transcriptPath(noteNum));
-  if (!file) return "";
+  task_storage::Source source;
+  if (!source.open((String("/sdcard") + transcriptPath(noteNum)).c_str()) || !source.file) return "";
   uint32_t hash = 2166136261UL;
-  while (file.available()) {
-    hash ^= static_cast<uint8_t>(file.read());
-    hash *= 16777619UL;
+  char bytes[256];
+  for (size_t n; (n = source.readBytes(bytes, sizeof(bytes))) != 0;) {
+    for (size_t i = 0; i < n; ++i) { hash ^= static_cast<uint8_t>(bytes[i]); hash *= 16777619UL; }
   }
-  file.close();
+  if (!source.complete() || !source.close()) return "";
   char encoded[9];
   snprintf(encoded, sizeof(encoded), "%08lx", static_cast<unsigned long>(hash));
   return String(encoded);
@@ -464,16 +466,21 @@ bool saveBrainEmbedding(int noteNum, const std::vector<float>& embedding) {
   return true;
 }
 
-bool brainEmbeddingExists(int noteNum) {
-  File file = SD_MMC.open(embeddingPath(noteNum));
-  if (!file) return false;
+bool readBrainEmbeddingState(int noteNum, bool& exists) {
+  exists = false;
+  task_storage::Source file;
+  if (!file.open((String("/sdcard") + embeddingPath(noteNum)).c_str())) return false;
+  if (!file.file) return true;
   uint16_t dimensions = 0;
-  const bool valid = file.read(reinterpret_cast<uint8_t*>(&dimensions), sizeof(dimensions)) ==
-                       sizeof(dimensions) &&
-                     dimensions > 0 && dimensions <= 512 &&
-                     file.size() == sizeof(dimensions) + dimensions * sizeof(float);
-  file.close();
-  return valid;
+  if (file.readBytes(reinterpret_cast<char*>(&dimensions), sizeof(dimensions)) != sizeof(dimensions)) return false;
+  exists = dimensions > 0 && dimensions <= 512 &&
+           file.size == static_cast<long>(sizeof(dimensions) + dimensions * sizeof(float));
+  return file.close();
+}
+
+bool brainEmbeddingExists(int noteNum) {
+  bool exists = false;
+  return readBrainEmbeddingState(noteNum, exists) && exists;
 }
 
 bool brainHasSemanticIndex() {
@@ -553,6 +560,8 @@ bool saveBrainMemoryJson(int noteNum, const String& json) {
     taskIndex++;
   }
 
+  SyncQueueChange syncQueueChange(noteNum);
+  if (!syncQueueChange || !beginAgendaIndexChange(noteNum)) return false;
   const String path = brainMemoryPath(noteNum);
   const String temp = path + ".tmp";
   SD_MMC.remove(temp);
@@ -567,6 +576,7 @@ bool saveBrainMemoryJson(int noteNum, const String& json) {
     SD_MMC.remove(temp);
     return false;
   }
+  finishAgendaIndexChange(noteNum);
   BrainMemory memory = loadBrainMemory(noteNum);
   if (memory.valid) {
     String line = searchIndexLine(memory);
@@ -575,25 +585,31 @@ bool saveBrainMemoryJson(int noteNum, const String& json) {
   return memory.valid;
 }
 
-BrainMemory loadBrainMemory(int noteNum) {
-  BrainMemory memory;
+bool readBrainMemoryChecked(int noteNum, BrainMemory& memory) {
+  memory = BrainMemory{};
   memory.noteNum = noteNum;
-  if (noteIsTrashed(noteNum)) return memory;
-  recoverStoredFile(SD_MMC, brainMemoryPath(noteNum));
-  File file = SD_MMC.open(brainMemoryPath(noteNum));
-  if (!file) return memory;
+  if (noteIsTrashed(noteNum)) return true;
+  task_storage::Source file;
+  if (!file.open((String("/sdcard") + brainMemoryPath(noteNum)).c_str())) return false;
+  if (!file.file) return true;  // A pending recording legitimately has no organization.
   JsonDocument doc;
-  const DeserializationError error = deserializeJson(doc, file);
-  file.close();
-  if (error) return memory;
-
+  if (deserializeJson(doc, file) || !doc.is<JsonObject>() ||
+      (!doc["tasks"].isNull() && !doc["tasks"].is<JsonArray>()) ||
+      (!doc["noteNum"].isNull() && doc["noteNum"].as<int>() != noteNum)) return false;
+  for (int c = file.read(); c != EOF; c = file.read()) if (!isspace(c)) return false;
+  if (!file.complete() || !file.close()) return false;
   memory.schemaVersion = doc["schemaVersion"] | 1;
   memory.importance = constrain(doc["importance"] | 1, 0, 3);
   memory.title = doc["title"] | "";
   memory.summary = doc["summary"] | "";
   memory.kind = doc["kind"] | "thought";
   memory.language = doc["language"] | "";
-  memory.createdUtc = doc["createdUtc"] | noteCreatedUtc(noteNum);
+  memory.createdUtc = doc["createdUtc"] | "";
+  if (memory.createdUtc.isEmpty()) {
+    std::string utc;
+    if (!note_transcript::readField((String("/sdcard") + noteMetaPath(noteNum)).c_str(), "created_utc=", utc)) return false;
+    memory.createdUtc = utc.c_str();
+  }
   memory.sourceHash = doc["sourceHash"] | "";
   readStrings(doc["topics"].as<JsonArrayConst>(), memory.topics);
   readStrings(doc["people"].as<JsonArrayConst>(), memory.people);
@@ -603,15 +619,30 @@ BrainMemory loadBrainMemory(int noteNum) {
   readStrings(doc["facts"].as<JsonArrayConst>(), memory.facts);
   readStrings(doc["questions"].as<JsonArrayConst>(), memory.questions);
   memory.valid = memory.title.length() > 0 && memory.summary.length() > 0;
+  return true;
+}
+
+BrainMemory loadBrainMemory(int noteNum) {
+  BrainMemory memory;
+  if (!readBrainMemoryChecked(noteNum, memory)) { memory = {}; memory.noteNum = noteNum; }
   return memory;
 }
 
+bool readBrainCurrency(int noteNum, bool& current) {
+  BrainMemory memory;
+  if (!readBrainMemoryChecked(noteNum, memory)) return false;
+  current = memory.valid && memory.schemaVersion >= kBrainSchemaVersion;
+  if (current && memory.sourceHash.length()) {
+    const String fingerprint = sourceFingerprint(noteNum);
+    if (fingerprint.isEmpty()) return false;
+    current = memory.sourceHash == fingerprint;
+  }
+  return true;
+}
+
 bool brainMemoryIsCurrent(int noteNum) {
-  BrainMemory memory = loadBrainMemory(noteNum);
-  if (!memory.valid) return false;
-  if (memory.schemaVersion < kBrainSchemaVersion) return false;
-  if (memory.sourceHash.length() == 0) return true;
-  return memory.sourceHash == sourceFingerprint(noteNum);
+  bool current = false;
+  return readBrainCurrency(noteNum, current) && current;
 }
 
 bool ensureBrainSearchIndex() {

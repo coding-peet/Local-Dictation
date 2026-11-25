@@ -1,9 +1,10 @@
 // Fish and anemone drawing derived from the approved Canvas storyboard.
 const black = '#000';
 const white = '#fff';
-const PEEK = { x: 65, y: 99, scale: 1.12, clip: 79, eyeScale: 1.22, glance: .9 };
-const TORCH_PEEK = { ...PEEK, x: 77, y: 99, clip: 94, eyeScale: 1.30 };
 const CRUISE = { x: 131, y: 98, scale: .88 };
+// Keep the eye in the opening between the foreground tentacles.
+const PEEK = { ...CRUISE, x: 72, y: 98, clip: 79, glance: .9 };
+const TORCH_PEEK = { ...PEEK, x: 84, clip: 94 };
 
 const clamp = t => Math.min(1, Math.max(0, t));
 const mix = (a, b, t) => a + (b - a) * t;
@@ -33,7 +34,7 @@ function fishBody(p, bend) {
 }
 
 function drawFish({ x, y, angle = 0, face = 1, phase = 0, kick = 0, scale = 1, yaw = 1,
-                    gulp = 0, glance = 0, eyeScale = 1, clip }) {
+                    gulp = 0, glance = 0, clip }) {
   ctx.save();
   if (clip !== undefined) {
     ctx.beginPath();
@@ -90,7 +91,7 @@ function drawFish({ x, y, angle = 0, face = 1, phase = 0, kick = 0, scale = 1, y
     p.moveTo(9, 4); p.bezierCurveTo(8, 10, 3, 16 + finFlex, -6, 15 + finFlex);
     p.quadraticCurveTo(-3, 9, 6, 4); p.closePath();
   }, white, black, 1.6);
-  oval(27, -5, 4.1 * eyeScale, 4.6 * eyeScale, white);
+  oval(27, -5, 4.1, 4.6, white);
   oval(28.1 + glance, -4.6, 2.4, 2.7, black);
   if (gulp > .25) oval(33, 3, 2.5, gulp * 2.7, white);
   else shape(p => {
@@ -211,7 +212,6 @@ function aquarium(name, progress, origin = CRUISE, reef = false) {
       const swim = ease((t - .34) / .66);
       pet = { ...CRUISE, x: mix(PEEK.x, CRUISE.x, swim),
         y: mix(PEEK.y, CRUISE.y, swim) - pulse(swim) * 12,
-        scale: mix(PEEK.scale, CRUISE.scale, swim), eyeScale: mix(PEEK.eyeScale, 1, swim),
         angle: -.15 * pulse(swim), phase, kick: .75, clip: t < .48 ? PEEK.clip : undefined };
     }
   } else if (name === 'feed') {
@@ -236,9 +236,12 @@ function aquarium(name, progress, origin = CRUISE, reef = false) {
       const here = arcPath(swimLoop, loop);
       const ahead = arcPath(swimLoop, Math.min(.9999, loop + .02));
       const dx = ahead.x - here.x, dy = ahead.y - here.y;
-      pet = { ...here, scale: mix(.78, .9, loop), phase, kick: .64, face: dx < -.25 ? -1 : 1,
-        angle: Math.max(-.31, Math.min(.31, Math.atan2(dy, Math.max(11, Math.abs(dx))) * (dx < -.25 ? -1 : 1))) };
       inFront = loop > .63;
+      const arc = inFront ? (loop - .63) / .37 : loop / .63;
+      const depth = pulse(arc) ** 2;
+      const scale = CRUISE.scale * (1 + (inFront ? .05 : -.10) * depth);
+      pet = { ...here, scale, phase, kick: .64, face: dx < -.25 ? -1 : 1,
+        angle: Math.max(-.31, Math.min(.31, Math.atan2(dy, Math.max(11, Math.abs(dx))) * (dx < -.25 ? -1 : 1))) };
     }
   } else if (name === 'tuck') {
     if (t < .76) {

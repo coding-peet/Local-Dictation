@@ -30,7 +30,7 @@ class Element {
   scrollIntoView() { this.scrolled = true; }
 }
 
-function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, hash = '', name = 'Willow', displayPages, sleepMinutes, syncTiming, pageWrap, preferBluetooth, bridge, webPasswordConfigured, weeklyCodexLimit, wifiEnabled, bluetoothEnabled, locked = false } = {}) {
+function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, hash = '', name = 'Willow', displayPages, sleepMinutes, syncTiming, pageWrap, preferBluetooth, bridge, webPasswordConfigured, weeklyCodexLimit, wifiEnabled, bluetoothEnabled, health, storageAudit, locked = false } = {}) {
   const elements = new Map();
   const buttons = [];
   for (const match of settings.matchAll(/<([a-z][a-z0-9]*)\b[^<>]*\bid="([^"]+)"[^<>]*>/g)) {
@@ -80,7 +80,8 @@ function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, ha
             ...reply, ok: connected, csrf: writePermission, transport, capabilities: { devicePortal: portal },
             targetKey: connected ? targetKey : undefined,
             device: connected ? { name, language: 'en', memoryTrash, displayPages, sleepMinutes, syncTiming,
-              pageWrap, preferBluetooth, webPasswordConfigured, weeklyCodexLimit, wifiEnabled, bluetoothEnabled } : undefined,
+              pageWrap, preferBluetooth, webPasswordConfigured, weeklyCodexLimit, wifiEnabled, bluetoothEnabled,
+              r: storageAudit ? 1 : undefined, ...health } : undefined,
             wifi: [], peers: [], bridge,
           };
           break;
@@ -121,6 +122,12 @@ function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, ha
         case 'radios.save':
           wifiEnabled = data.wifiEnabled;
           bluetoothEnabled = data.bluetoothEnabled;
+          break;
+        case 'restart.status':
+          reply.storageAudit = storageAudit;
+          break;
+        case 'restart.request':
+          reply.pending = true;
           break;
         case 'trash.status':
           reply = { ...reply, days: retention, count: trash.length };
@@ -195,6 +202,38 @@ test('BLE lock exposes only password authentication until successful sign-in', a
   page.disconnect();
   await page.refresh();
   assert.equal(page.el('settings-content').hidden, true);
+});
+
+test('Note settings show live battery and heap peaks and clear them on disconnect', async () => {
+  const page = fixture({ health: { batteryPercent: 0, ramUsage: [42, 70], psramUsage: [17, 35] } });
+  await page.refresh();
+  assert.equal(page.el('note-health').hidden, false);
+  assert.equal(page.el('note-battery').textContent, '0%');
+  assert.equal(page.el('note-ram').textContent, '42% current · 70% peak since restart');
+  assert.equal(page.el('note-psram').textContent, '17% current · 35% peak since restart');
+  page.disconnect();
+  await page.refresh();
+  assert.equal(page.el('note-health').hidden, true);
+  assert.equal(page.el('note-ram').textContent, '');
+});
+
+test('restart choices report interrupted audit and only request a local confirmation', async () => {
+  const page = fixture({ storageAudit: { state: 'incomplete', notes: 50_000, estimateSeconds: 500 } });
+  await page.refresh();
+  assert.equal(page.el('restart-note').hidden, false);
+  assert.match(page.el('restart-status').textContent, /did not finish/);
+  assert.match(page.el('restart-estimate').textContent, /50,000 cataloged notes.*9 min/);
+  await page.dispatch('restart-normal', 'click');
+  await page.dispatch('restart-audit', 'click');
+  assert.deepEqual(page.calls.filter(call => call.op.startsWith('restart.')), [
+    { op: 'restart.status' },
+    { op: 'restart.request', mode: 'restart' },
+    { op: 'restart.request', mode: 'audit' },
+  ]);
+  assert.match(page.el('restart-status').textContent, /Confirm or cancel on the Note display/);
+  page.disconnect();
+  await page.refresh();
+  assert.equal(page.el('restart-note').hidden, true);
 });
 
 test('wireless controls, sync connection priority and network list are grouped in that order', () => {

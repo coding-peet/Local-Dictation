@@ -12,6 +12,14 @@
 #include "wav_payload.h"
 #include "../../sounds.h"
 #include <atomic>
+#include <algorithm>
+#include <cerrno>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <ctime>
+#include "record_priority.h"
+#include "rec_spool.h"
+#include "capture_wav_recovery.h"
 
 extern "C" {
 #include "../../src/audio/audio_bsp.h"
@@ -19,6 +27,9 @@ extern "C" {
 
 namespace {
 std::atomic<bool> recordingUiBusy{false};
+// Saturating estimate. Expensive FAT free-cluster queries run on the main
+// loop after Home appears. The sample loop only compares an in-memory budget.
+std::atomic<uint32_t> availableBytes{UINT32_MAX};
 bool recordingUiProgress = false;
 bool recordingUiQuestion = false;
 uint32_t recordingUiMarkerMs = 0;
@@ -83,7 +94,16 @@ static bool writeWavHeader(File& file, uint32_t dataBytes) {
   return ok && restored;
 }
 
-static bool recordHeldToPath(const char* path, int holdPin, bool captureMoments, int noteNum) {
+static bool recordHeldToPath(const char* path, int holdPin, bool captureMoments, int noteNum,
+                             uint32_t edgeMs, std::vector<uint32_t>* stagedMoments = nullptr) {
+  // Read one stereo frame before SD queries, header writes or panel work.
+  int16_t first[2]{};
+  if (audio_playback_read(first, sizeof(first)) != 0) return false;
+  struct SuspendMic { ~SuspendMic() { audio_idle_suspend(); } } suspendMic;
+  const uint32_t firstPcm = millis();
+  if (captureMoments) Serial.printf("[Rec] edge=%lu first_pcm=%lu latency_ms=%lu\n",
+      (unsigned long)edgeMs, (unsigned long)firstPcm,
+      (unsigned long)rec_priority::latency(edgeMs, firstPcm));
   Serial.printf("[Rec] %s\n", path);
 
   // A recording absent from the catalog must never be silently overwritten.
@@ -106,19 +126,20 @@ static bool recordHeldToPath(const char* path, int holdPin, bool captureMoments,
     f.close(); return false;
   }
 
-  if (!startRecordingUi(false, 0, 0, !captureMoments)) {
+  if (!stagedMoments && !startRecordingUi(false, 0, 0, !captureMoments)) {
     heap_caps_free(sbuf); heap_caps_free(mbuf);
     f.close();
     SD_MMC.remove(path); // Only the empty file created by this attempt.
     return false;
   }
 
-  uint32_t totalMono=0, t0=millis(), lastCheckpoint=t0;
+  const bool firstWritten = f.write(reinterpret_cast<uint8_t*>(first), sizeof(int16_t)) == sizeof(int16_t);
+  uint32_t totalMono = firstWritten ? sizeof(int16_t) : 0, t0=millis(), lastCheckpoint=t0;
   std::vector<uint32_t> momentsMs;
   bool markReady = digitalRead(BTN_PWR) == HIGH;
-  bool audioOk = true;
+  bool audioOk = firstWritten;
 
-  while (digitalRead(holdPin)==LOW || millis()-t0 < 500) {
+  while (audioOk && (digitalRead(holdPin)==LOW || millis()-t0 < 500)) {
     if (audio_playback_read((void*)sbuf, REC_BUF) != 0) {
       audioOk = false;
       Serial.println("[Rec] microphone read failed");
@@ -142,8 +163,8 @@ static bool recordHeldToPath(const char* path, int holdPin, bool captureMoments,
         break;
       }
       lastCheckpoint = now;
-      const uint64_t total = SD_MMC.totalBytes(), used = SD_MMC.usedBytes();
-      if (used >= total || total - used < 2ULL * 1024ULL * 1024ULL) {
+      const auto freeAtStart = availableBytes.load();
+      if (totalMono >= freeAtStart || freeAtStart - totalMono < 2UL * 1024UL * 1024UL) {
         Serial.println("[Rec] stopping: SD card is nearly full");
         break;
       }
@@ -158,20 +179,20 @@ static bool recordHeldToPath(const char* path, int holdPin, bool captureMoments,
       uint32_t markerMs = (recordedSamples * 1000ULL) / SAMPLE_RATE;
       if (momentsMs.empty() || markerMs - momentsMs.back() >= 250) {
         momentsMs.push_back(markerMs);
-        startRecordingUi(true, markerMs, (int)momentsMs.size());
+        if (!stagedMoments) startRecordingUi(true, markerMs, (int)momentsMs.size());
       }
     }
   }
 
-  waitForRecordingUi();
-  audio_idle_suspend();
+  if (!stagedMoments) waitForRecordingUi();
 
   heap_caps_free(sbuf); heap_caps_free(mbuf);
 
   const bool headerOk = writeWavHeader(f, totalMono);
   f.close();
 
-  if (captureMoments && !saveNoteMoments(noteNum, momentsMs)) {
+  if (stagedMoments) stagedMoments->swap(momentsMs);
+  else if (captureMoments && !saveNoteMoments(noteNum, momentsMs)) {
     Serial.println("[Rec] warning: moments were not saved");
   }
 
@@ -180,18 +201,213 @@ static bool recordHeldToPath(const char* path, int holdPin, bool captureMoments,
   return audioOk && headerOk && totalMono > 1000;
 }
 
-bool record() {
+namespace {
+constexpr char spool[] = "/.rec-inbox";
+constexpr char mountedSpool[] = "/sdcard/.rec-inbox";
+rec_priority::Gate gate;
+unsigned windowDepth = 0;
+TaskHandle_t microphoneTask = nullptr;
+String finishedName;
+bool finishedOk = false;
+uint32_t requestedEdge = 0;
+bool scanNeeded = false;
+bool coldPartials = true;
+
+int present(const String& path) {
+  struct stat info{};
+  if (::stat(path.c_str(), &info) == 0) return 1;
+  return errno == ENOENT ? 0 : -1;
+}
+
+bool saveStageMarks(const String& base, const std::vector<uint32_t>& marks) {
+  if (marks.empty()) return true;
+  File f = SD_MMC.open((base + ".mom").c_str(), FILE_WRITE);
+  if (!f) return false;
+  for (auto value : marks) {
+    const String line = String(value) + "\n";
+    if (f.print(line) != line.length()) return false;
+  }
+  f.flush();
+  return true;
+}
+
+void microphoneWorker(void*) {
+  for (;;) {
+    gate.service([] { return requestedEdge; }, physicalRecordingHold, [](uint32_t edge) {
+      // A private file can be recorded before the old catalog's high-water ID
+      // is known. Only the foreground may adopt it into the numbered catalog.
+      char name[48];
+      snprintf(name, sizeof(name), "s%lu_%08lx", (unsigned long)time(nullptr), (unsigned long)esp_random());
+      finishedName = name;
+      const String base = String(spool) + "/" + name;
+      const String temp = base + ".partial";
+      std::vector<uint32_t> moments;
+      finishedOk = !recordingSpaceLow() && present(String("/sdcard") + base + ".wav") == 0 &&
+          present(String("/sdcard") + temp) == 0 &&
+          recordHeldToPath(temp.c_str(), BTN_REC, true, -1, edge, &moments) &&
+          saveStageMarks(base, moments);
+    });
+    if (gate.armed()) vTaskDelay(std::max<TickType_t>(1, pdMS_TO_TICKS(5)));
+    else ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+  }
+}
+
+// Resolve the target once and put it in the spool filename *before* moving any
+// sidecars. Replaying a claim after a power cut uses exactly the same ID.
+bool adopt(String name, String& utc, int& id) {
+  return rec_spool::adopt("/sdcard/.rec-inbox/", "/sdcard" NOTES_DIR "/", name.c_str(), id,
+      nextNoteNumber, [&](int note, uint32_t seconds) {
+        utc = rec_spool::captureUtc(seconds).c_str();
+        return beginNoteRecording(note, utc);
+      }, [&](int note, uint32_t) {
+        return writeNoteMeta(note, "Inbox", utc);
+      }, [&](int note) {
+        // Both direct and inbox captures are now owned by capture.pending.
+        // Repair before saveTag can publish the row and remove that journal.
+        char wav[72];
+        snprintf(wav, sizeof(wav), "/sdcard" NOTES_DIR "/note_%03d.wav", note);
+        return capture_wav::recover(wav) == capture_wav::State::Ready && saveTag(note, "Inbox", utc);
+      });
+}
+
+bool readSpoolNames(std::vector<String>& names) {
+  auto* dir = opendir(mountedSpool);
+  if (!dir) return false;
+  std::vector<String> partials;
+  bool ok = true;
+  for (;;) {
+    errno = 0;
+    const auto* entry = readdir(dir);
+    if (!entry) { ok = errno == 0; break; }
+    String name(entry->d_name);
+    if (name[0] != 's' && name[0] != 'c') continue;
+    if (coldPartials && name[0] == 's' && name.endsWith(".partial")) partials.push_back(name);
+    else if (name.endsWith(".wav")) names.push_back(name);
+  }
+  if (closedir(dir) != 0 || !ok) return false;
+  // Finish enumerating before renaming entries on FAT. A failed startup scan
+  // is retried while the worker is still stopped, never against its live WAV.
+  for (const auto& partial : partials) {
+    std::string name;
+    const auto state = rec_spool::promotePartial("/sdcard/.rec-inbox/", partial.c_str(), name);
+    if (state == capture_wav::State::Empty) continue;
+    if (state != capture_wav::State::Ready) return false;
+    names.push_back(name.c_str());
+  }
+  coldPartials = false;
+  return true;
+}
+}
+
+RecordingWindow::RecordingWindow(bool enabled) : enabled_(enabled && microphoneTask) {
+  if (enabled_ && windowDepth++ == 0) {
+    gate.arm();
+    xTaskNotifyGive(microphoneTask);
+  }
+}
+RecordingWindow::~RecordingWindow() {
+  if (enabled_ && --windowDepth == 0) gate.disarm();
+}
+
+void initializeRecordingPriority() {
+  // An unreadable inbox may contain an existing ID claim. Retry inspection
+  // before allowing another ordinary capture to allocate a number.
+  scanNeeded = true;
+  if (mkdir(mountedSpool, 0777) != 0 && errno != EEXIST) return;
+  std::vector<String> existing;
+  if (!readSpoolNames(existing)) return;
+  scanNeeded = !existing.empty();
+  if (xTaskCreatePinnedToCore(microphoneWorker, "rec-priority", 6144, nullptr, 3, &microphoneTask, 0) != pdPASS) {
+    microphoneTask = nullptr;
+    Serial.println("[Rec] priority worker unavailable");
+  }
+}
+
+bool pendingPriorityRecording() { return gate.pending(); }
+void latchPriorityRecording(uint32_t edge) {
+  if (windowDepth && microphoneTask && !gate.pending()) {
+    requestedEdge = edge;
+    if (gate.request()) xTaskNotifyGive(microphoneTask);
+  }
+}
+void yieldToPriorityMicrophone() { while (gate.recording()) delay(5); }
+
+static bool recoverInbox(const String& justRecorded, String& capturedUtc, int& capturedId) {
+  std::vector<String> names;
+  if (!readSpoolNames(names)) return false;
+  std::sort(names.begin(), names.end(), [](const String& a, const String& b) {
+    return a.compareTo(b) < 0; // existing claims precede new admissions
+  });
+  for (const auto& name : names) {
+    String utc;
+    int id = 0;
+    if (!adopt(name, utc, id)) return false;
+    if (justRecorded.length() && (name == justRecorded || name.endsWith(String("-") + justRecorded))) {
+      capturedId = id;
+      capturedUtc = utc;
+    }
+  }
+  scanNeeded = false;
+  return true;
+}
+
+bool recoverSpooledRecordings() {
+  if (!scanNeeded || gate.pending()) return true;
+  String utc;
+  int id = 0;
+  return recoverInbox("", utc, id);
+}
+
+bool takePriorityRecording(String& capturedUtc, bool& captured) {
+  if (microphoneTask && (windowDepth || !noteCatalogReady()) && !gate.pending()) {
+    requestedEdge = recordingPressTime();
+    if (gate.request()) xTaskNotifyGive(microphoneTask);
+  }
+  captured = !gate.claimForeground();
+  if (!captured) return true;
+  if (gate.recording()) startRecordingUi();
+  yieldToPriorityMicrophone();
+  waitForRecordingUi();
+  // Publish on the foreground after joining. A boot scan cannot accidentally
+  // consume the current worker's completed file before its caller claims it.
+  const String base = String(spool) + "/" + finishedName;
+  bool ok = finishedOk && present(String("/sdcard") + base + ".wav") == 0 &&
+      SD_MMC.rename((base + ".partial").c_str(), (base + ".wav").c_str());
+  if (ok) {
+    scanNeeded = true;
+    if (!noteCatalogBaseLoaded()) {
+      // The audio and capture time are durable. Admit it when the old catalog
+      // has been loaded, and never display a speculative note number.
+      lastRecNum = -1;
+      return true;
+    }
+    int id = 0;
+    ok = recoverInbox(finishedName + ".wav", capturedUtc, id) && id > 0;
+    if (ok) lastRecNum = id;
+  }
+  return ok;
+}
+
+void releaseRecordingPriority() { gate.release(); }
+void refreshRecordingSpace() {
+  const auto total = SD_MMC.totalBytes(), used = SD_MMC.usedBytes();
+  if (total && total >= used) availableBytes = std::min<uint64_t>(UINT32_MAX, total-used);
+}
+bool recordingSpaceLow() { return availableBytes.load() < 10UL * 1024UL * 1024UL; }
+bool record(const String& capturedUtc) {
+  if (!recoverSpooledRecordings()) return false;
+  const uint32_t edgeMs = recordingPressTime();
   int num = nextNoteNumber();
-  if (num <= 0) return false;
+  if (num <= 0 || !beginNoteRecording(num, capturedUtc)) return false;
   char path[64]; snprintf(path, sizeof(path), "%s/note_%03d.wav", NOTES_DIR, num);
-  bool ok = recordHeldToPath(path, BTN_REC, true, num);
+  bool ok = recordHeldToPath(path, BTN_REC, true, num, edgeMs);
   if (ok) lastRecNum = num;
   return ok;
 }
 
 bool recordQuestion(const char* path, int holdPin) {
   SD_MMC.remove(path);
-  return recordHeldToPath(path, holdPin, false, -1);
+  return recordHeldToPath(path, holdPin, false, -1, millis());
 }
 
 bool playWavFile(const char* path) {

@@ -1,8 +1,13 @@
 #pragma once
 #include <Arduino.h>
 #include <vector>
+#include "transcript_storage.h"
 
-void   loadIndex(bool recoverOrphans = false);
+void   initializeNoteCatalog(bool recoverSources = true);
+bool   maintainNoteCatalog();
+bool   noteCatalogReady();
+bool   noteCatalogBaseLoaded();
+bool   beginNoteRecording(int num, const String& capturedUtc);
 bool   saveIndex();
 bool   addToIndex(int num, const char* tag, bool hasText);
 bool   updateIndexHasText(int num);
@@ -40,6 +45,8 @@ String noteMetaPath(int num);
 String readNoteMetaValue(int num, const char* key);
 bool   writeNoteMeta(int num, const char* tag, const String& capturedUtc = String());
 struct NoteEntry;
+note_transcript::Stored storedNoteTranscript(int num);
+bool   reconcileNoteTranscript(int num);
 bool   noteHasCommittedTranscript(int num);
 bool   notePendingTranscription(const NoteEntry& note);
 int    pendingTranscriptionCount();

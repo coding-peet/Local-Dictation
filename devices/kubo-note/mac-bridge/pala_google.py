@@ -226,6 +226,14 @@ class DeliveryQueue:
             if "recording_id" not in columns:
                 db.execute("ALTER TABLE google_actions ADD COLUMN recording_id TEXT")
             db.execute("CREATE INDEX IF NOT EXISTS google_actions_device ON google_actions(device)")
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='transcript_receipts'").fetchone():
+                db.execute("""CREATE TABLE transcript_receipts (
+                    recording TEXT PRIMARY KEY, route INTEGER NOT NULL, captured TEXT)""")
+                # Old Bridges already retained the exact text and any staged actions.
+                db.execute("""INSERT INTO transcript_receipts
+                    SELECT n.id, EXISTS(SELECT 1 FROM google_actions a
+                        WHERE a.recording_id=n.id OR substr(a.id,1,64)=n.id),
+                        replace(n.captured,'+00:00','Z') FROM note_transcripts n WHERE n.on_note=0""")
 
     @contextlib.contextmanager
     def database(self):
@@ -326,6 +334,19 @@ class DeliveryQueue:
                     db.execute("UPDATE google_actions SET status=? WHERE id=? AND status='awaiting-usb'",
                                (status, key))
         return [key for key, _ in actions]
+
+    def next_unconfirmed_note(self, device):
+        with self.database() as db:
+            row = db.execute("""SELECT n.note FROM transcript_receipts r
+                JOIN note_transcripts n ON n.id=r.recording WHERE n.device=? ORDER BY r.rowid LIMIT 1""",
+                             (device.casefold(),)).fetchone()
+            return row[0] if row else None
+
+    def unconfirmed(self, device):
+        with self.database() as db:
+            return db.execute("""SELECT n.note, r.captured, n.body, r.route
+                FROM transcript_receipts r JOIN note_transcripts n ON n.id=r.recording
+                WHERE n.device=? ORDER BY r.rowid""", (device.casefold(),)).fetchall()
 
     def home_counts(self, device, bindings, *, now=None, with_last=False):
         # The firmware clock uses the Central European time and DST rules.
@@ -753,17 +774,22 @@ class UsbGoogleDelivery:
 
     def stager(self, device, staged=None, *, route=True):
         def stage(note, captured, text):
-            self.queue.remember_transcript(device, note, captured, text, on_note=False)
-            config = self.active_config() if route else {}
+            recording = self.queue.remember_transcript(device, note, captured, text, on_note=False)
+            with self.queue.database() as db:
+                db.execute("INSERT OR IGNORE INTO transcript_receipts VALUES(?,?,?)",
+                           (recording, int(route), captured))
+                route_enabled, = db.execute("SELECT route FROM transcript_receipts WHERE recording=?",
+                                            (recording,)).fetchone()
+            config = self.active_config() if route_enabled else {}
             kind, _ = classify_transcript(text)
             organize_calendar = bool(config.get("calendar")) and kind == "calendar"
             fallback = general_fallback_kinds(config)
             if can_stage_google_route(config, kind) or organize_calendar:
                 self.queue.stage(device, note, captured, text, ready=False, general_fallback=fallback)
 
-            def acknowledge():
+            def promote():
                 self.queue.remember_transcript(device, note, captured, text, on_note=True)
-                if not route:
+                if not route_enabled:
                     return
                 active = self.active_config()
                 if not can_stage_google_route(active, kind) and not (organize_calendar and active.get("calendar")):
@@ -772,8 +798,25 @@ class UsbGoogleDelivery:
                 if staged is not None:
                     staged.extend(keys)
 
-            return StagedGoogleDelivery(acknowledge, organize_calendar)
+            def acknowledge():
+                promote()
+                with self.queue.database() as db:
+                    db.execute("DELETE FROM transcript_receipts WHERE recording=?", (recording,))
 
+            # A full BLE batch stages route=False because its next job organizes
+            # the Note. Preserve that stage if USB resumes the unfinished audio.
+            return StagedGoogleDelivery(acknowledge, organize_calendar or (route and not route_enabled))
+
+        def recover_saved(read_saved):
+            for note, captured, text, original_route in self.queue.unconfirmed(device):
+                stored = read_saved(note)
+                if stored is None:  # Interrupted before the Note published its text.
+                    continue
+                if stored != (text.encode("utf-8"), captured):
+                    raise ValueError("The Note transcript differs from the unconfirmed Bridge receipt.")
+                self.stager(device, staged, route=bool(original_route))(note, captured, text)()
+
+        stage.recover_saved = recover_saved
         return stage
 
     def flush(self, keys=None):
