@@ -150,24 +150,40 @@ inline bool reserveRecording(const std::string& path, int32_t id, const char* ut
   return std::fclose(out) == 0 && written && std::rename(tmp.c_str(), path.c_str()) == 0;
 }
 
-template<class Recover>
-bool recoverReservation(const char* path, Recover recover, OpenFile open = std::fopen) {
+enum class ReservationState { Missing, Empty, Valid, Error };
+struct Reservation {
+  int32_t id = 0;
+  char utc[21]{};
+};
+
+inline ReservationState readReservation(const char* path, Reservation& record, OpenFile open = std::fopen) {
   auto* file = open(path, "rb");
-  if (!file) return openError() == Source::Absent;
+  if (!file) return openError() == Source::Absent ? ReservationState::Missing : ReservationState::Error;
   std::array<char, reservationBytes + 1> bytes{};
   const size_t len = std::fread(bytes.data(), 1, bytes.size(), file);
   const bool readOk = !std::ferror(file) && std::feof(file);
-  if (std::fclose(file) != 0 || !readOk) return false;
-  int32_t id;
-  if (len < sizeof(id)) return removeIfPresent(path); // old writer never started audio
-  std::memcpy(&id, bytes.data(), sizeof(id));
-  const char* utc = "";
-  if (len != sizeof(id)) {
-    if (len != reservationBytes || std::memcmp(bytes.data()+sizeof(id), "UTC1", 4) ||
-        bytes[reservationBytes-1] != 0) return false;
-    utc = bytes.data()+sizeof(id)+4;
-    if (*utc && !validUtcTimestamp(utc)) return false;
+  if (std::fclose(file) != 0 || !readOk) return ReservationState::Error;
+  if (len < sizeof(record.id)) return ReservationState::Empty;
+  record = {};
+  std::memcpy(&record.id, bytes.data(), sizeof(record.id));
+  if (len != sizeof(record.id)) {
+    if (len != reservationBytes || std::memcmp(bytes.data()+sizeof(record.id), "UTC1", 4) ||
+        bytes[reservationBytes-1] != 0) return ReservationState::Error;
+    std::memcpy(record.utc, bytes.data()+sizeof(record.id)+4, sizeof(record.utc));
+    if (*record.utc && !validUtcTimestamp(record.utc)) return ReservationState::Error;
   }
-  return id > 0 && recover(id, utc) && removeIfPresent(path);
+  return record.id > 0 ? ReservationState::Valid : ReservationState::Error;
+}
+
+template<class Recover>
+bool recoverReservation(const char* path, Recover recover, OpenFile open = std::fopen) {
+  Reservation record;
+  switch (readReservation(path, record, open)) {
+    case ReservationState::Missing: return true;
+    case ReservationState::Empty: return removeIfPresent(path); // old writer never started audio
+    case ReservationState::Valid: return recover(record.id, record.utc) && removeIfPresent(path);
+    case ReservationState::Error: return false;
+  }
+  return false;
 }
 }  // namespace note_catalog

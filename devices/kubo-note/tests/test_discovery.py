@@ -41,6 +41,17 @@ class DiscoveryTests(unittest.TestCase):
                     counts.assert_called_once_with(server.bridge.state, config, expected)
                     handler.send_json.assert_called_once_with(200, {"counts": "2026-11-20,2,1"})
 
+    def test_wifi_home_probe_does_not_check_transcription(self):
+        config = {"token": "legacy-token", "device_tokens": {"device-a": "unit-a"}}
+        unavailable = Mock(side_effect=AssertionError("The Home request must not check ASR"))
+        backend = SimpleNamespace(config=config, local_transcription_status=unavailable)
+        endpoint = SimpleNamespace(server=SimpleNamespace(bridge=backend), path="/pala/ready",
+                                   headers={"Authorization": "Bearer unit-a", "X-Pala-Home": "1"},
+                                   send_json=Mock(), send_error=Mock())
+        bridge.Handler.do_GET(endpoint)
+        endpoint.send_json.assert_called_once_with(200, {"ready": False})
+        unavailable.assert_not_called()
+
     def test_includes_changed_address_and_excludes_unapproved_interface(self):
         config = {"host": "192.168.1.31", "discovery_networks": ["192.168.1.0/24"]}
         self.assertEqual(allowed_addresses(config, ["192.168.1.63", "10.59.167.226"]), {"192.168.1.63"})

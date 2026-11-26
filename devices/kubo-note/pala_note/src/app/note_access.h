@@ -3,6 +3,8 @@
 #include "note_config.h"
 
 bool noteAccessConfigured();
+bool noteAccessPasswordRequired();
+const char* noteAccessSetPasswordRequired(bool required);
 bool noteAccessSessionValid(NoteConfigTransport transport, const String& token);
 const char* noteAccessLogin(NoteConfigTransport transport, const String& password, String& token);
 void noteAccessLogout(NoteConfigTransport transport);

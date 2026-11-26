@@ -33,13 +33,15 @@ class RecordingSyncInterruptWiring(unittest.TestCase):
     def test_only_empty_work_replies_close_a_drained_request(self):
         close = between(MAIN, "void finishDrainedRecordingSync() {", "void rememberRecordingSyncNote(")
         for guard in ("!noteCatalogReady()", "!syncQueueReady()", "recordingRequestedDuringSync()",
-                      "queue.audio || queue.organization"):
+                      "queue.audio || (queue.organization && !PALA_RECORDER_FIRST)"):
             self.assertLess(close.index(guard), close.index("recordingSync.finish()"))
         ble = between(USB, "void nextBluetoothWork()", "bool offerRecording(")
         usb = between(USB, "void selectRecording(", "void exportTranscript(")
         self.assertIn("finishDrainedRecordingSync();", ble)
         self.assertIn("finishDrainedRecordingSync();", usb)
-        self.assertEqual(USB.count("finishDrainedRecordingSync();"), 2)
+        recorder = between(USB, "bool handleRecorderWork(", "void handleCommand(")
+        self.assertIn('if (syncQueueCounts().audio == 0) finishDrainedRecordingSync();', recorder)
+        self.assertEqual(USB.count("finishDrainedRecordingSync();"), 3)
 
     def test_common_record_entry_resumes_the_actual_schedule_only(self):
         capture = between(MAIN, "void captureMemory() {", "void askBrain() {")

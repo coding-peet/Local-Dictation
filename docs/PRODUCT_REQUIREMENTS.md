@@ -1078,3 +1078,46 @@ clear to the user, preserve original recognition, and keep manual edits dominant
   inside the empty battery icon to indicate that the Note needs charging.
 
 Retest sign-in over Bluetooth with Wi-Fi disabled and USB disconnected.
+
+## Pala Note recorder-first rework · 2026-11-25
+
+- Wake with the lower button and accept an upper REC hold during startup.
+  Capture audio ahead of archive IO, radio and display work.
+- Keep WAV and local transcripts in monthly folders on the Note's SD.
+  Paired USB sync sets the hardware clock from Bridge UTC and checks its
+  readback. After deep sleep, new recordings use the retained time.
+  Use a durable audio queue and a separate pending-delivery state.
+  Another paired Bridge can use a confirmed transcript and its original
+  destination. Keep Bridge audio transient.
+- Open Web Companion at Settings and show SD utilization alongside battery
+  and RAM. Provide a monthly archive with playback, WAV download, logs,
+  transcript export and explicit month deletion with pending counts.
+- Put the Note card first in Settings. Use Note and Bridge as the default
+  hardware and service labels. Keep delivery controls in Bridge settings.
+  Recorder transcript delivery routes saved text to configured Tasks lists.
+- Preserve the original sleep defaults of one minute on Home, up to three
+  minutes with queued work and five minutes in Web Companion.
+- On the home LAN, the Recorder advertises Web Companion under its saved
+  device name via mDNS and displays the local hostname and fallback IP.
+  Renaming takes effect when Companion next opens.
+- Require a password by default for Web Companion and Bluetooth settings.
+  Allow the owner to turn the requirement off or back on over paired USB.
+  Preserve the saved password and wireless Bridge pairing.
+- Source Saved items and Calendar from the connected account. Show a labeled
+  offline snapshot for up to 24 hours. Google access for Kubo uses Workspace
+  MCP. Ask Kubo can search the web and read tasks on request. Account writes
+  use dictation and sync.
+- Refresh Home from an available paired Bridge on an upper triple tap.
+  This includes Codex allowance, open tasks and weather with an empty queue
+  and with transcript delivery or local transcription unavailable.
+- Use the configured AI model to title long saved notes. Keep the details
+  and reuse the title if delivery is retried.
+- Keep purchase items free of internal delivery codes. Merge known forms of
+  the same spoken product, including “šunka” and “šunku”. An uncertain
+  provider write cannot be retried as a second insert.
+- Start a fresh archive after Peter completes sync on the old device.
+
+The [recorder-first design](superpowers/specs/2026-11-25-pala-note-recorder-design.md)
+supersedes the earlier full local archive and agenda-index requirements for
+this branch. The [implementation plan](superpowers/plans/2026-11-25-pala-note-recorder-rework.md)
+tracks work and qualification.

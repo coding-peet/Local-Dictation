@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import threading
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -63,6 +64,8 @@ class FakePala:
                 self.outbox = io.BytesIO(b"")
             else:
                 self.reply("OK" if args == [self.proof("host")] else "ERROR AUTH")
+        elif command in ("WORK-PROTOCOL", "CLOCK"):
+            self.reply("ERROR COMMAND")
         elif command in ("NEXT", "SELECT"):
             self.reply("EMPTY" if self.empty else f"NOTE 42 {len(self.audio)}")
         elif command == "META":
@@ -143,6 +146,79 @@ class UsbSyncTests(unittest.TestCase):
                             usb_sync.config_exchange(link, {"op": operation})
                 self.assertEqual(note.writes, 1)
 
+    def test_windows_usb_serial_matches_firmware_pairing_id(self):
+        port = SimpleNamespace(device="COM25", vid=0x303A, pid=0x1001, serial_number="70:04:1D:D8:16:A8")
+        identity = "70041dd816a8"
+        self.assertEqual(usb_sync.paired_port([port], "COM25", {identity: TOKEN}), (identity, TOKEN))
+        stop = threading.Event()
+        seen = []
+        def drain(name, token):
+            seen.append((name, token))
+            stop.set()
+        usb_sync.watch_paired(lambda: [port], {identity: TOKEN}, lambda: True, drain, stop,
+                              self.fail, flush=stop.set)
+        self.assertEqual(seen, [("COM25", TOKEN)])
+        port.serial_number = "70:04:1D:D8:16:A9"
+        with self.assertRaises(UsbSyncError):
+            usb_sync.paired_port([port], "COM25", {identity: TOKEN})
+
+    def test_one_shot_recorder_sync_checks_clock_then_reads_work(self):
+        from contextlib import nullcontext
+        from unittest.mock import Mock
+
+        port = SimpleNamespace(device="COM25", serial_number="70041dd816a8", vid=0x303a, pid=0x1001)
+        link = FakePala(empty=True)
+        store = Mock()
+        store.tokens.return_value = {port.serial_number: TOKEN}
+        store.devices.return_value = {port.serial_number: {"id": "peer", "token": TOKEN}}
+        events = []
+
+        def drain(link, token, bridge, device, stop, activity, *, only_note, one):
+            self.assertFalse(stop.is_set())
+            self.assertEqual((device, only_note, one), (port.serial_number, 42, True))
+            events.append("work")
+            return False, False
+
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch("pair.STATE", Path(tmp)),
+            patch("sys.argv", ["usb_sync", "--port", "COM25", "--note", "42"]),
+            patch("serial.tools.list_ports.comports", return_value=[port]),
+            patch("note_settings.EnrollmentStore", return_value=store),
+            patch("bridge.Bridge"),
+            patch("pala_google.UsbGoogleDelivery"),
+            patch.object(usb_sync, "_open_link", return_value=nullcontext(link)),
+            patch.object(usb_sync, "transfer_usb_clock", side_effect=lambda *_: events.append("clock")),
+            patch.object(usb_sync, "_recorder_protocol", return_value=True),
+            patch.object(usb_sync, "_drain_recorder_work", side_effect=drain),
+        ):
+            usb_sync.main()
+        self.assertEqual(events, ["clock", "work"])
+
+    def test_usb_clock_sets_signed_utc_and_verifies_readback(self):
+        class ClockNote(FakePala):
+            def write(self, raw):
+                if not raw.startswith(PREFIX + b"CLOCK "):
+                    return super().write(raw)
+                self.assert_frame(raw)
+                verb, utc, signature = raw[len(PREFIX):].decode().split()
+                self.calls.append((verb, [utc]))
+                assert signature == self.proof("clock " + utc)
+                receipt = self.proof("clock-saved " + (utc if not self.fail_commit else "0"))
+                self.reply("CLOCK-SAVED " + receipt)
+                return len(raw)
+
+        self.assertTrue(hasattr(usb_sync, "transfer_usb_clock"))
+        with patch("usb_sync.time.time", return_value=1795649700.9):
+            note = ClockNote()
+            self.assertTrue(usb_sync.transfer_usb_clock(note, (TOKEN,)))
+            self.assertEqual(note.calls[-2], ("CLOCK", ["1795649700"]))
+            self.assertEqual(note.calls[-1][0], "CLOSE")
+            note.fail_commit = True
+            with self.assertRaises(UsbSyncError):
+                usb_sync.transfer_usb_clock(note, (TOKEN,))
+            self.assertFalse(usb_sync.transfer_usb_clock(FakePala(), (TOKEN,)))
+
     def test_holiday_sync_verifies_signed_receipt_for_exact_dates(self):
         from holidays import holiday_snapshot
         snapshot = holiday_snapshot("SK", 2026)
@@ -168,6 +244,21 @@ class UsbSyncTests(unittest.TestCase):
         with self.assertRaisesRegex(UsbSyncError, "did not verify the saved holiday calendar"):
             usb_sync.transfer_holidays(wrong_receipt, (TOKEN,), snapshot)
         self.assertEqual(wrong_receipt.calls[-1][0], "CLOSE")
+
+    def test_home_refresh_runs_even_when_transcription_is_down(self):
+        paired = SimpleNamespace(vid=0x303A, pid=0x1001, serial_number="ABC", device="COM24")
+        stop = threading.Event()
+        refreshed = []
+
+        def status(port, token):
+            refreshed.append((port, token))
+            stop.set()
+            return True
+
+        usb_sync.watch_paired(lambda: [paired], {"abc": TOKEN}, lambda: False,
+                              lambda *_: self.fail("ASR unavailable"), stop, self.fail,
+                              refresh_attachment=status)
+        self.assertEqual(refreshed, [("COM24", TOKEN)])
 
     def test_watcher_waits_for_local_api_and_drains_once_per_paired_attachment(self):
         paired = SimpleNamespace(vid=0x303A, pid=0x1001, serial_number="ABC", device="COM24")
@@ -393,7 +484,7 @@ class UsbSyncTests(unittest.TestCase):
         self.assertEqual(text, device.saved_text.decode("utf-8"))
         self.assertEqual(captured, device.captured)
         self.assertEqual([name for name, _ in device.calls],
-                         ["HELLO", "AUTH", "EXPORT", "READTXT", "READTXT", "READTXT", "CLOSE"])
+                         ["HELLO", "AUTH", "WORK-PROTOCOL", "EXPORT", "READTXT", "READTXT", "READTXT", "CLOSE"])
 
     def test_existing_usb_note_flows_to_one_bound_task_without_asr(self):
         from pala_google import route_saved

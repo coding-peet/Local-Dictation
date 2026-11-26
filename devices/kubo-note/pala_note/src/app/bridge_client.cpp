@@ -6,6 +6,7 @@
 #include <HTTPClient.h>
 #include <WiFi.h>
 #include "bridge_address.h"
+#include "companion_host.h"
 #include "network.h"
 #include "usb_sync.h"
 #include "home_bridge_status.h"
@@ -20,6 +21,7 @@ String cachedHost;
 uint32_t cachedAt = 0;
 uint32_t cacheDuration = 0;
 bool mdnsStarted = false;
+bool httpAdvertised = false;
 
 String selectedId;
 IPAddress selectedLocal;
@@ -56,7 +58,7 @@ IPAddress lookupPairedBridge(const String& host) {
   return mdnsStarted ? MDNS.queryHost(host.substring(0, host.length() - 6).c_str(), 1500) : IPAddress();
 }
 
-WifiBacklog probe(const NotePeer& peer, bool& transcribeOnly) {
+WifiBacklog probe(const NotePeer& peer, bool& transcribeOnly, bool homeOnly) {
   if (!configured(peer)) return WifiBacklog::Unavailable;
   ProviderClient client(peer);
   client.setHandshakeTimeout(2);
@@ -65,18 +67,20 @@ WifiBacklog probe(const NotePeer& peer, bool& transcribeOnly) {
   http.setConnectTimeout(1500);
   http.setTimeout(2000);
   http.addHeader("Authorization", "Bearer " + peer.token);
-  http.addHeader("X-Pala-Receipts", "1");
+  if (homeOnly) http.addHeader("X-Pala-Home", "1");
+  else http.addHeader("X-Pala-Receipts", "1");
   const int status = http.GET();
   int receipt = 0;
   const int length = http.getSize();
   WifiBacklog readiness = WifiBacklog::Unavailable;
-  if ((status == HTTP_CODE_OK || status == HTTP_CODE_SERVICE_UNAVAILABLE) &&
-      length > 0 && length <= 96) {
+  if ((status == HTTP_CODE_OK || status == HTTP_CODE_SERVICE_UNAVAILABLE ||
+       (homeOnly && status == HTTP_CODE_BAD_GATEWAY)) && length > 0 && length <= 96) {
     const String payload = http.getString();
     JsonDocument document;
     if (payload.length() == static_cast<size_t>(length) && !deserializeJson(document, payload)) {
       const JsonVariantConst ready = document["ready"];
-      readiness = classifyWifiReadiness(status, ready.is<bool>(), ready.as<bool>());
+      readiness = homeOnly && ready.is<bool>()
+          ? WifiBacklog::Ready : classifyWifiReadiness(status, ready.is<bool>(), ready.as<bool>());
       receipt = document["receipt"] | 0;
       transcribeOnly = readiness != WifiBacklog::Unavailable && document["processing"] == "transcribe";
     }
@@ -97,7 +101,7 @@ void remember(const String& id, WifiBacklog status) {
 }
 }
 
-WifiBacklog pairedWifiBacklog() {
+WifiBacklog pairedWifiBacklog(bool homeOnly) {
   if (WiFi.status() != WL_CONNECTED) return WifiBacklog::Unavailable;
   const String previous = noteLastBridge();
   const int count = notePeerCount();
@@ -110,11 +114,11 @@ WifiBacklog pairedWifiBacklog() {
   }
   bool transcribeOnly[kNoteMaxPeers] = {};
   const auto selected = selectWifiBacklog(count, previousIndex,
-      [&](int index) { return probe(notePeerAt(index), transcribeOnly[index]); });
+      [&](int index) { return probe(notePeerAt(index), transcribeOnly[index], homeOnly); });
   selectedTranscribeOnly = selected.index >= 0 && transcribeOnly[selected.index];
   const String id = selected.index >= 0 ? notePeerAt(selected.index).id : String();
   remember(id, selected.status);
-  if (selected.status == WifiBacklog::Ready && id != previous) noteSetLastBridge(id);
+  if (!homeOnly && selected.status == WifiBacklog::Ready && id != previous) noteSetLastBridge(id);
   return selected.status;
 }
 
@@ -131,6 +135,27 @@ NotePeer selectedWifiBridge() {
 
 bool wifiBridgeTranscriptionOnly() {
   return configured(selectedWifiBridge()) && selectedTranscribeOnly;
+}
+
+void stopNoteMdns() {
+  if (mdnsStarted) MDNS.end();
+  mdnsStarted = false;
+  httpAdvertised = false;
+}
+
+void startCompanionMdns() {
+  // A background Bridge lookup can already own the single mDNS responder.
+  stopNoteMdns();
+  const auto name = companion_host::label(palaNoteName().c_str());
+  mdnsStarted = MDNS.begin(name.c_str());
+  if (mdnsStarted) httpAdvertised = MDNS.addService("http", "tcp", 80);
+  else MDNS.end();
+}
+
+String companionLocalAddress() {
+  char name[MDNS_NAME_BUF_LEN]{};
+  if (!httpAdvertised || mdns_hostname_get(name) != ESP_OK || !name[0]) return {};
+  return String(name) + ".local";
 }
 
 void resetBridgeAddressCache() {

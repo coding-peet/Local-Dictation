@@ -57,6 +57,10 @@
 #define REC_BUF      (8 * 1024)
 
 /* Storage paths */
+#ifndef PALA_RECORDER_FIRST
+#define PALA_RECORDER_FIRST 0
+#endif
+
 #define NOTES_DIR  "/notes"
 #define INDEX_FILE "/notes/index.csv"
 
@@ -78,6 +82,10 @@
 #define PALA_PRIVATE_DIAGNOSTICS 0
 #endif
 #define LOCAL_TZ_RULE          "CET-1CEST,M3.5.0,M10.5.0/3"
+#if PALA_RECORDER_FIRST
+#undef PALA_NOTE_VERSION
+#define PALA_NOTE_VERSION "2.0.0-recorder-test4-clock"
+#endif
 #ifndef PALA_NOTE_VERSION
 #define PALA_NOTE_VERSION "2.0.0-rc43"
 #endif

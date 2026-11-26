@@ -69,7 +69,7 @@ internal static class PalaBridgeActivity
             "waiting" => "Waiting for Local Dictation",
             "transcribing" => "Transcribing on this PC",
             "processing" => "Preparing note",
-            "returning" => "Sending transcript to Pala",
+            "returning" => "Sending transcript to the Note",
             "settings" => "Syncing name and weather",
             "weather" => "Fetching weather",
             "google" => "Saving to Google",

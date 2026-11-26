@@ -8,6 +8,7 @@
 #include "../../globals.h"
 #include "draw.h"
 #include "notes.h"
+#include "monthly_recordings.h"
 #include "tasks.h"
 #include "agenda_index.h"
 #include "task_visibility.h"
@@ -119,7 +120,7 @@ const char* translatedUi(const char* english) {
       {"STORAGE FULL", "PLNA PAMAT"},
       {"RECORD AGAIN", "NAHRAJ ZNOVA"},
       {"ASK AGAIN", "OPYTAJ SA ZNOVA"},
-      {"KUBO DISABLED", "KUBO VYPNUTE"},
+      {"PROCESSING OFF", "SPRACOVANIE VYPNUTE"},
       {"NO WIFI", "BEZ WI-FI"},
       {"VOICE FAILED", "CHYBA HLASU"},
       {"BRIEF FAILED", "CHYBA SUHRNU"},
@@ -522,14 +523,15 @@ void drawSunGlyph(int x, int y, bool rays) {
   }
 }
 
-void drawCloudGlyph(int x, int y) {
+void drawCloudGlyph(int x, int y, int height = 12) {
   static constexpr int outline[][2] = {
     {-8, 4}, {-9, 2}, {-8, -1}, {-5, -1}, {-3, -5}, {0, -6},
     {3, -5}, {5, -2}, {7, -2}, {10, 1}, {10, 3}, {7, 6}, {-6, 6}, {-8, 4},
   };
+  const auto ordinate = [y, height](int dy) { return y + (dy + 6) * height / 12 - height / 2; };
   for (size_t i = 1; i < sizeof(outline) / sizeof(outline[0]); ++i) {
-    line(x + outline[i - 1][0], y + outline[i - 1][1],
-         x + outline[i][0], y + outline[i][1], BLACK);
+    line(x + outline[i - 1][0], ordinate(outline[i - 1][1]),
+         x + outline[i][0], ordinate(outline[i][1]), BLACK);
   }
 }
 
@@ -550,22 +552,29 @@ void drawWeatherGlyph(int x, int y, WeatherGlyph glyph) {
       hline(x - 9, y + 5, 17, BLACK);
       return;
     case WeatherGlyph::Rain:
-    case WeatherGlyph::Snow:
-    case WeatherGlyph::Thunder:
       drawCloudGlyph(x, y - 2);
-      if (glyph == WeatherGlyph::Rain) {
-        for (int dx : {-5, 0, 5}) line(x + dx, y + 6, x + dx - 1, y + 8, BLACK);
-      } else if (glyph == WeatherGlyph::Snow) {
-        for (int dx : {-5, 0, 5}) {
-          px(x + dx, y + 6, BLACK);
-          px(x + dx + 1, y + 8, BLACK);
-        }
-      } else {
-        line(x + 1, y + 5, x - 2, y + 6, BLACK);
-        line(x - 2, y + 6, x + 2, y + 6, BLACK);
-        line(x + 2, y + 6, x, y + 8, BLACK);
+      for (int dx : {-5, 0, 5}) line(x + dx, y + 6, x + dx - 1, y + 8, BLACK);
+      return;
+    case WeatherGlyph::Snow:
+      drawCloudGlyph(x, y - 3, 10);
+      for (int dx : {-5, 5}) {
+        line(x + dx - 2, y + 4, x + dx + 2, y + 8, BLACK);
+        line(x + dx + 2, y + 4, x + dx - 2, y + 8, BLACK);
+        hline(x + dx - 2, y + 6, 5, BLACK);
       }
       return;
+    case WeatherGlyph::Thunder: {
+      drawCloudGlyph(x, y - 2);
+      // Keep a white pixel between the bolt and each side of the cloud base.
+      hline(x - 2, y + 4, 6, WHITE);
+      static constexpr int bolt[][2] = {
+        {1, 2}, {0, 2}, {-1, 2}, {-2, 2}, {-3, 6},
+        {-1, 4}, {0, 2}, {-1, 2}, {-2, 2}, {-2, 1},
+      };
+      for (int row = 0; row < 10; ++row)
+        hline(x + bolt[row][0], y - 1 + row, bolt[row][1], BLACK);
+      return;
+    }
     case WeatherGlyph::Unknown: return;
   }
 }
@@ -573,12 +582,12 @@ void drawWeatherGlyph(int x, int y, WeatherGlyph glyph) {
 void drawMoonGlyph(int x, int y, MoonPhase phase) {
   constexpr int radius = 8;
   if (phase == MoonPhase::Unknown) return;
-  if (phase == MoonPhase::Full) {
+  if (phase == MoonPhase::New) {
     fillCircle(x, y, radius, BLACK);
     return;
   }
   strokeCircle(x, y, radius, 1, BLACK);
-  if (phase == MoonPhase::New) return;
+  if (phase == MoonPhase::Full) return;
   const int index = static_cast<int>(phase);
   const int illumination = index < 4 ? index : 8 - index;
   const int edge = illumination == 1 ? 7 : illumination == 2 ? 0 : -7;
@@ -586,7 +595,8 @@ void drawMoonGlyph(int x, int y, MoonPhase phase) {
     int span = radius - 1;
     while (span * span + dy * dy >= radius * radius) --span;
     for (int dx = -span; dx <= span; ++dx) {
-      if ((index < 4 ? dx : -dx) * 10 >= edge * span) px(x + dx, y + dy, BLACK);
+      // The illuminated side stays white. Waxing lights the right side.
+      if ((index < 4 ? dx : -dx) * 10 < edge * span) px(x + dx, y + dy, BLACK);
     }
   }
 }
@@ -996,8 +1006,9 @@ void showRecordingProgress(uint32_t elapsedMs, int moments) {
 void showSaved(int noteNumber) {
   clearWhite();
   char number[12];
-  snprintf(number, sizeof(number), "#%03d", noteNumber % 1000);
-  drawHeader(noteNumber > 0 ? number : "PALA NOTE", BLACK);
+  const auto ordinal = monthly_recordings::sequence(noteNumber);
+  snprintf(number, sizeof(number), "#%03d", ordinal ? int(ordinal % 1000) : noteNumber % 1000);
+  drawHeader(noteNumber > 0 ? number : "NOTE", BLACK);
   strokeCircle(36, 67, 14, 2, BLACK);
   thickLine(29, 67, 34, 73, 2, BLACK);
   thickLine(34, 73, 44, 60, 2, BLACK);
@@ -1163,6 +1174,33 @@ constexpr int kCompanionAddressY = 101;
 constexpr int kCompanionAddressHeight = 28;
 constexpr int kCompanionPasswordY = 135;
 
+void drawCompanionAddress(const String& ip, const String& hostname) {
+  constexpr int maxWidth = kContentWidth - 12;
+  const String& host = hostname.isEmpty() ? ip : hostname;
+  const String url = String("http://") + host;
+  const String& address = textW(url.c_str(), 1) <= maxWidth ? url : host;
+  if (textW(address.c_str(), 1) <= maxWidth) {
+    fillRect(kInset, kCompanionAddressY, kContentWidth, kCompanionAddressHeight, BLACK);
+    const int scale = textW(address.c_str(), 2) <= maxWidth ? 2 : 1;
+    drawStrInBox(kInset, kCompanionAddressY, kContentWidth, kCompanionAddressHeight,
+                 address.c_str(), scale, WHITE);
+    if (!hostname.isEmpty()) labelRight(kCompanionPasswordY, ip.c_str(), 1, BLACK);
+    return;
+  }
+
+  // Keep the complete .local address visible even for wide letters and name collisions.
+  int split = host.lastIndexOf('.');
+  if (split <= 0) split = host.length();
+  while (split > 1 && textW(host.substring(0, split).c_str(), 1) > maxWidth) --split;
+  constexpr int lineHeight = 21;
+  fillRect(kInset, kCompanionAddressY, kContentWidth, 2 * lineHeight, BLACK);
+  drawStrInBox(kInset, kCompanionAddressY, kContentWidth, lineHeight,
+               host.substring(0, split).c_str(), 1, WHITE);
+  drawStrInBox(kInset, kCompanionAddressY + lineHeight, kContentWidth, lineHeight,
+               host.substring(split).c_str(), 1, WHITE);
+  if (!hostname.isEmpty()) labelRight(kCompanionAddressY + 2 * lineHeight + 4, ip.c_str(), 1, BLACK);
+}
+
 void drawCompanionNetworkName(const String& network) {
   String name = normalizeForDisplay(network);
   if (!name.length()) name = "SSID";
@@ -1196,7 +1234,7 @@ void drawCompanionVolumeOverlay(int percent) {
 }
 }  // namespace
 
-void showTransferMode(CompanionLink link, const String& network, const String& ip,
+void showTransferMode(CompanionLink link, const String& network, const String& ip, const String& hostname,
                       const String& apPassword, int batteryPercent, int volumeOverlay) {
   clearWhite();
   drawModeHeaderWithBattery("WEB", batteryPercent);
@@ -1213,12 +1251,7 @@ void showTransferMode(CompanionLink link, const String& network, const String& i
     labelLeft(kContentTop, hotspot ? "Hotspot" : uiText("WLAN-Netz", "Wi-Fi network"), 1, BLACK);
     drawCompanionNetworkName(network);
 
-    const String address = String("http://") + ip;
-    const bool fitsUrl = textW(address.c_str(), 1) <= kContentWidth - 12;
-    const int addressScale = !fitsUrl && textW(ip.c_str(), 2) <= kContentWidth - 12 ? 2 : 1;
-    fillRect(kInset, kCompanionAddressY, kContentWidth, kCompanionAddressHeight, BLACK);
-    drawStrInBox(kInset, kCompanionAddressY, kContentWidth, kCompanionAddressHeight,
-                 fitsUrl ? address.c_str() : ip.c_str(), addressScale, WHITE);
+    drawCompanionAddress(ip, hostname);
     if (hotspot) {
       labelLeft(kCompanionPasswordY, uiText("WPA2", "Key"), 1, BLACK);
       labelRight(kCompanionPasswordY, apPassword.c_str(), 1, BLACK);

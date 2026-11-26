@@ -107,10 +107,10 @@ class CodexUsage:
         self.next_check = 0
         self.refreshing = False
 
-    def get(self):
+    def get(self, *, force=False):
         now = time.monotonic()
         with self.lock:
-            if not self.refreshing and now >= self.next_check:
+            if not self.refreshing and (force or now >= self.next_check):
                 self.next_check = now + 300
                 self.refreshing = True
                 threading.Thread(target=self._refresh, daemon=True).start()

@@ -88,6 +88,9 @@
     dl { margin: 15px 0; }
     dt { font-weight: 650; margin-top: 17px; }
     dd { margin: 4px 0 0; color: var(--muted); }
+    .weather-icons { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10.75rem), 1fr)); gap: .5rem; list-style: none; padding: 0; }
+    .weather-icons li { display: flex; align-items: center; gap: .4rem; margin: 0; padding: .25rem; min-width: 0; font-size: .9rem; }
+    .weather-icons img { flex: none; background: #fff; border-radius: 4px; image-rendering: pixelated; }
     .top-link { font-size: 12px; }
     footer { border-top: 1px solid var(--line); margin-top: 44px; padding-top: 18px; color: var(--muted); font-size: 12px; }
     @media (prefers-color-scheme: dark) {
@@ -157,7 +160,7 @@
             <li><a href="#private-recording">Private recording</a></li>
             <li><a href="#personal-dictionary">Personal dictionary</a></li>
             <li><a href="#settings">General and shortcuts</a></li>
-            <li><a href="#connections">Connections and Pala Note</a></li>
+            <li><a href="#connections">Connections and Note</a></li>
             <li><a href="#troubleshooting">Troubleshooting</a></li>
             <li><a href="#privacy">Local files and privacy</a></li>
           </ul>
@@ -394,7 +397,7 @@
 
       <section id="settings" aria-labelledby="settings-title">
         <h2 id="settings-title">General and shortcuts</h2>
-        <p>The main sections are <strong>General → Models → Dictation → History → Connections</strong>. General controls the app, Models manages installed resources, Dictation prepares your next recording, and History works with saved or imported results. <a href="#connections">Connections</a> manages the local transcription service and Pala Note. Manual launch opens Dictation; Record/Stop and Help remain available from every section.</p>
+        <p>The main sections are <strong>General → Models → Dictation → History → Connections</strong>. General controls the app, Models manages installed resources, Dictation prepares your next recording, and History works with saved or imported results. <a href="#connections">Connections</a> manages the local transcription service and the Note. Manual launch opens Dictation; Record/Stop and Help remain available from every section.</p>
         <h3>Read aloud</h3>
         <p>Select text in a supported Windows app and press <kbd>Ctrl</kbd> + <kbd>Left Alt</kbd> + <kbd>R</kbd>. Press the same shortcut again to stop playback or cancel a pending request. Starting dictation also stops read-aloud.</p>
         <p>For clipboard text, right-click the Local Dictation tray icon and choose <strong>Read from clipboard</strong>. While reading, the tray offers <strong>Stop reading</strong>. The connected speech-enabled local API reads short Slovak selections of up to 500 characters using Piper Lili.</p>
@@ -439,7 +442,7 @@
       </section>
 
       <section id="connections" aria-labelledby="connections-title">
-        <h2 id="connections-title">Connections and Pala Note</h2>
+        <h2 id="connections-title">Connections and Note</h2>
 
         <h3>Local transcription service</h3>
         <p>Local Dictation starts its local transcription service automatically when it opens.
@@ -447,33 +450,56 @@
           to check the connection again or <strong>Start local API</strong> to retry startup.
           Wait for <strong>Ready · Local transcription</strong> before recording.</p>
         <p>To edit the address, open <strong>Advanced → Local service address</strong>.
-          The default is <code>http://127.0.0.1:48125</code>. Pala Bridge uses this same service.
+          The default is <code>http://127.0.0.1:48125</code>. Bridge uses this same service.
           TypeWhisper uses its separate service on port <code>8123</code>.
           The local transcription service keeps running after the app exits.</p>
 
-        <h3>Sync a paired Pala Note</h3>
-        <p>Open <strong>Pala Note Configuration</strong> and turn on <strong>Enable Pala sync</strong>.
+        <h3>Sync a paired Note</h3>
+        <p>Open <strong>Note Configuration</strong> and turn on <strong>Enable Note sync</strong>.
           Some versions call this switch <strong>Enable Pala integration</strong>.
           Keep Local Dictation running and wake the Note with the lower button.</p>
         <p>Open <strong>Note settings</strong> from Local Dictation and go to <strong>Bridge</strong>.
-          Turn <strong>Kubo processing</strong> off for local transcription saved on Note. This mode needs no Codex or Google sign-in.</p>
-        <p>Turn it on to organize notes and use configured Google destinations. Run <code>codex login</code>,
-          then choose <strong>Check Codex sign-in</strong>. Set the exact Google Tasks list name and personal calendar ID.</p>
-        <p>In <strong>Connections</strong>, choose the <strong>Kubo processing model</strong> and its
-          <strong>Reasoning effort</strong> side by side. The default effort is High. Use <strong>Refresh Codex models</strong> to
-          update the available models and levels from the signed-in account.</p>
+          On Recorder firmware, <strong>Deliver transcripts</strong> sends saved transcripts to configured Google Tasks lists. Local transcription and the Note archive work with delivery off.</p>
+        <p>On older firmware, <strong>Process transcripts</strong> can also route notes to Google Calendar.
+          In <strong>Connections</strong>, choose the <strong>Processing model</strong> and its
+          <strong>Reasoning effort</strong>. The default effort is High. Use <strong>Refresh Codex models</strong>
+          to update the models available to the signed-in account.</p>
         <p>Choose <strong>Note transcripts</strong> to read an original Note transcript and see Bridge decisions about
           processing, routing and delivery. A calendar request without a concrete time remains available here.</p>
 
-        <p>Open <strong>Note password</strong> over paired local USB to set the password.
-          Enter the new password twice. Use the password to sign in to Web Companion
-          over Wi-Fi and to Note settings over Bluetooth. To change it on a wireless
-          connection, enter the current password and repeat the new password.</p>
+        <p>Open <strong>Note password</strong> over paired USB to set the password.
+          Password protection is on by default for Web Companion and Bluetooth settings.
+          To change the policy over paired USB, turn <strong>Require password</strong> on or off
+          and choose <strong>Save protection</strong>. The Note keeps your saved password when protection is off.</p>
         <p>Choose <strong>Open Note settings</strong> to open the shared settings page in
           your local browser. Edit the Note, saved Wi-Fi networks, Bridge name and
           forecast town on that page. Open-Meteo uses the weather town and optional
           country code to find the forecast location. Leave the town blank to turn
-          off the forecast.</p>
+          off the forecast. <a href="#note-weather">See the weather icons</a>.</p>
+
+        <p>A paired USB sync sets the Note clock from the computer. The hardware clock keeps time during deep sleep and determines the archive month for new recordings.</p>
+        <h3 id="note-weather">Weather icons on Home</h3>
+        <p>The weather icon is left of today's low and high temperatures.
+          The Moon is on the right. A full Moon is an empty circle and a new Moon is solid black.
+          White shows the illuminated part.</p>
+        <!-- Icon pixels rendered from drawWeatherGlyph in the Note firmware. -->
+        <ul class="weather-icons" aria-label="Weather icon legend">
+          <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAARCAAAAADr+JOWAAAAQ0lEQVR4nGP4jwIY8PBwSSILM2CIYWGhmcOAwsfgYDMewUYSwcLEsJyBAUUSajUxOgnaid+1ePyJL4Twhy02W/BJAgAw6bZY3MC1vwAAAABJRU5ErkJggg==" width="56" height="34" alt=""><span>Clear</span></li>
+          <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAARCAAAAADr+JOWAAAAUklEQVR4nI2QAQoAIAgD9/9PG1akmxUKIezIscEM5gOsnQfyCjxLKatCYe4VIlnLz2l9MB3S620IdY770gIFvzXwSLhTduCF/iAXV1iWPEyMKwP5FZ1xv5AbFgAAAABJRU5ErkJggg==" width="56" height="34" alt=""><span>Partly cloudy</span></li>
+          <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAARCAAAAADr+JOWAAAARklEQVR4nJXPWwoAIAgEwL3/pYsEaX2i/qRNZeI0gTkCpuZChDlJsUXK9Gld0q+gmEg2zBGvA0y0Q+oZ1HV7w/yomoX7BV4us6xi6IIHvAAAAABJRU5ErkJggg==" width="56" height="34" alt=""><span>Overcast</span></li>
+          <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAARCAAAAADr+JOWAAAAIklEQVR4nGP4jwcwUCrJgA6oYywlkgyY7hlAB2EPIFrZCQCpx6pk3V5maQAAAABJRU5ErkJggg==" width="56" height="34" alt=""><span>Fog</span></li>
+          <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAARCAAAAADr+JOWAAAASUlEQVR4nI3PWxYAIAQE0Nn/pnV8OIxR8dHrioLVAEBbohgUIUdLLKsoHdP4FM5pSild8cdBX1h6irZu/pmMWzO5z12y2goHswNH8aNrP8ySegAAAABJRU5ErkJggg==" width="56" height="34" alt=""><span>Rain</span></li>
+          <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAARCAAAAADr+JOWAAAATklEQVR4nJWQ2w4AIAhC+f+frrUuoDFXvaSeCCYaD+aRwV3iF0q1v95X8Bo9YQBUPUBDKwifX9ozXOsJWzJRsj4nz0rIuxyETs6zVDrPDipmk3uxr6hSAAAAAElFTkSuQmCC" width="56" height="34" alt=""><span>Snow</span></li>
+          <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAARCAAAAADr+JOWAAAAUElEQVR4nI3QWQrAIAxF0bv/TVsKDX2Dgn5o9IQYZekAbGs0UyN1dIkSTelZtq14TqilaLM08kdVVi4uDLPHvS1/XreBTLs3nD8+zTEs0G09Ho6ZdTw4wu4AAAAASUVORK5CYII=" width="56" height="34" alt=""><span>Thunderstorm</span></li>
+        </ul>
+        <p>Drizzle, freezing rain and rain showers use Rain. Snow showers use Snow.
+          Thunderstorms with hail use Thunderstorm. Without a forecast for today,
+          the weather icon and temperatures are blank.</p>
+        <p>To open Web Companion, wake the Note and hold both buttons for about
+          3 seconds from Home. Open the address on its display and sign in if
+          prompted. In <strong>Settings → Note</strong>, expand <strong>Weather icons</strong>.
+          From Windows the same settings help is available via
+          <strong>Connections → Open Note settings</strong>.</p>
         <p>Set <strong>Holiday country</strong> to Slovakia or Czechia. After syncing
           a compatible Note with Bridge, days off for public holidays appear in bold
           in the monthly calendars and the weekly strip on Home, including offline.
@@ -488,7 +514,9 @@
         <p>On the awake <strong>Home</strong> screen, tap the lower button once to open
           Events when enabled, twice for the weekly briefing, or three times to open
           the aquarium. Hold the lower button to ask Kubo and release it when
-          you finish speaking. Tap the upper button three times to sync recordings.</p>
+          you finish speaking. Tap the upper button three times to sync recordings.
+          Recorder Test 4 also refreshes Home from a paired Bridge when the recording
+          queue is empty.</p>
         <p>In <strong>Recording sync</strong>, choose <strong>Immediately on wake</strong>,
           <strong>After recording</strong>, <strong>Before sleep</strong> (default),
           or <strong>Manual only</strong>. Before sleep allows up to two extra minutes
@@ -502,6 +530,9 @@
           choose USB or Bluetooth on the page, and confirm on the Note. For Bluetooth,
           compare the six digits shown on the Note and in the browser before confirming
           on both. The Note’s Web Companion offers the same settings page over Wi-Fi.</p>
+        <p>With Recorder mDNS firmware, a Note named <strong>Kubo Note</strong> opens at
+          <code>http://kubo-note.local</code> while Web Companion is open on the same Wi-Fi network.
+          After changing the Note name, reopen Companion. Its screen also shows the IP address.</p>
         <ul>
           <li><strong>USB</strong> takes priority when the Note is connected with a data cable.</li>
           <li><strong>Wi-Fi</strong> requires the Note and PC to be on the same approved network. Select
@@ -518,10 +549,11 @@
 
         <h3>Name, model and activity</h3>
         <p><strong>Note display name</strong> sets the label shown on the device after synchronization
-          with compatible firmware. <strong>Pala transcription model</strong> lets you keep the paired
+          with compatible firmware. <strong>Note transcription model</strong> lets you keep the paired
           profile's model, follow the main Local Dictation model, or select another installed model
-          that supports Slovak. Model changes apply to the next Pala transcription.</p>
-        <p>Turn on <strong>Enable Pala sync</strong> to use <strong>Open Note settings</strong>
+          that supports Slovak. Model changes apply to the next Note transcription.</p>
+        <p>To change password protection, connect a paired Note by USB and open <strong>Note password</strong> in Note settings. Protection defaults to on for Web Companion and Bluetooth settings.</p>
+        <p>Turn on <strong>Enable Note sync</strong> to use <strong>Open Note settings</strong>
           in the same row. The transcription model is directly below. The <strong>Bridge</strong>
           heading shows the network status or HTTPS address on the right. <strong>Standalone</strong>
           means the Bridge started separately and its controls are unavailable here. Hover over the

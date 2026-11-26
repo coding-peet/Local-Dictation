@@ -45,13 +45,21 @@ REPLY_TYPES = {
     "PUT": ("OK",),
     "COMMIT": ("SAVED",),
     "NAME": ("NAME-SAVED",),
+    "CLOCK": ("CLOCK", "CLOCK-SAVED"),
     "DELIVERY": ("DELIVERY-SAVED",),
     "HOLIDAYS": ("HOLIDAYS-SAVED",),
+    "HOME-REQUEST": ("HOME",),
+    "HOME-SAVED": ("OK",),
     "WEATHER": ("OK",),
     "WEATHER-COMMIT": ("OK",),
     "WEATHER-READ": ("FORECAST",),
     "BATCH": ("BATCH",),
     "BATCH-NEXT": ("WORK", "EMPTY"),
+    "WORK-PROTOCOL": ("WORK1", "WORK2"),
+    "WORK-PLAN": ("PLAN",),
+    "WORK-NEXT": ("WORK", "EMPTY"),
+    "WORK-CLAIM": ("CLAIMED", "RECONCILE", "CONFLICT"),
+    "WORK-DONE": ("DELIVERED",),
     "ORGANIZE": ("OK",),
     "JOB": ("WAIT", "REQUEST", "DONE", "DEFERRED"),
     "JOB-RESPONSE": ("OK",),
@@ -424,8 +432,32 @@ def read_saved(port, tokens, note):
     _require_note(note)
     _paired_session(port, tokens)
     try:
+        _recorder_protocol(port)
         data, captured = _export_transcript(port, note)
         return data.decode("utf-8"), captured
+    finally:
+        with contextlib.suppress(OSError, UsbSyncError):
+            _expect_ok(port, "CLOSE")
+
+
+def transfer_usb_clock(port, tokens):
+    """Set UTC on a paired Note. Earlier firmware can still sync recordings."""
+    token, host, device = _paired_session(port, tokens)
+    try:
+        epoch = int(time.time())
+        if not 1704067200 <= epoch < 4102444800:  # RTC supports 2024 through 2099.
+            raise UsbSyncError("The Bridge clock is outside the Note's supported range.")
+        signature = _proof(token, f"clock {epoch}", host, device)
+        try:
+            reply = _exchange(port, f"CLOCK {epoch} {signature}")
+        except UsbSyncError as error:
+            if _failure(error).FirmwareCode == "COMMAND":
+                return False
+            raise
+        expected = _proof(token, f"clock-saved {epoch}", host, device)
+        if len(reply) != 2 or reply[0] != "CLOCK-SAVED" or not hmac.compare_digest(reply[1], expected):
+            raise UsbSyncError("The Note did not verify its hardware clock.")
+        return True
     finally:
         with contextlib.suppress(OSError, UsbSyncError):
             _expect_ok(port, "CLOSE")
@@ -445,6 +477,27 @@ def transfer_note_name(port, tokens, name):
         if len(response) != 3 or response[1] != payload or not hmac.compare_digest(response[2], proof):
             raise UsbSyncError("Pala did not verify the saved display name.")
         return name
+    finally:
+        with contextlib.suppress(OSError, UsbSyncError):
+            _expect_ok(port, "CLOSE")
+
+
+def manual_home_request(port, token, completed=None):
+    _paired_session(port, (token,))
+    try:
+        if completed is not None:
+            _expect_ok(port, f"HOME-SAVED {completed}")
+            return completed
+        try:
+            response = _exchange(port, "HOME-REQUEST")
+        except UsbSyncError as error:
+            if _failure(error).FirmwareCode == "COMMAND":
+                return None
+            raise
+        if (len(response) != 2 or re.fullmatch(r"[0-9]{1,10}", response[1]) is None or
+                int(response[1]) > 0xffffffff):
+            raise UsbSyncError("Invalid Home refresh request.")
+        return int(response[1])
     finally:
         with contextlib.suppress(OSError, UsbSyncError):
             _expect_ok(port, "CLOSE")
@@ -671,10 +724,18 @@ def sync_one(port, tokens, transcribe_local, *, note=None, stop=None, stage_tran
                 _expect_ok(port, "CLOSE")
 
 
+def usb_identity(serial):
+    value = (serial or "").casefold()
+    # USB descriptors on Windows present the firmware's twelve hex digits as octets.
+    if re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", value):
+        return value.replace(":", "")
+    return value
+
+
 def paired_port(ports, port_name, tokens):
-    paired = {key.casefold(): (key, token) for key, token in tokens.items()}
+    paired = {usb_identity(key): (key, token) for key, token in tokens.items()}
     for port in ports:
-        identity = (port.serial_number or "").casefold()
+        identity = usb_identity(port.serial_number)
         if (port.device.casefold() == port_name.casefold()
                 and (port.vid, port.pid) == (0x303A, 0x1001) and identity in paired):
             return paired[identity]
@@ -682,11 +743,12 @@ def paired_port(ports, port_name, tokens):
 
 
 def watch_paired(list_ports, tokens, is_ready, sync_attachment, stop, on_error, flush=None,
-                 prepare_attachment=None, preparation_revision=None):
-    """Refresh a paired device on attachment, then drain when the local ASR is ready."""
+                 prepare_attachment=None, preparation_revision=None, refresh_attachment=None):
+    """Refresh paired devices independently of the local ASR readiness gate."""
     attempts = {}
     retries = {}
     preparations = {}
+    without_refresh = set()
     previous_revision = None
     previous_tokens = None
     while not stop.is_set():
@@ -695,8 +757,9 @@ def watch_paired(list_ports, tokens, is_ready, sync_attachment, stop, on_error, 
             attempts.clear()
             retries.clear()
             preparations.clear()
+            without_refresh.clear()
             previous_tokens = dict(current_tokens)
-        paired = {key.casefold(): token for key, token in current_tokens.items()}
+        paired = {usb_identity(key): token for key, token in current_tokens.items()}
         if preparation_revision is not None:
             revision = preparation_revision()
             if revision != previous_revision:
@@ -704,15 +767,23 @@ def watch_paired(list_ports, tokens, is_ready, sync_attachment, stop, on_error, 
                 previous_revision = revision
         attached = {}
         for port in list_ports():
-            identity = (port.serial_number or "").casefold()
+            identity = usb_identity(port.serial_number)
             if identity and (port.vid, port.pid) == (0x303A, 0x1001) and identity in paired:
                 attached[(port.device, identity)] = paired[identity]
         attempts = {key: count for key, count in attempts.items() if key in attached}
         retries = {key: due for key, due in retries.items() if key in attached}
         preparations = {key: count for key, count in preparations.items() if key in attached}
+        without_refresh.intersection_update(attached)
         for key, token in attached.items():
             if stop.is_set():
                 break
+            if refresh_attachment is not None and key not in without_refresh:
+                try:
+                    if not refresh_attachment(key[0], token):
+                        without_refresh.add(key)
+                except (UsbSyncError, OSError, ValueError) as error:
+                    if not stop.is_set():
+                        on_error(error)
             if prepare_attachment is not None and preparations.get(key, 0) < ATTACHMENT_ATTEMPTS:
                 try:
                     prepare_attachment(key[0], token)
@@ -775,7 +846,91 @@ def _transcribe_when_ready(bridge, stop, activity, audio):
     return bridge.transcribe_local(audio)
 
 
+def _recorder_protocol(link):
+    try:
+        protocol = _exchange(link, "WORK-PROTOCOL")
+        if protocol not in (["WORK1"], ["WORK2"]):
+            raise UsbSyncError("Unknown recorder work protocol.")
+        link.recorder_work_plans = protocol == ["WORK2"]
+        return True
+    except UsbSyncError as error:
+        if _failure(error).FirmwareCode != "COMMAND":
+            raise
+        return False
+
+
+def _drain_recorder_work(link, token, bridge, device, stop, activity, *, only_note=None, one=False):
+    from pala_google import DestinationUnavailable
+    from recorder_delivery import prepare_delivery
+
+    after = 0
+    saved = False
+    while not stop.is_set():
+        work = _exchange(link, f"WORK-NEXT {after}")
+        if work in (["EMPTY"], ["EMPTY", "RECHECK"]):
+            return saved, work == ["EMPTY", "RECHECK"]
+        if len(work) != 3 or work[0] != "WORK" or work[2] not in ("AUDIO", "TEXT"):
+            raise UsbSyncError("Invalid recorder work item.")
+        if not re.fullmatch(r"[1-9][0-9]{0,9}", work[1]):
+            raise UsbSyncError("Invalid recorder note number.")
+        note = int(work[1])
+        _require_note(note)
+        if note <= after:
+            raise UsbSyncError("The recorder work cursor did not advance.")
+        after = note
+        if only_note is not None and note != only_note:
+            continue
+        if work[2] == "AUDIO":
+            if not bridge.local_transcription_ready():
+                continue
+            result = sync_one(link, (token,), lambda audio: _transcribe_when_ready(bridge, stop, activity, audio),
+                              note=note, stop=stop, activity=activity, session_open=True,
+                              replay=bridge.replay_transcription, device=device)
+            print(f"Pala saved the transcript of note {result.note}.", flush=True)
+            saved = True
+        _check_stop(stop)
+        data, captured = _export_transcript(link, note, stop)
+        try:
+            options = {}
+            if getattr(link, "recorder_work_plans", False):
+                stored = _exchange(link, f"WORK-PLAN {note}")
+                if len(stored) != 2:
+                    raise UsbSyncError("Invalid recorder delivery plan reply.")
+                options["plan"] = "" if stored[1] == "-" else stored[1]
+            with prepare_delivery(bridge.state, bridge.config, device, note, captured,
+                                  data.decode("utf-8"), **options) as plan:
+                _check_stop(stop)
+                if options.get("plan") == "":
+                    saved_plan = _exchange(link, f"WORK-PLAN {note} {plan.plan}")
+                    if saved_plan != ["PLAN", plan.plan]:
+                        continue
+                claim = _exchange(link, f"WORK-CLAIM {note} {plan.digest}")
+                if claim == ["CONFLICT"]:
+                    continue
+                if claim not in (["CLAIMED"], ["RECONCILE"]):
+                    raise UsbSyncError("Invalid recorder delivery claim.")
+                mode = "write" if claim == ["CLAIMED"] else "reconcile"
+                if not plan.settle(mode):
+                    continue
+                _check_stop(stop)
+                if _exchange(link, f"WORK-DONE {note} {plan.digest}") != ["DELIVERED", str(note)]:
+                    raise UsbSyncError("Pala did not confirm the delivery receipt.")
+                saved = True
+        except DestinationUnavailable:
+            pass  # Retain the transcript on the Note and continue other work.
+        if one:
+            return saved, False
+    return saved, False
+
+
 def _drain_link(link, token, bridge, stop, stage_transcript=None, activity=None, *, device):
+    _paired_session(link, (token,))
+    try:
+        if _recorder_protocol(link):
+            return _drain_recorder_work(link, token, bridge, device, stop, activity)[1]
+    finally:
+        with contextlib.suppress(OSError, UsbSyncError):
+            _expect_ok(link, "CLOSE")
     while not stop.is_set():
         result = sync_one(link, (token,), lambda audio: _transcribe_when_ready(bridge, stop, activity, audio), stop=stop,
                           stage_transcript=stage_transcript, activity=activity,
@@ -831,6 +986,8 @@ def drain_bluetooth_backlog(link, token, bridge, device, stop, stage_transcript=
     _paired_session(link, (token,))
     saved = False
     try:
+        if _recorder_protocol(link):
+            return _drain_recorder_work(link, token, bridge, device, stop, activity)[0]
         _recover_saved(link, stage_transcript or retain_transcript, stop)
         try:
             batch = _exchange(link, f"BATCH {mode}")
@@ -963,11 +1120,12 @@ def main():
             weather_revision = 0
             delivery_path = STATE / "google-delivery.sqlite"
 
-            def send_delivery(link, token, *, wait_for_sources=0, previous=None):
+            def send_delivery(link, token, *, wait_for_sources=0, previous=None, manual=False):
                 device = token_device(token)
                 queue = router.queue if router is not None else None
                 dashboard = home_dashboard_payload(STATE, config, device, queue=queue, version=4,
-                                                   wait_for_sources=wait_for_sources)
+                                                   wait_for_sources=wait_for_sources,
+                                                   **({"manual": True} if manual else {}))
                 if dashboard == previous:
                     return previous
                 payload = home_delivery_payload(STATE, config, device, queue=queue)
@@ -997,8 +1155,8 @@ def main():
                 name = local_dictation_note_name(settings) if settings is not None else None
                 location = preferences["weatherLocation"] if settings is not None else None
                 country = preferences["holidayCountry"]
-                known_usb = {ident.casefold() for ident in enrollments.tokens()}
-                connected = any((port.serial_number or "").casefold() in known_usb for port in comports())
+                known_usb = {usb_identity(ident) for ident in enrollments.tokens()}
+                connected = any(usb_identity(port.serial_number) in known_usb for port in comports())
                 open_count = general_open_count(STATE, config) if connected else -1
                 usage = home_codex_usage(STATE, config) if connected else None
                 return name, current.date(), changed, location, weather_revision, open_count, country, usage
@@ -1022,6 +1180,7 @@ def main():
                 with usb_activity.step("weather" if args.weather_only else "settings"):
                     if not args.weather_only:
                         with paired_link(port, token) as link:
+                            transfer_usb_clock(link, (token,))
                             try:
                                 send_name(link, token)
                             except UsbSyncError as error:
@@ -1053,17 +1212,17 @@ def main():
         from pala_google import UsbGoogleDelivery
 
         router = UsbGoogleDelivery(STATE, config)
+        stop = managed_stop_event(sys.stdin.buffer) if args.managed else threading.Event()
         if args.watch:
-            stop = managed_stop_event(sys.stdin.buffer) if args.managed else threading.Event()
             transfer_lock = threading.Lock()
             bluetooth_activity = BridgeActivity(STATE, "bluetooth")
             ble_available = sys.platform == "win32" and importlib.util.find_spec("bleak") is not None
 
             def connected_usb(allow_unpaired=False):
                 attached = []
-                current = {serial.casefold(): token for serial, token in enrollments.tokens().items()}
+                current = {usb_identity(serial): token for serial, token in enrollments.tokens().items()}
                 for port in comports():
-                    serial = (port.serial_number or "").casefold()
+                    serial = usb_identity(port.serial_number)
                     if (port.vid, port.pid) == (0x303A, 0x1001) and serial and (allow_unpaired or serial in current):
                         attached.append((port.device, serial, current.get(serial)))
                 if len(attached) > 1:
@@ -1123,6 +1282,25 @@ def main():
                 with transfer_lock, paired_link(port, token) as link:
                     return drain(link, token_device(token), token, usb_activity)
 
+            def refresh_requested_home(link, token, activity):
+                request = manual_home_request(link, token)
+                if not request:
+                    return request
+                with activity.step("settings"):
+                    send_delivery(link, token, wait_for_sources=4, manual=True)
+                    send_holidays(link, (token,))
+                    send_name(link, token)
+                with activity.step("weather"):
+                    forecast = weather.get()
+                    if forecast is not None:
+                        send_forecast(link, token, forecast)
+                manual_home_request(link, token, completed=request)
+                return request
+
+            def refresh_usb(port, token):
+                with transfer_lock, paired_link(port, token) as link:
+                    return refresh_requested_home(link, token, usb_activity) is not None
+
             def drain_bluetooth(link, device, token, settings_window, *, delivery_only=False):
                 def refresh_home(wait_for_sources, previous=None):
                     try:
@@ -1145,20 +1323,23 @@ def main():
                         if settings_window:
                             # The Note can close its dedicated settings window mid-transfer.
                             return
-                        with bluetooth_activity.step("settings"):
-                            try:
-                                send_name(link, token)
-                            except (UsbSyncError, ValueError) as error:
-                                if str(error) != "Pala reported COMMAND.":
-                                    bluetooth_error(error)
-                            previous_dashboard = refresh_home(4)
+                        manual = refresh_requested_home(link, token, bluetooth_activity)
+                        previous_dashboard = None
+                        if not manual:
+                            with bluetooth_activity.step("settings"):
+                                try:
+                                    send_name(link, token)
+                                except (UsbSyncError, ValueError) as error:
+                                    if str(error) != "Pala reported COMMAND.":
+                                        bluetooth_error(error)
+                                previous_dashboard = refresh_home(4)
                         stage = router.stager(device) if router is not None else None
                         retain = router.stager(device, route=False) if router is not None else None
                         saved = drain_bluetooth_backlog(link, token, bridge, device, stop, stage, bluetooth_activity, retain)
                         if saved and not stop.is_set():
                             with bluetooth_activity.step("settings"):
                                 refresh_home(2, previous_dashboard)
-                        if stop.is_set():
+                        if manual or stop.is_set():
                             return
                         with bluetooth_activity.step("settings"):
                             try:
@@ -1202,6 +1383,7 @@ def main():
                         router.flush if router is not None else None,
                         prepare_attachment=locked_prepare_usb,
                         preparation_revision=metadata_revision,
+                        refresh_attachment=refresh_usb,
                     )
             finally:
                 pairing.stop()
@@ -1209,8 +1391,6 @@ def main():
                 if bluetooth is not None:
                     bluetooth.join(timeout=2)
             return
-        if not bridge.local_transcription_ready():
-            raise UsbSyncError("Local Dictation is unavailable or busy.")
         from serial.tools.list_ports import comports
 
         staged = []
@@ -1218,6 +1398,19 @@ def main():
         selected_tokens = (token,)
         stage = router.stager(device, staged) if router is not None else None
         with paired_link(args.port, token) as link:
+            transfer_usb_clock(link, selected_tokens)
+            if not bridge.local_transcription_ready():
+                raise UsbSyncError("Local Dictation is unavailable or busy.")
+            _paired_session(link, selected_tokens)
+            try:
+                if _recorder_protocol(link):
+                    changed, _ = _drain_recorder_work(link, token, bridge, device, stop, usb_activity,
+                                                      only_note=args.note, one=True)
+                    print("Pala recorder work updated." if changed else "No runnable Pala recorder work.")
+                    return
+            finally:
+                with contextlib.suppress(OSError, UsbSyncError):
+                    _expect_ok(link, "CLOSE")
             result = sync_one(link, selected_tokens, bridge.transcribe_local, note=args.note,
                               stage_transcript=stage, activity=usb_activity, replay=bridge.replay_transcription,
                               device=device)

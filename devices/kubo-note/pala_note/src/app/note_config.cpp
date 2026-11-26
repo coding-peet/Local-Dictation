@@ -1,4 +1,5 @@
 #include "note_config.h"
+#include "../../config.h"
 
 #include "note_access.h"
 
@@ -9,6 +10,8 @@
 #include "memory_telemetry.h"
 #include "note_peers.h"
 #include "notes.h"
+#include "record.h"
+#include "sync_queue.h"
 #include "restart_maintenance.h"
 #include "../../globals.h"
 #include "settings.h"
@@ -126,9 +129,10 @@ void getSettings(JsonVariantConst request, NoteConfigTransport link, JsonDocumen
   device["language"] = palaUiLanguage();
   device["weeklyCodexLimit"] = palaPrefersWeeklyCodexLimit();
   device["keepsWifiPassword"] = true;
-  device["memoryTrash"] = true;
+  device["memoryTrash"] = !PALA_RECORDER_FIRST;
   device["r"] = 1;  // Compact wire capability within the BLE settings frame.
   device["webPasswordConfigured"] = noteAccessConfigured();
+  device[link == NoteConfigTransport::Web ? "webPasswordRequired" : "pa"] = noteAccessPasswordRequired();
   device["displayPages"] = palaDisplayPages();
   device["sleepMinutes"] = palaIdleSleepMinutes();
   device["syncTiming"] = static_cast<int>(palaSyncTiming());
@@ -139,6 +143,22 @@ void getSettings(JsonVariantConst request, NoteConfigTransport link, JsonDocumen
   const MemoryTelemetry memory = readMemoryTelemetry();
   addHeapUsage(device, "ramUsage", memory.internal);
   addHeapUsage(device, "psramUsage", memory.psram);
+#if PALA_RECORDER_FIRST
+  device["rf"] = 1;
+  if (link == NoteConfigTransport::Web) {
+    const auto pending = syncQueueCounts();
+    if (syncQueueReady()) {
+      device["pendingAudio"] = pending.audio;
+      device["pendingDelivery"] = pending.organization;
+    }
+    if (recordingTotalMiB()) {
+      device["sdUsedMiB"] = recordingUsedMiB();
+      device["sdTotalMiB"] = recordingTotalMiB();
+    }
+    device["recorderFirst"] = true;
+    device["firmware"] = FIRMWARE_VERSION;
+  }
+#endif
 #if PALA_BRIDGE_DISCOVERY
   device["preferBluetooth"] = palaPreferBluetooth();
   device["bluetoothEnabled"] = palaBluetoothEnabled();
@@ -346,7 +366,18 @@ void dispatch(JsonVariantConst request, NoteConfigTransport link, bool authentic
     return;
   }
   if (!authenticated) { fillResult(result, "Authenticate the Note connection first."); return; }
-  if (link == NoteConfigTransport::Bluetooth) {
+  const bool localUsb = link == NoteConfigTransport::Usb && usbPresent && attachment == usbAttachment && attachment;
+  if (op == "auth.policy") {
+    if (!localUsb) { fillResult(result, "Connect the paired Note by USB to change password protection."); return; }
+    const auto required = request["required"];
+    if (!required.is<bool>()) { fillResult(result, "Choose whether a password is required."); return; }
+    const char* error = noteAccessSetPasswordRequired(required.as<bool>());
+    fillResult(result, error);
+    if (!error) csrf = "";
+    return;
+  }
+  const bool passwordRequired = noteAccessPasswordRequired();
+  if (link == NoteConfigTransport::Bluetooth && passwordRequired) {
     if (op == "auth.login") {
       String token;
       const char* error = noteAccessLogin(link, accessField(request["password"]), token);
@@ -362,8 +393,7 @@ void dispatch(JsonVariantConst request, NoteConfigTransport link, bool authentic
     }
   }
   if (op == "auth.save") {
-    const bool localUsb = link == NoteConfigTransport::Usb && usbPresent && attachment == usbAttachment && attachment;
-    if (link == NoteConfigTransport::Usb && !localUsb) {
+    if (!localUsb && (link == NoteConfigTransport::Usb || !passwordRequired)) {
       fillResult(result, "Connect the Note by USB to change its password.");
       return;
     }
@@ -381,7 +411,7 @@ void dispatch(JsonVariantConst request, NoteConfigTransport link, bool authentic
   else if (op == "restart.request") {
     const String mode = accessField(request["mode"]);
     const auto restart = mode == "restart" ? NoteRestartMode::Restart
-        : mode == "audit" ? NoteRestartMode::Audit : NoteRestartMode::None;
+        : !PALA_RECORDER_FIRST && mode == "audit" ? NoteRestartMode::Audit : NoteRestartMode::None;
     if (restart == NoteRestartMode::None) fillResult(result, "Choose a supported restart.");
     else if ((state != STATE_IDLE && state != STATE_TRANSFER) || !requestNoteRestart(restart))
       fillResult(result, "Finish the current activity or confirmation first.");

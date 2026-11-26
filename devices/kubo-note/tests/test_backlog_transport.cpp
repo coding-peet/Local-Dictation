@@ -42,6 +42,24 @@ static_assert(classifyWifiReadiness(200, false, false) == WifiBacklog::Unavailab
 static_assert(classifyWifiReadiness(502, true, false) == WifiBacklog::Unavailable);
 static_assert(classifyWifiReadiness(401, true, true) == WifiBacklog::Unavailable);
 
+constexpr bool confirmsUsbDetachOnlyAfterContinuousLoss() {
+  UsbDataPresence signal;
+  if (signal.update(false, 0) || !signal.update(true, 1)) return false;
+  // Interrupted runs of missing SOFs cannot discard the current transfer.
+  if (!signal.update(false, 2) || !signal.update(false, 151) || !signal.update(true, 152)) return false;
+  if (!signal.update(false, 500) || !signal.update(false, 749)) return false;
+  if (signal.update(false, 750) || signal.update(false, 751)) return false;
+  return signal.update(true, 752);
+}
+static_assert(confirmsUsbDetachOnlyAfterContinuousLoss());
+
+constexpr bool usbDetachConfirmationSurvivesMillisWrap() {
+  UsbDataPresence signal;
+  return signal.update(true, 0xfffffff0u) && signal.update(false, 0xfffffff8u) &&
+         signal.update(false, 241) && !signal.update(false, 242);
+}
+static_assert(usbDetachConfirmationSurvivesMillisWrap());
+
 static_assert(resumeBacklogAfterUsbDetach(true, true, false));
 static_assert(resumeBacklogAfterUsbDetach(true, false, true));
 static_assert(!resumeBacklogAfterUsbDetach(true, false, false));

@@ -33,7 +33,9 @@ void reply(const String& message) {
 #include "../../config.h"
 #include "../../globals.h"
 #include "../../types.h"
+#include "monthly_recordings.h"
 #include "notes.h"
+#include "recorder_store.h"
 #include "date_validation.h"
 #include "home_weather.h"
 #include "home_delivery.h"
@@ -111,7 +113,7 @@ String transcript;
 
 String notePath(int number, const char* extension) {
   char path[64];
-  snprintf(path, sizeof(path), "%s/note_%03d.%s", NOTES_DIR, number, extension);
+  monthly_recordings::path(path, sizeof(path), NOTES_DIR, number, extension);
   return String(path);
 }
 
@@ -128,7 +130,14 @@ void resetTransfer() {
   transcript = String();
 }
 
+#if PALA_RECORDER_FIRST
+bool workProtocol = false;
+#endif
+
 void resetSession() {
+#if PALA_RECORDER_FIRST
+  workProtocol = false;
+#endif
   resetTransfer();
   hostNonce = "";
   deviceNonce = "";
@@ -332,7 +341,7 @@ bool offerRecording(const NoteEntry& note) {
     download.close();
     return false;
   }
-  if (recordingBridge(note.num, sessionPeer) != sessionPeer) {
+  if (!PALA_RECORDER_FIRST && recordingBridge(note.num, sessionPeer) != sessionPeer) {
     download.close();
     reply("ERROR OWNER");
     return true;
@@ -385,15 +394,21 @@ void selectRecording(bool next, const String& value) {
 
 void exportTranscript(const String& value) {
   resetTransfer();
+#if PALA_RECORDER_FIRST
+  uint32_t parsed = 0;
+  const int id = decimal(value, INT32_MAX, parsed) && monthly_recordings::sequence(parsed) ? parsed : 0;
+#else
   const NoteEntry* note = findIndexedNote(value);
-  if (note) download = openCommittedReadOnly(notePath(note->num, "txt"));
+  const int id = note ? note->num : 0;
+#endif
+  if (id) download = openCommittedReadOnly(notePath(id, "txt"));
   if (!download || download.isDirectory() || !download.size() || download.size() > kMaximumText) {
     resetTransfer();
     reply("ERROR NOTE");
     return;
   }
   downloadBytes = download.size();
-  reply(String("TRANSCRIPT ") + note->num + " " + downloadBytes + " " + captureTimestamp(note->num));
+  reply(String("TRANSCRIPT ") + id + " " + downloadBytes + " " + captureTimestamp(id));
 }
 
 void readDownload(const String& first, const String& second, bool readingText) {
@@ -474,13 +489,11 @@ void commitTranscript(bool organizeCalendar) {
   }
   const int note = selectedNote;
   const bool plannedBluetooth = owner == Link::Bluetooth && bluetoothBacklog.planned;
-  const bool needsOrganization = organizeCalendar || (plannedBluetooth && bluetoothBacklog.process);
+  const bool needsOrganization = PALA_RECORDER_FIRST || organizeCalendar ||
+      (plannedBluetooth && bluetoothBacklog.process);
   // Persist the route before the text so a reboot cannot skip organization.
   const char* route = needsOrganization ? "organizing" : "usb-local";
-  const auto source = storedNoteTranscript(note);
-  if (source == note_transcript::Stored::Error ||
-      (source == note_transcript::Stored::Missing && !writeNoteQueueState(note, route, nullptr, false, true)) ||
-      !saveNoteTranscript(note, transcript)) {
+  if (!saveNoteTranscript(note, transcript, route)) {
     reply("ERROR SAVE");
     resetTransfer();
     return;
@@ -697,6 +710,83 @@ void expireSession() {
        notePeerById(sessionPeer).token != sessionToken)) resetSession();
 }
 
+#if PALA_RECORDER_FIRST
+bool handleRecorderWork(const String& command, const String& first, const String& second) {
+  if (command == "WORK-PROTOCOL" && first.isEmpty() && second.isEmpty()) {
+    workProtocol = true;
+    reply("WORK2");
+    return true;
+  }
+  if (!workProtocol) { reply("ERROR COMMAND"); return true; }
+  if (recordingRequestedDuringSync()) { reply("ERROR BUSY"); return true; }
+  if (command == "WORK-NEXT") {
+    uint32_t after = 0;
+    if (!second.isEmpty() || !decimal(first, INT32_MAX, after)) { reply("ERROR COMMAND"); return true; }
+    if (!syncQueueReady()) { reply("ERROR BUSY"); return true; }
+    if (!recordingSyncAllowed()) {
+      if (owner == Link::Bluetooth) bluetoothDrained = true;
+      reply(owner == Link::Usb ? "EMPTY RECHECK" : "EMPTY");
+      return true;
+    }
+    SyncQueueEntry selected;
+    visitSyncQueue(false, [&](const SyncQueueEntry& entry) {
+      if (entry.note <= static_cast<int>(after)) return true;
+      selected = entry;
+      return false;
+    });
+    if (!selected.note) {
+      if (syncQueueCounts().audio == 0) finishDrainedRecordingSync();
+      if (owner == Link::Bluetooth) bluetoothDrained = true;
+      reply("EMPTY RECHECK");
+    } else {
+      reply(String("WORK ") + selected.note + (selected.kind == SyncQueueKind::Audio ? " AUDIO" : " TEXT"));
+    }
+    return true;
+  }
+  if (command == "WORK-PLAN") {
+    uint32_t id = 0;
+    if (!decimal(first, INT32_MAX, id) || !monthly_recordings::sequence(id)) {
+      reply("ERROR COMMAND");
+    } else if (!recordingSyncAllowed()) {
+      reply("ERROR BUSY");
+    } else {
+      String plan;
+      if (!recorderDeliveryPlan(id, second, plan)) reply("ERROR SAVE");
+      else reply(String("PLAN ") + (plan.isEmpty() ? "-" : plan));
+    }
+    return true;
+  }
+  const bool claiming = command == "WORK-CLAIM";
+  if (claiming || command == "WORK-DONE") {
+    uint32_t id = 0;
+    if (!decimal(first, INT32_MAX, id) || !monthly_recordings::sequence(id) || !validHex(second, 64)) {
+      reply("ERROR COMMAND");
+      return true;
+    }
+    if (claiming) {
+      if (!recordingSyncAllowed()) { reply("ERROR BUSY"); return true; }
+      switch (claimRecorderDelivery(id, second)) {
+        case recorder_work::Claim::Granted: reply("CLAIMED"); break;
+        case recorder_work::Claim::Reconcile: reply("RECONCILE"); break;
+        case recorder_work::Claim::Conflict: reply("CONFLICT"); break;
+        case recorder_work::Claim::Error: reply("ERROR SAVE"); break;
+      }
+    } else if (finishRecorderDelivery(id, second)) {
+      finishTransportRecording(id);
+      homeChanged = true;
+      reply(String("DELIVERED ") + id);
+    } else reply("ERROR SAVE");
+    return true;
+  }
+  if (command == "SELECT" && !recordingSyncAllowed()) { reply("ERROR BUSY"); return true; }
+  if (command == "SELECT" || command == "META" || command == "READ" || command == "AUDIO" ||
+      command == "TEXT" || command == "PUT" || command == "COMMIT" || command == "EXPORT" || command == "READTXT")
+    return false;
+  reply("ERROR COMMAND");
+  return true;
+}
+#endif
+
 void handleCommand(const String& command, const String& first, const String& second,
                    bool idle, Link link, const String& peer, bool deliveryOnly, bool audioSupported) {
   if (!idle) { reply("ERROR BUSY"); return; }
@@ -752,11 +842,45 @@ void handleCommand(const String& command, const String& first, const String& sec
   if (!authenticated) { reply("ERROR AUTH"); return; }
   RecordingWindow microphone;
   activityAt = millis();
-  if (command == "DELIVERY") {
+  if (PALA_RECORDER_FIRST && command == "HOME-REQUEST" && first.isEmpty()) {
+    reply(String("HOME ") + manualHomeRefreshRequest());
+  }
+  else if (PALA_RECORDER_FIRST && command == "HOME-SAVED") {
+    uint32_t request = 0;
+    if (!second.isEmpty() || !decimal(first, UINT32_MAX, request) || !completeManualHomeRefresh(request))
+      reply("ERROR COMMAND");
+    else {
+      homeChanged = true;
+      reply("OK");
+    }
+  }
+  else if (command == "CLOCK" && owner == Link::Usb) {
+    if (first.isEmpty() && second.isEmpty()) {
+      reply(String("CLOCK ") + static_cast<uint32_t>(rtcUtcEpoch()) + " " +
+            static_cast<uint32_t>(time(nullptr)));
+    } else {
+      uint32_t epoch;
+      if (!decimal(first, UINT32_MAX, epoch) || !sameDigest(proof("clock " + first), second)) {
+        reply("ERROR AUTH");
+      } else if (!rtcApplyBridgeUtc(epoch)) {
+        reply("ERROR SAVE");
+      } else {
+        reply("CLOCK-SAVED " + proof("clock-saved " + first));
+      }
+    }
+  }
+  else if (command == "DELIVERY") {
     if (storeDeliveryCounts(first, second) && deliveryOnly) bluetoothDrained = true;
   }
   else if (command == "CLOSE" && !first.length()) { resetSession(); reply("OK"); }
   else if (deliveryOnly) reply("ERROR COMMAND");
+#if PALA_RECORDER_FIRST
+  else if ((command.startsWith("WORK-") || command == "NEXT" || command == "BATCH" ||
+            command == "BATCH-NEXT" || command == "SELECT" || command == "META" ||
+            command == "READ" || command == "AUDIO" || command == "TEXT" ||
+            command == "PUT" || command == "COMMIT" || command == "EXPORT" || command == "READTXT") &&
+           handleRecorderWork(command, first, second)) {}
+#endif
   else if (owner == Link::Bluetooth && audioSupported && handleBluetoothWork(command, first, second)) {}
   else if (command == "NEXT" && !first.length()) selectRecording(true, first);
   else if (command == "SELECT" && !second.length()) selectRecording(false, first);

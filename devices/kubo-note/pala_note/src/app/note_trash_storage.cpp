@@ -1,3 +1,4 @@
+#include "monthly_recordings.h"
 #include "notes.h"
 #include "audit_progress.h"
 #include "sync_queue.h"
@@ -90,12 +91,21 @@ bool advancePhase(const String& folder, Phase from, Phase to) {
   return !SD_MMC.exists(after.c_str()) && SD_MMC.rename(before.c_str(), after.c_str());
 }
 
+String bundlePath(const String& folder, int num, const String& extension) {
+  char path[128];
+  if (folder == NOTES_DIR)
+    monthly_recordings::path(path, sizeof(path), NOTES_DIR, num, extension.c_str());
+  else
+    snprintf(path, sizeof(path), "%s/%s.%s", folder.c_str(), noteBase(num).c_str(), extension.c_str());
+  return String(path);
+}
+
 template<class Operation>
 bool visitFiles(int num, const String& folder, Operation operation) {
-  const String prefix = folder + "/" + noteBase(num) + ".";
   for (const char* extension : note_trash::bundleExtensions) {
     for (const char* suffix : note_trash::commitSuffixes) {
-      if (!operation(prefix + extension + suffix, String(extension) + suffix)) return false;
+      const String member = String(extension) + suffix;
+      if (!operation(bundlePath(folder, num, member), member)) return false;
     }
   }
   return true;
@@ -106,13 +116,14 @@ bool hasFiles(int num, const String& folder) {
 }
 
 bool moveFiles(int num, const String& source, const String& destination) {
-  const String target = destination + "/" + noteBase(num) + ".";
   return visitFiles(num, source, [&](const String& path, const String& suffix) {
     if (!SD_MMC.exists(path.c_str())) return true;
     File entry = SD_MMC.open(path.c_str(), FILE_READ);
     const bool regular = entry && !entry.isDirectory();
     if (entry) entry.close();
-    return regular && note_trash::relocate(SD_MMC, path.c_str(), (target + suffix).c_str());
+    const String target = bundlePath(destination, num, suffix);
+    const String parent = target.substring(0, target.lastIndexOf('/'));
+    return regular && ensureDirectory(parent) && note_trash::relocate(SD_MMC, path.c_str(), target.c_str());
   });
 }
 
@@ -282,7 +293,7 @@ bool finishRestore(int num, const String& folder) {
   NoteEntry restored{};
   restored.num = num;
   strncpy(restored.tag, journal.tag.c_str(), sizeof(restored.tag) - 1);
-  const String transcript = String(NOTES_DIR) + "/" + noteBase(num) + ".txt";
+  const String transcript = bundlePath(NOTES_DIR, num, "txt");
   if (SD_MMC.exists((transcript + ".bak").c_str()) && !recoverStoredFile(SD_MMC, transcript)) return false;
   File text = SD_MMC.open(transcript.c_str(), FILE_READ);
   restored.hasText = text && !text.isDirectory() && text.size() > 0;

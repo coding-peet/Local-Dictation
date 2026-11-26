@@ -117,7 +117,7 @@ public sealed class Settings
     public string? MicrophoneId { get; set; }
     public string PrimaryModel { get; set; } = "kinit/whisper-large-v3-turbo-sk";
     public string? VerificationModel { get; set; }
-    public const string DefaultPalaNoteName = "Kubo";
+    public const string DefaultPalaNoteName = "Note";
     public string PalaBridgeName { get; set; } = DefaultPalaNoteName;
     public string PalaWeatherLocation { get; set; } = "";
     public bool PalaIntegrationEnabled { get; set; } = true;

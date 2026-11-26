@@ -7,11 +7,13 @@ void   initializeNoteCatalog(bool recoverSources = true);
 bool   maintainNoteCatalog();
 bool   noteCatalogReady();
 bool   noteCatalogBaseLoaded();
+bool   initializeRecordingLayout();
+bool   prepareNoteRecordingDirectory(int num);
 bool   beginNoteRecording(int num, const String& capturedUtc);
 bool   saveIndex();
 bool   addToIndex(int num, const char* tag, bool hasText);
 bool   updateIndexHasText(int num);
-bool   saveNoteTranscript(int num, const String& text);
+bool   saveNoteTranscript(int num, const String& text, const char* route = nullptr);
 bool   deleteNote(int num);
 bool   deleteAllNotes();
 
@@ -38,7 +40,7 @@ void recoverNoteTrash();
 void maintainNoteTrash();
 int  highestTrashedNoteNumber();
 bool noteHasLiveBundle(int num);
-int    nextNoteNumber();
+int    nextNoteNumber(const String& capturedUtc);
 bool   saveTag(int num, const char* tag, const String& capturedUtc);
 
 String noteMetaPath(int num);

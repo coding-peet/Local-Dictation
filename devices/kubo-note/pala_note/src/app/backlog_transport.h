@@ -1,5 +1,32 @@
 #pragma once
 
+#include <stdint.h>
+
+// The ESP32 Serial/JTAG monitor reports recent SOF packets. Brief gaps
+// should not discard the active transfer or change the pairing attachment.
+class UsbDataPresence {
+ public:
+  constexpr bool update(bool hasSof, uint32_t now) {
+    if (hasSof) {
+      connected_ = true;
+      waitingForDetach_ = false;
+    } else if (connected_) {
+      if (!waitingForDetach_) {
+        absentSince_ = now;
+        waitingForDetach_ = true;
+      } else if (now - absentSince_ >= 250) {
+        connected_ = false;
+      }
+    }
+    return connected_;
+  }
+
+ private:
+  uint32_t absentSince_ = 0;
+  bool connected_ = false;
+  bool waitingForDetach_ = false;
+};
+
 enum class WifiBacklog { Unchecked, Ready, Busy, Unavailable };
 enum class BacklogLink { Usb, Wifi, Bluetooth, Deferred };
 

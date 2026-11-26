@@ -20,24 +20,24 @@ public sealed partial class SettingsWindow
     void AddKuboControls(StackPanel group)
     {
         const string modelHelp = "Choose a model from the signed-in Codex account.";
-        const string effortHelp = "Choose how much reasoning the model uses. High is the default. Changes apply to the next Kubo request.";
+        const string effortHelp = "Choose how much reasoning the model uses. High is the default. Changes apply to the next processing request.";
 
         var processing = new Grid();
         processing.ColumnDefinitions.Add(new() { Width = new GridLength(2, GridUnitType.Star) });
         processing.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star), MinWidth = 155 });
         var model = new StackPanel { Margin = new(0, 0, 12, 0) };
-        Ui.Label(model, "Kubo processing model", palaKuboModel);
+        Ui.Label(model, "Processing model", palaKuboModel);
         AutomationProperties.SetHelpText(palaKuboModel, modelHelp);
         processing.Children.Add(model);
 
         var effort = new StackPanel();
         Ui.Label(effort, "Reasoning effort", palaKuboEffort);
-        AutomationProperties.SetName(palaKuboEffort, "Kubo reasoning effort");
+        AutomationProperties.SetName(palaKuboEffort, "Processing reasoning effort");
         AutomationProperties.SetHelpText(palaKuboEffort, effortHelp);
         Grid.SetColumn(effort, 1);
         processing.Children.Add(effort);
 
-        var help = SettingsHelp.Create("Kubo processing", modelHelp + " " + effortHelp);
+        var help = SettingsHelp.Create("Transcript processing", modelHelp + " " + effortHelp);
         group.Children.Add(Ui.SettingRow(processing, help));
         palaCodexRefresh = Ui.Button("Refresh Codex models", () => _ = LoadKuboCatalog());
         palaTranscriptButton = Ui.Button("Note transcripts", ShowNoteTranscripts);

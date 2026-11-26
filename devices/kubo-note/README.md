@@ -5,7 +5,7 @@ after a DHCP address change on an approved private Wi-Fi network.
 
 ## Open the shared settings page
 
-On Windows, open **Connections → Pala Note Configuration → Open Note
+On Windows, open **Connections → Note Configuration → Open Note
 settings** in Local Dictation. The local Bridge uses the paired USB data
 connection or a Bluetooth connection. To make an awake Note available by
 Bluetooth with an empty recording queue, briefly press and release both
@@ -24,7 +24,7 @@ button to adjust speaker volume. Five bars appear briefly. When the
 Note opens its hotspot, the display shows the hotspot name, password and
 address. Open **Setup** for the same Note settings page in the phone
 browser. Web Companion and the shared settings show the saved Note name. Both entry points use
-**Wi-Fi networks** at the top of the page. If the Note is unavailable,
+**Wi-Fi networks** below the Note card. If the Note is unavailable,
 the section shows how to reconnect and disables the form.
 
 The page manages the Note's name, language, Wi-Fi profiles, paired
@@ -63,7 +63,13 @@ Use the eye beside a password field to show or hide its current entry.
 The strength meter for new passwords is informational. Save accepts
 supported passwords at every rating.
 
-On Wi-Fi, sign in before opening Web Companion pages, reading notes,
+Password protection defaults to on. From the paired USB settings page,
+use **Require password** under **Note password** to change the policy.
+Turning it off opens Web Companion without password sign-in. Bluetooth
+settings still need their existing pairing. Turning it back on uses the
+saved Note password, or requests setup over USB if no password was set.
+
+With protection on, sign in on Wi-Fi before opening Web Companion, reading notes,
 playing audio or using settings and Trash. On Bluetooth, sign in from the
 Local Dictation settings page after the connection is paired. The locked
 page shows the password form. Sign in to open settings, or sign out later
@@ -433,8 +439,16 @@ confirmation before any Google Calendar write.
 
 ## Device name
 
+In Recorder Web Companion, use **Note → Name** to name the device (up to
+12 characters). For example, **Kubo Note** opens at http://kubo-note.local
+and **kubo-backup** at http://kubo-backup.local on the same Wi-Fi network.
+Reopen Companion after saving a new name. Its e-paper screen shows the
+active address and the fallback IP. Hotspot mode shows the IP.
+
+### Legacy Bridge display name
+
 Open **Connections → Pala Note Configuration** in Local Dictation and set
-**Note display name**. The default is **Kubo**. Use 1–10 letters, digits,
+**Note display name**. The default is **Note**. Use 1–10 letters, digits,
 spaces or hyphens, starting with a letter or digit. The paired Note stores
 the name in its settings and uses it after a reboot. Local Dictation sends
 the name on paired USB and Bluetooth sync; the Note can also fetch it

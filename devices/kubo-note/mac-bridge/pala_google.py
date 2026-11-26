@@ -497,7 +497,7 @@ class GeneralTaskCount:
         self.refreshing = False
         self.revision = 0
 
-    def get(self, state, target):
+    def get(self, state, target, *, force=False):
         key = (state, target["id"], target["title"])
         now = time.monotonic()
         with self.lock:
@@ -506,7 +506,7 @@ class GeneralTaskCount:
                 self.count = None
                 self.next_check = 0
                 self.revision += 1
-            if not self.refreshing and now >= self.next_check:
+            if not self.refreshing and (force or now >= self.next_check):
                 self.refreshing = True
                 self.next_check = now + 60
                 threading.Thread(target=self._refresh, args=(key, target, self.revision), daemon=True).start()
@@ -548,9 +548,9 @@ def count_open_general_tasks(state, target):
 general_task_count = GeneralTaskCount()
 
 
-def _general_task_target(active):
+def _general_task_target(active, *, read_only=False):
     target = active["google_routes"].get("general")
-    if active["processing_mode"] != "kubo" or not isinstance(target, dict):
+    if (not read_only and active["processing_mode"] != "kubo") or not isinstance(target, dict):
         return None
     if target.get("provider", "tasks") != "tasks" or not target.get("id") or not target.get("title"):
         return None
@@ -573,26 +573,39 @@ def home_codex_usage(state, config):
     return None
 
 
-def home_dashboard_payload(state, config, device, *, queue=None, version=2, wait_for_sources=0):
+def home_dashboard_payload(state, config, device, *, queue=None, version=2, wait_for_sources=0, manual=False):
     from note_web import processing_config
 
     active = processing_config(state, config)
     bindings = active["google_routes"] if active["processing_mode"] == "kubo" else {}
     deadline = time.monotonic() + wait_for_sources
     include_usage = bool(device and version >= 3)
-    count = general_open_count(state, config) if device else -1
-    usage = home_codex_usage(state, config) if include_usage else None
-    expect_count = bool(device and _general_task_target(active))
-    expect_usage = include_usage and active["processing_mode"] == "kubo"
-    while (expect_count and count < 0) or (expect_usage and usage is None):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        time.sleep(min(.2, remaining))
-        if expect_count and count < 0:
-            count = general_open_count(state, config)
-        if expect_usage and usage is None:
-            usage = home_codex_usage(state, config)
+    target = _general_task_target(active, read_only=manual) if device else None
+    expect_usage = include_usage and (manual or active["processing_mode"] == "kubo")
+    if manual:
+        from codex_usage import codex_usage
+
+        count = general_task_count.get(state, target, force=True) if target else -1
+        usage = codex_usage.get(force=True) if expect_usage else None
+        while (target and general_task_count.refreshing) or (expect_usage and codex_usage.refreshing):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(.2, remaining))
+        count = general_task_count.get(state, target) if target else -1
+        usage = codex_usage.get() if expect_usage else None
+    else:
+        count = general_open_count(state, config) if device else -1
+        usage = home_codex_usage(state, config) if include_usage else None
+        while (target and count < 0) or (expect_usage and usage is None):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(.2, remaining))
+            if target and count < 0:
+                count = general_open_count(state, config)
+            if expect_usage and usage is None:
+                usage = home_codex_usage(state, config)
     waiting, confirmed = 0, None
     if device and (queue is not None or (state / "google-delivery.sqlite").is_file()):
         queue = queue if queue is not None else DeliveryQueue(state)

@@ -97,7 +97,7 @@ static void spoolRecovery() {
   int id = 0, allocations = 0;
   auto adopt = [&](const std::string& name) {
     return rec_spool::adopt(inbox.string()+"/", notes.string()+"/", name, id,
-        [&] { ++allocations; return 42; }, [&](int n, uint32_t epoch) { return n == 42 && epoch == 1780000000U && reserved; },
+        [&](uint32_t) { ++allocations; return 42; }, [&](int n, uint32_t epoch) { return n == 42 && epoch == 1780000000U && reserved; },
         [&](int n, uint32_t seconds) { assert(n == 42 && seconds == 1780000000U); return metadata; },
         [&](int n) { assert(n == 42); return finished; });
   };
@@ -116,7 +116,7 @@ static void spoolRecovery() {
   assert(allocations == 1 && reserved);        // capture.pending now owns repair
   const std::string fresh = "s1780000001_0000a002.wav";
   std::ofstream(inbox / fresh, std::ios::binary) << samples;
-  assert(rec_spool::adopt(inbox.string()+"/", notes.string()+"/", fresh, id, [] { return 43; },
+  assert(rec_spool::adopt(inbox.string()+"/", notes.string()+"/", fresh, id, [](uint32_t) { return 43; },
       [](int n, uint32_t ts) { return n == 43 && ts == 1780000001U; }, [](int, uint32_t ts) { return ts == 1780000001U; },
       [](int n) { return n == 43; }));
   assert(read(notes / "note_043.wav") == samples && read(notes / "note_042.wav") == samples);

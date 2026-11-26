@@ -67,15 +67,25 @@ inline capture_wav::State promotePartial(const std::string& inbox, const std::st
 
 // The claim filename persists the chosen ID until the WAV is renamed. Sidecars
 // move first. After the WAV move, capture.pending owns any unfinished commit.
-template<class Allocate, class Reserve, class Prepare, class Finish>
+struct FlatWavPath {
+  std::string operator()(int, const std::string& base) const { return base + ".wav"; }
+};
+
+struct FlatMomentsPath {
+  std::string operator()(int, const std::string& base) const { return base + ".moments"; }
+};
+
+template<class Allocate, class Reserve, class Prepare, class Finish,
+         class WavPath = FlatWavPath, class MomentsPath = FlatMomentsPath>
 bool adopt(const std::string& inbox, const std::string& notes, std::string name,
-           int& id, Allocate allocate, Reserve reserve, Prepare prepare, Finish finish) {
+           int& id, Allocate allocate, Reserve reserve, Prepare prepare, Finish finish,
+           WavPath wavPath = {}, MomentsPath momentsPath = {}) {
   std::string base;
   uint32_t epoch = 0;
   id = 0;
   if (!parse(name, id, base, epoch)) return false;
   if (!id) {
-    id = allocate();
+    id = allocate(epoch);
     if (id <= 0) return false;
     const auto claimed = std::string("c") + std::to_string(id) + "-" + name;
     if (present(inbox+claimed) != 0 || std::rename((inbox+name).c_str(), (inbox+claimed).c_str()) != 0)
@@ -84,12 +94,15 @@ bool adopt(const std::string& inbox, const std::string& notes, std::string name,
   }
   char number[30]{};
   std::snprintf(number, sizeof(number), "note_%03d", id);
-  const std::string target = notes + number, wav = target + ".wav";
+  const std::string target = notes + number, wav = wavPath(id, target);
   if (present(wav) != 0 || !reserve(id, epoch)) return false;
   const auto marks = inbox + base.substr(0, base.size()-4) + ".mom";
   const int hasMarks = present(marks);
-  if (hasMarks < 0 || (hasMarks && (present(target+".moments") != 0 ||
-      std::rename(marks.c_str(), (target+".moments").c_str()) != 0))) return false;
+  if (hasMarks < 0) return false;
+  if (hasMarks) {
+    const auto destination = momentsPath(id, target);
+    if (present(destination) != 0 || std::rename(marks.c_str(), destination.c_str()) != 0) return false;
+  }
   return prepare(id, epoch) && std::rename((inbox+name).c_str(), wav.c_str()) == 0 && finish(id);
 }
 }

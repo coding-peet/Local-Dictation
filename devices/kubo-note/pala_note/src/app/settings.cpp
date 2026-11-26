@@ -105,7 +105,7 @@ String palaNoteName() {
   const String local = value("note_device");
   const int separator = local.indexOf('|');
   const String name = separator > 0 ? local.substring(0, separator) : value("note_name");
-  return validNoteName(name) ? name : String("PALA");
+  return validNoteName(name) ? name : String("Note");
 }
 
 bool palaSetNoteName(const String& name) {

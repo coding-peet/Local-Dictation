@@ -104,7 +104,7 @@ def valid_note_name(name):
 
 def local_dictation_note_name(settings):
     name = settings.get("PalaBridgeName")
-    return name if valid_note_name(name) else "Kubo"
+    return name if valid_note_name(name) else "Note"
 
 
 def local_dictation_model(config, settings):
@@ -218,11 +218,11 @@ def codex_options(settings):
     effort = settings.get("PalaKuboReasoningEffort", "high")
     model = settings.get("PalaKuboModel")
     if not isinstance(effort, str) or effort not in CODEX_EFFORTS:
-        raise ValueError("Choose a valid Kubo reasoning effort in Local Dictation.")
+        raise ValueError("Choose a valid processing reasoning effort in Local Dictation.")
     options = ["-c", f'model_reasoning_effort="{effort}"']
     if model is not None:
         if not isinstance(model, str) or not CODEX_MODEL_ID.fullmatch(model):
-            raise ValueError("Choose a valid Kubo processing model in Local Dictation.")
+            raise ValueError("Choose a valid processing model in Local Dictation.")
         options.extend(("--model", model))
     return options
 
@@ -309,7 +309,7 @@ def codex_model_catalog():
     return list(items.values())
 
 
-def codex(prompt, schema, *, profile=None):
+def codex(prompt, schema, *, profile=None, timeout=120):
     cli = codex_command()
     require_chatgpt_login(cli)
     with tempfile.TemporaryDirectory() as work:
@@ -323,7 +323,7 @@ def codex(prompt, schema, *, profile=None):
             spec.write_bytes(encode(schema))
             args += ["--output-schema", str(spec)]
         subprocess.run(args + ["-"], input=prompt.encode(), cwd=work, env=codex_environment(),
-                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True, timeout=120)
+                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True, timeout=timeout)
         return out.read_text(encoding="utf-8").strip()
 
 
@@ -757,6 +757,16 @@ class Bridge:
                 return self.transcribe(body, content_type, device=device)
             return self.transcribe(body, content_type)
         doc = json.loads(body)
+        if route in ("/pala/recorder-plan", "/pala/recorder-apply"):
+            from pala_google import DestinationUnavailable
+            from recorder_delivery import dispatch_work
+
+            if not device:
+                raise ValueError("Recorder delivery requires an individually paired Note.")
+            try:
+                return dispatch_work(self.state, self.config, route, device, doc)
+            except DestinationUnavailable:
+                return {"confirmed": False}
         if route == "/pala/transcript-receipt":
             from pala_google import UsbGoogleDelivery
             if not device or type(doc.get("note")) is not int:
@@ -880,7 +890,9 @@ class Handler(BaseHTTPRequestHandler):
                     payload = home_delivery_payload(bridge.state, bridge.config, device)
                 else:
                     version = int(self.path[-1]) if "?v=" in self.path else 2
-                    payload = home_dashboard_payload(bridge.state, bridge.config, device, version=version)
+                    manual = self.headers.get("X-Pala-Home") == "1"
+                    payload = home_dashboard_payload(bridge.state, bridge.config, device, version=version,
+                                                     **({"manual": True, "wait_for_sources": 4} if manual else {}))
             except (OSError, sqlite3.Error, ValueError):
                 self.send_error(503)
                 return
@@ -911,6 +923,9 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 self.send_json(200, {"holidays": snapshot})
             else:
+                if self.headers.get("X-Pala-Home") == "1":
+                    self.send_json(200, {"ready": False})
+                    return
                 # The Note waits on a busy API and tries another link if the API is unavailable.
                 status = bridge.local_transcription_status()
                 mode = processing_config(bridge.state, bridge.config)["processing_mode"]

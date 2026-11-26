@@ -1,7 +1,9 @@
 """Deliver tasks to Google Tasks and run the separate synthetic pilot."""
 import argparse
+from contextlib import closing
 import hashlib
 import re
+import sqlite3
 import unicodedata
 from pathlib import Path
 from threading import Lock
@@ -37,6 +39,37 @@ def items(resource, **filters):
 
 def _product_key(title):
     return " ".join(unicodedata.normalize("NFC", title).casefold().split())
+
+
+# Keep aliases explicit. A qualifier such as "údená" distinguishes products.
+_PURCHASE_FORMS = {
+    "šunka": ("šunka", "šunku", "šunky", "šunkou"),
+    "syr": ("syr", "syra", "syry"),
+    "mlieko": ("mlieko", "mlieka", "mliekom"),
+    "chlieb": ("chlieb", "chleba", "chleby"),
+    "rožok": ("rožok", "rožky", "rožkov"),
+    "jablko": ("jablko", "jablká", "jabĺk"),
+    "banán": ("banán", "banány", "banánov"),
+    "ananás": ("ananás", "ananásy", "ananásov"),
+}
+
+
+def _purchase_spelling(value):
+    return "".join(c for c in unicodedata.normalize("NFD", _product_key(value))
+                   if not unicodedata.combining(c))
+
+
+_PURCHASE_ALIASES = {
+    _purchase_spelling(form): noun for noun, forms in _PURCHASE_FORMS.items() for form in forms
+}
+
+
+def purchase_name(title):
+    return _PURCHASE_ALIASES.get(_purchase_spelling(title), title)
+
+
+def purchase_key(title):
+    return _purchase_spelling(purchase_name(title))
 
 
 def _contains_note_marker(notes):
@@ -114,7 +147,7 @@ def _read_action(tasks, list_id, task_id, action):
     return saved
 
 
-def _write_task(tasks, list_id, request, title, notes, action=None, task_id=None):
+def _write_task(tasks, list_id, request, title, notes, action=None, task_id=None, remember=None):
     write_error = None
     try:
         result = request.execute()
@@ -125,6 +158,8 @@ def _write_task(tasks, list_id, request, title, notes, action=None, task_id=None
         # Reconcile by reading Google Tasks below without resending the request.
         write_error = error
 
+    if remember is not None and task_id is not None:
+        remember(task_id, title, notes)
     try:
         if task_id is None and action is not None:
             task_id, _ = _scan_tasks(tasks, list_id, action)
@@ -189,6 +224,83 @@ def apply_task(api, list_id, title, action_key, *, coalesce=False, notes="") -> 
         request = tasks.patch(tasklist=list_id, task=task_id, body={"notes": patch_notes})
         request.headers["If-Match"] = etag
         return _write_task(tasks, list_id, request, existing["title"], patch_notes, action, task_id)
+
+
+def _clean_purchase_update(notes):
+    user_notes, separator, tail = notes.rpartition("\n\n")
+    final = tail if separator else notes
+    match = re.fullmatch(r"Opakovaná požiadavka \(x([2-9][0-9]*|1[0-9]+)\)", final)
+    if match:
+        prefix, count = user_notes, int(match[1])
+    else:
+        prefix, count = notes, 1
+    block = _REPEAT_NOTE.format(count + 1)
+    return f"{prefix}\n\n{block}" if prefix else block
+
+
+def _apply_clean_purchase(tasks, list_id, title, remember):
+    product = purchase_key(title)
+    matches = [task for task in items(tasks, tasklist=list_id, maxResults=100, showCompleted=True,
+                                      showHidden=True, showDeleted=True, showAssigned=True)
+               if not task.get("deleted") and task.get("status") == "needsAction"
+               and purchase_key(task.get("title") or "") == product]
+    if len(matches) > 1:
+        raise ValueError("Multiple open Google Tasks match this purchase.")
+    if not matches:
+        request = tasks.insert(tasklist=list_id, body={"title": title})
+        return _write_task(tasks, list_id, request, title, "", remember=remember)
+
+    task = matches[0]
+    existing = task.get("notes") or ""
+    etag = task.get("etag")
+    if (_contains_note_marker(existing) or not etag or
+            (task.get("assignmentInfo") or {}).get("contextType") == "DOCUMENT"):
+        raise ValueError("The existing purchase cannot be safely updated as a clean item.")
+    notes = _clean_purchase_update(existing)
+    if len(notes) > 8192:
+        raise ValueError("The existing purchase notes are full.")
+    task_id = _task_id(task)
+    request = tasks.patch(tasklist=list_id, task=task_id, body={"notes": notes})
+    request.headers["If-Match"] = etag
+    return _write_task(tasks, list_id, request, task["title"], notes, task_id=task_id, remember=remember)
+
+
+def settle_clean_purchase(state, api, list_id, title, action_key, mode):
+    """Persist one attempt before dispatch and a receipt after provider readback."""
+    action = _action_hash(list_id, action_key)
+    if mode not in ("write", "reconcile"):
+        raise ValueError("Invalid purchase delivery mode.")
+    with _DELIVERY_LOCK, closing(sqlite3.connect(state / "purchase-receipts.sqlite")) as db:
+        with db:
+            db.execute("""CREATE TABLE IF NOT EXISTS purchase_receipts (
+                action TEXT PRIMARY KEY, task TEXT, title TEXT, details TEXT, confirmed INTEGER NOT NULL
+            )""")
+            row = db.execute("SELECT task,title,details,confirmed FROM purchase_receipts WHERE action=?",
+                             (action,)).fetchone()
+            if row is None and mode == "write":
+                db.execute("INSERT INTO purchase_receipts (action,confirmed) VALUES (?,0)", (action,))
+
+        def remember(task_id, expected_title, details):
+            with db:
+                db.execute("UPDATE purchase_receipts SET task=?,title=?,details=? WHERE action=?",
+                           (task_id, expected_title, details, action))
+
+        if row is None:
+            if mode == "reconcile":
+                return False
+            _apply_clean_purchase(api.tasks(), list_id, title, remember)
+        else:
+            task_id, expected_title, details, confirmed = row
+            if confirmed:
+                return True
+            if task_id is None:
+                return False
+            stored = _read_task(api.tasks(), list_id, task_id)
+            if stored.get("title") != expected_title or (stored.get("notes") or "") != details:
+                return False
+        with db:
+            db.execute("UPDATE purchase_receipts SET confirmed=1 WHERE action=?", (action,))
+        return True
 
 
 def insert_plain_task(api, list_id, title, notes):

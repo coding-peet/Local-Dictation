@@ -55,13 +55,13 @@ public sealed partial class SettingsWindow
         Add("shortcut-mode",MainSection.General,shortcutHold,"Recording shortcut behavior","Press to start/stop or Hold to record until you release the keys.","hold press release toggle push to talk mode");
         Add("history-retention",MainSection.General,historyRetention,"Keep recordings for","Choose how long audio is kept. Transcripts stay until you delete them.","history retention days week month privacy storage audio lifetime expire delete");
         Add("service-address",MainSection.Connections,endpoint,"Local service address","The loopback session service supplies models and transcriptions.","endpoint API port localhost connection reconnect");
-        Add("pala-sync",MainSection.Connections,palaIntegration,"Enable Pala sync","Sync the paired Note over USB, Bluetooth or Wi-Fi through Bridge.","pala kubo sync integration Wi-Fi Bluetooth USB");
+        Add("pala-sync",MainSection.Connections,palaIntegration,"Enable Note sync","Sync the paired Note over USB, Bluetooth or Wi-Fi through Bridge.","pala kubo sync integration Wi-Fi Bluetooth USB");
         Add("pala-note-settings",MainSection.Connections,palaOpenSettings,"Open Note settings",
             "Manage the Note, Bridge preferences, weather and pairing through your local browser.",
             "pala kubo bridge forecast weather location city country temperature rename USB Bluetooth pairing Wi-Fi");
-        Add("pala-bridge-model",MainSection.Connections,palaBridgeModel,"Pala transcription model","Use the Dictation model or choose a separate installed model.","pala kubo bridge slovak asr");
-        Add("kubo-model",MainSection.Connections,palaKuboModel,"Kubo processing model","Select a model from the signed-in Codex account.","pala codex sorting model");
-        Add("kubo-effort",MainSection.Connections,palaKuboEffort,"Kubo reasoning effort","Choose a reasoning level for the selected Codex model.","pala codex high xhigh effort thinking");
+        Add("pala-bridge-model",MainSection.Connections,palaBridgeModel,"Note transcription model","Use the Dictation model or choose a separate installed model.","pala kubo bridge slovak asr");
+        Add("kubo-model",MainSection.Connections,palaKuboModel,"Processing model","Select a model from the signed-in Codex account.","pala codex sorting model");
+        Add("kubo-effort",MainSection.Connections,palaKuboEffort,"Processing reasoning effort","Choose a reasoning level for the selected Codex model.","pala codex high xhigh effort thinking");
         Add("pala-transcripts",MainSection.Connections,palaTranscriptButton,"Note transcripts","Read original transcripts and inspect Bridge decisions.","pala calendar missing saved history log");
         Add("compatibility",MainSection.Dictation,compatibility,"Application compatibility","Outlook inserts after Finish. Remembered applications use final-only delivery with Insert directly.","Outlook paused live insertion reset");
         shell.Search.SetEntries(entries);

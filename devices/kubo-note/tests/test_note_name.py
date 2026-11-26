@@ -26,10 +26,10 @@ class NamedPala(FakePala):
 
 
 class NoteNameTests(unittest.TestCase):
-    def test_uses_display_name_or_kubo_for_legacy_default(self):
-        self.assertEqual(local_dictation_note_name({"PalaBridgeName": "Pala Bridge"}), "Kubo")
+    def test_uses_display_name_or_note_by_default(self):
+        self.assertEqual(local_dictation_note_name({"PalaBridgeName": "Pala Bridge"}), "Note")
         self.assertEqual(local_dictation_note_name({"PalaBridgeName": "Kubo 2"}), "Kubo 2")
-        self.assertEqual(local_dictation_note_name({"PalaBridgeName": "Name\\ninvalid"}), "Kubo")
+        self.assertEqual(local_dictation_note_name({"PalaBridgeName": "Name\\ninvalid"}), "Note")
 
     def test_sends_and_verifies_name_without_selecting_recordings(self):
         device = NamedPala()

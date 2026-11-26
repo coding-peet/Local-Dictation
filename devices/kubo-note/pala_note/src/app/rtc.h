@@ -21,6 +21,8 @@ time_t  utcTmToEpoch(struct tm utc);
 
 bool    rtcSyncSystemFromChip();
 bool    rtcSyncChipFromSystem();
+time_t  rtcUtcEpoch();
+bool    rtcApplyBridgeUtc(time_t epoch);
 String  rtcUtcIso();
 
 bool    syncTimeFromNTP(uint32_t timeoutMs = 8000);

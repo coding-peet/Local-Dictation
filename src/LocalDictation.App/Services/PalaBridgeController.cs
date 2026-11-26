@@ -37,7 +37,7 @@ internal sealed class PalaBridgeController : IDisposable
         }
 
         if (stopping) return new("Stopping Bridge…", lastError, null, false, false);
-        if (!enabled) return new("Pala sync is disabled.", null, null, false, false);
+        if (!enabled) return new("Note sync is disabled.", null, null, false, false);
         if (runtime != null && IsLive(runtime))
         {
             var managed = owned && runtime.Owner == owner;

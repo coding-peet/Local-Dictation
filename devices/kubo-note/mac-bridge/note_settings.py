@@ -78,6 +78,8 @@ def note_request(data):
         old = data.get("old")
         return {"op": op, "old": old if valid(old, r"[ -~]{0,48}") else "",
                 "password": password, "repeat": repeat}
+    if op == "auth.policy" and type(data.get("required")) is bool:
+        return {"op": op, "required": data["required"]}
     if op in ("get", "trash.status", "auth.logout", "restart.status"):
         return {"op": op}
     if op == "restart.request" and data.get("mode") in ("restart", "audit"):
@@ -121,7 +123,7 @@ def note_request(data):
         if (isinstance(ids, list) and len(ids) <= 8 and all(valid(value, PEER_ID) for value in ids)
                 and len(set(ids)) == len(ids)):
             return {"op": op, "ids": ids}
-    if (op == "settings.save" and valid(data.get("name"), r"[A-Za-z0-9][A-Za-z0-9 -]{0,9}")
+    if (op == "settings.save" and valid(data.get("name"), r"[A-Za-z0-9][A-Za-z0-9 -]{0,11}")
             and isinstance(data.get("language"), str) and data["language"] in NOTE_LANGUAGES):
         request = {"op": op, "name": data["name"].rstrip(), "language": data["language"]}
         if "weeklyCodexLimit" in data:
@@ -199,6 +201,12 @@ def note_response(reply, transport, op="get"):
         result["device"]["memoryTrash"] = device["memoryTrash"]
     if type(device.get("r")) is int and device["r"] == 1:
         result["device"]["r"] = 1
+    # Earlier Recorder builds identify themselves through their disabled local Trash.
+    recorder = type(device.get("rf")) is int and device["rf"] == 1
+    if recorder or (result["device"].get("r") == 1 and device.get("memoryTrash") is False):
+        result["device"]["recorderFirst"] = True
+    if type(device.get("pa")) is bool:
+        result["device"]["webPasswordRequired"] = device["pa"]
     if type(device.get("webPasswordConfigured")) is bool:
         result["device"]["webPasswordConfigured"] = device["webPasswordConfigured"]
     if device.get("keepsWifiPassword") is True:

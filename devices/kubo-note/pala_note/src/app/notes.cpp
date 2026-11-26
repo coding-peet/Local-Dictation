@@ -2,6 +2,7 @@
 #include "../../config.h"
 #include "../../globals.h"
 #include "../../types.h"
+#include "monthly_recordings.h"
 #include "notes.h"
 #include "record.h"
 #include "local_transcript_policy.h"
@@ -19,7 +20,10 @@
 #include "audit_progress.h"
 #include "capture_wav_recovery.h"
 #include <sys/stat.h>
+#include <nvs.h>
+#include <unistd.h>
 #include "sync_queue.h"
+#include "recorder_store.h"
 #include "note_trash_policy.h"
 
 // ─── Index ────────────────────────────────────────────────────────────────
@@ -40,7 +44,9 @@ note_catalog::Source catalogVisibility(int num) {
   for (const char* extension : note_trash::bundleExtensions) {
     for (const char* suffix : note_trash::commitSuffixes) {
       char path[96];
-      snprintf(path, sizeof(path), "/sdcard" NOTES_DIR "/note_%03d.%s%s", num, extension, suffix);
+      char member[48];
+      snprintf(member, sizeof(member), "%s%s", extension, suffix);
+      monthly_recordings::path(path, sizeof(path), "/sdcard" NOTES_DIR, num, member);
       struct stat info;
       if (stat(path, &info) == 0) return Source::Present;
       if (errno != ENOENT) return Source::Error;
@@ -55,6 +61,9 @@ bool replaceNoteFileAtomically(const String& path, const String& temp) {
 }
 
 bool saveIndex() {
+#if PALA_RECORDER_FIRST
+  return recorderWorkReady();
+#endif
   if (!catalogSnapshot.loaded) return false;
   if (SD_MMC.exists(kIndexTemp)) SD_MMC.remove(kIndexTemp);
   File f = SD_MMC.open(kIndexTemp, FILE_WRITE);
@@ -99,7 +108,7 @@ constexpr char transcriptJournal[] = "/sdcard" NOTES_DIR "/transcript.pending";
 bool transcriptRepairPending = false;
 
 void transcriptPath(int num, char (&path)[64]) {
-  snprintf(path, sizeof(path), "/sdcard" NOTES_DIR "/note_%03d.txt", num);
+  monthly_recordings::path(path, sizeof(path), "/sdcard" NOTES_DIR, num, "txt");
 }
 
 bool replayTranscript() {
@@ -124,19 +133,40 @@ note_transcript::Stored storedNoteTranscript(int num) {
 }
 
 bool reconcileNoteTranscript(int num) {
+#if PALA_RECORDER_FIRST
+  return registerRecorderWork(num);
+#endif
   if (!replayTranscript() || !note_transcript::reserve(transcriptJournal, num)) return false;
   return replayTranscript();
 }
 
-bool saveNoteTranscript(int num, const String& text) {
+bool saveNoteTranscript(int num, const String& text, const char* route) {
+#if PALA_RECORDER_FIRST
+  if (text.isEmpty() || !recorderWorkReady() ||
+      syncQueueKindFor(num) == SyncQueueKind::None) return false;
+  char target[64];
+  transcriptPath(num, target);
+  if (!note_transcript::storeOnce(target, {text.c_str(), text.length()})) return false;
+  if (registerRecorderWork(num)) return true;
+  startRecorderWork();
+  return false;
+#endif
   if (noteIsTrashed(num) || text.isEmpty() || !replayTranscript()) return false;
+  // Finish an older journal before acquiring this note's queue scope.
   SyncQueueChange change(num);
-  if (!change || !note_transcript::reserve(transcriptJournal, num)) return false;
+  if (!change) return false;
+  char path[64];
+  transcriptPath(num, path);
+  if (route) {
+    const auto source = note_transcript::inspect(path);
+    if (source == note_transcript::Stored::Error ||
+        (source == note_transcript::Stored::Missing && !writeNoteQueueState(num, route, nullptr, false, true)))
+      return false;
+  }
+  if (!note_transcript::reserve(transcriptJournal, num)) return false;
   // Either the journal or the dirty queue survives every boundary until the
   // catalog, route metadata and derived queue agree with the published bytes.
   transcriptRepairPending = true;
-  char path[64];
-  transcriptPath(num, path);
   const bool stored = note_transcript::storeOnce(path, {text.c_str(), text.length()});
   const bool repaired = replayTranscript();
   return stored && repaired;
@@ -153,7 +183,7 @@ int checkedTranscript = 0;
 bool repairCatalogRecording(int num, bool interrupted = false) {
   if (num <= 0 || noteIsTrashed(num)) return true;
   char wavPath[64];
-  snprintf(wavPath, sizeof(wavPath), "/sdcard" NOTES_DIR "/note_%03d.wav", num);
+  monthly_recordings::path(wavPath, sizeof(wavPath), "/sdcard" NOTES_DIR, num, "wav");
   return note_catalog::recoverRecording(noteIndex, num, wavPath, [&](auto pos) {
     SyncQueueChange queueChange(num);
     if (!queueChange) return false;
@@ -172,7 +202,7 @@ bool recoverCaptureIntent() {
   return note_catalog::recoverReservation("/sdcard" NOTES_DIR "/capture.pending", [](int note, const char* utc) {
     if (noteIsTrashed(note)) return true;
     char wav[72];
-    snprintf(wav, sizeof(wav), "/sdcard" NOTES_DIR "/note_%03d.wav", note);
+    monthly_recordings::path(wav, sizeof(wav), "/sdcard" NOTES_DIR, note, "wav");
     const auto state = capture_wav::recover(wav);
     if (state == capture_wav::State::Empty || state == capture_wav::State::Missing) return true;
     if (state != capture_wav::State::Ready) return false;
@@ -220,16 +250,35 @@ bool startCatalogRecovery() {
 }  // namespace
 
 void initializeNoteCatalog(bool recoverSources) {
+#if PALA_RECORDER_FIRST
+  startRecorderWork();
+  return;
+#endif
   recoverCatalogSources = recoverSources;
   discoverNoteTrash();
   startCatalogRecovery();
 }
 
-bool noteCatalogBaseLoaded() { return catalogSnapshot.loaded; }
+bool noteCatalogBaseLoaded() {
+#if PALA_RECORDER_FIRST
+  return recorderWorkReady();
+#else
+  return catalogSnapshot.loaded;
+#endif
+}
 
-bool noteCatalogReady() { return catalogRecovery == CatalogRecovery::Ready && !transcriptRepairPending; }
+bool noteCatalogReady() {
+#if PALA_RECORDER_FIRST
+  return recorderWorkReady();
+#else
+  return catalogRecovery == CatalogRecovery::Ready && !transcriptRepairPending;
+#endif
+}
 
 bool maintainNoteCatalog() {
+#if PALA_RECORDER_FIRST
+  return scanRecorderWorkSlice();
+#endif
   if (transcriptRepairPending && !replayTranscript()) return false;
   if (catalogRecovery == CatalogRecovery::Load || catalogRecovery == CatalogRecovery::Intent) {
     if (!startCatalogRecovery()) return false;
@@ -287,23 +336,131 @@ bool maintainNoteCatalog() {
   return noteCatalogReady();
 }
 
-bool beginNoteRecording(int num, const String& capturedUtc) {
-  return catalogSnapshot.loaded && recoverCaptureIntent() &&
-      note_catalog::reserveRecording("/sdcard" NOTES_DIR "/capture.pending", num, capturedUtc.c_str());
+#if PALA_RECORDER_FIRST
+namespace recording_layout {
+constexpr char root[] = "/sdcard/recordings";
+constexpr char marker[] = "/sdcard/.pala-recordings-v2";
+
+bool activate(uint32_t first) {
+  if (monthly_recordings::firstNewSequence) return first >= monthly_recordings::firstNewSequence;
+  const auto temporary = std::string(marker) + ".tmp";
+  auto* out = std::fopen(temporary.c_str(), "wb");
+  if (!out) return false;
+  const bool saved = std::fwrite(&first, sizeof(first), 1, out) == 1 &&
+      std::fflush(out) == 0 && ::fsync(fileno(out)) == 0;
+  if (std::fclose(out) != 0 || !saved || std::rename(temporary.c_str(), marker) != 0) return false;
+  monthly_recordings::firstNewSequence = first;
+  return true;
 }
 
-int nextNoteNumber() {
-  if (!catalogSnapshot.loaded) return -1;
-  int maxNum = highestTrashedNoteNumber();
-  for (const NoteEntry& note : noteIndex) maxNum = std::max(maxNum, note.num);
-  do {
-    if (maxNum == INT32_MAX) return -1;
-    ++maxNum;
-  } while (noteHasLiveBundle(maxNum));
-  return maxNum;
+bool emptyArchive() {
+  auto* dir = opendir(root);
+  if (!dir) return false;
+  bool empty = false;
+  for (;;) {
+    errno = 0;
+    const auto* entry = readdir(dir);
+    if (!entry) { empty = errno == 0; break; }
+    const std::string_view name(entry->d_name);
+    if (name != "." && name != "..") break;
+  }
+  return closedir(dir) == 0 && empty;
+}
+}
+#endif
+
+bool initializeRecordingLayout() {
+#if PALA_RECORDER_FIRST
+  using namespace recording_layout;
+  monthly_recordings::firstNewSequence = 0;
+  if (::mkdir(root, 0777) != 0 && errno != EEXIST) return false;
+  auto* in = std::fopen(marker, "rb");
+  if (!in) {
+    // A missing marker may only start a new layout on an empty archive.
+    return errno == ENOENT && emptyArchive();
+  }
+  uint32_t first = 0;
+  const bool valid = std::fread(&first, sizeof(first), 1, in) == 1 &&
+      std::fgetc(in) == EOF && !std::ferror(in) && first && first <= monthly_recordings::maxSequence;
+  if (std::fclose(in) != 0 || !valid) return false;
+  monthly_recordings::firstNewSequence = first;
+#endif
+  return true;
+}
+
+bool prepareNoteRecordingDirectory(int num) {
+  if (!monthly_recordings::sequence(num)) return true;
+  char dir[48];
+  snprintf(dir, sizeof(dir), "%s/%06d", monthly_recordings::archiveRoot("/sdcard" NOTES_DIR, num),
+           monthly_recordings::folderMonth(num));
+  return ::mkdir(dir, 0777) == 0 || errno == EEXIST;
+}
+
+bool beginNoteRecording(int num, const String& capturedUtc) {
+#if PALA_RECORDER_FIRST
+  if (!recorderWorkReady()) return false;
+#else
+  if (!catalogSnapshot.loaded || !recoverCaptureIntent()) return false;
+#endif
+  const auto ordinal = monthly_recordings::sequence(num);
+  if (ordinal) {
+    if (monthly_recordings::makeId(ordinal, capturedUtc.c_str()) != num) return false;
+    if (!prepareNoteRecordingDirectory(num)) return false;
+#if PALA_RECORDER_FIRST
+    // The inbox adopter already refuses to rename onto an existing WAV.
+    if (monthly_recordings::inRecordings(num)) return reserveRecorderWork(num, capturedUtc);
+#endif
+  }
+  char wav[64];
+  monthly_recordings::path(wav, sizeof(wav), "/sdcard" NOTES_DIR, num, "wav");
+  struct stat info{};
+  if (::stat(wav, &info) == 0 || errno != ENOENT) return false;
+  const String parked = String(wav) + ".recovery-original";
+  if (::stat(parked.c_str(), &info) == 0 || errno != ENOENT) return false;
+#if PALA_RECORDER_FIRST
+  return reserveRecorderWork(num, capturedUtc);
+#else
+  return note_catalog::reserveRecording("/sdcard" NOTES_DIR "/capture.pending", num, capturedUtc.c_str());
+#endif
+}
+
+int nextNoteNumber(const String& capturedUtc) {
+  if (!noteCatalogBaseLoaded()) return -1;
+  // Persist the ordinal before opening a WAV. It remains reserved when a month
+  // is deleted, when the RTC moves back, or when this device swaps cards.
+  nvs_handle_t ledger;
+  if (nvs_open("pala-capture", NVS_READWRITE, &ledger) != ESP_OK) return -1;
+  uint32_t previous = 0;
+  const esp_err_t read = nvs_get_u32(ledger, "sequence", &previous);
+  int id = -1;
+  if ((read == ESP_OK || read == ESP_ERR_NVS_NOT_FOUND) && previous < monthly_recordings::maxSequence) {
+    const int catalogLast = noteIndex.empty() ? 0 : noteIndex.back().num;
+    auto last = std::max(previous, monthly_recordings::sequence(
+        std::max(catalogLast, highestTrashedNoteNumber())));
+#if PALA_RECORDER_FIRST
+    if (monthly_recordings::firstNewSequence)
+      last = std::max(last, monthly_recordings::firstNewSequence - 1);
+#endif
+    const int candidate = monthly_recordings::makeId(last + 1, capturedUtc.c_str());
+    if (candidate > 0 && nvs_set_u32(ledger, "sequence", last + 1) == ESP_OK &&
+        nvs_commit(ledger) == ESP_OK) {
+#if PALA_RECORDER_FIRST
+      if (recording_layout::activate(last + 1)) id = candidate;
+#else
+      id = candidate;
+#endif
+    }
+  }
+  nvs_close(ledger);
+  return id;
 }
 
 bool saveTag(int num, const char* tag, const String& capturedUtc) {
+#if PALA_RECORDER_FIRST
+  if (registerRecorderWork(num)) return true;
+  startRecorderWork();
+  return false;
+#endif
   SyncQueueChange change(num);
   if (!change) return false;
   if (!writeNoteMeta(num, tag, capturedUtc)) return false;
@@ -320,7 +477,11 @@ bool saveTag(int num, const char* tag, const String& capturedUtc) {
 
 String noteMetaPath(int num) {
   char path[64];
+#if PALA_RECORDER_FIRST
+  monthly_recordings::path(path, sizeof(path), NOTES_DIR, num, "wav.meta");
+#else
   snprintf(path, sizeof(path), "%s/note_%03d.meta", NOTES_DIR, num);
+#endif
   return String(path);
 }
 
@@ -363,7 +524,11 @@ bool writeNoteMeta(int num, const char* tag, const String& capturedUtc) {
 
 static String queuePath(int num) {
   char path[64];
+#if PALA_RECORDER_FIRST
+  snprintf(path, sizeof(path), "/.pala-work/%d.queue", num);
+#else
   snprintf(path, sizeof(path), "%s/note_%03d.queue", NOTES_DIR, num);
+#endif
   return String(path);
 }
 
@@ -496,7 +661,7 @@ bool writeNoteQueueState(int num, const char* state, const char* error, bool inc
 
 static String noteMomentsPath(int num) {
   char path[64];
-  snprintf(path, sizeof(path), "%s/note_%03d.moments", NOTES_DIR, num);
+  monthly_recordings::path(path, sizeof(path), NOTES_DIR, num, "moments");
   return String(path);
 }
 
@@ -614,7 +779,7 @@ String currentUtcIso() {
 
 String notePreviewText(int num, size_t maxLen) {
   char txtPath[64];
-  snprintf(txtPath, sizeof(txtPath), "%s/note_%03d.txt", NOTES_DIR, num);
+  monthly_recordings::path(txtPath, sizeof(txtPath), NOTES_DIR, num, "txt");
   File f = SD_MMC.open(txtPath);
   if (!f) return "";
   String out = "";

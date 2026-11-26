@@ -18,7 +18,7 @@ String palaLastWifiSsid();
 bool palaSetLastWifiSsid(const String& ssid);
 String palaOpenAiKey();
 String palaSpeechVoice();
-constexpr size_t kPalaNoteNameMax = 10;
+constexpr size_t kPalaNoteNameMax = 12;
 String palaNoteName();
 bool palaSetNoteName(const String& name);
 bool palaNoteNameLocallyManaged();

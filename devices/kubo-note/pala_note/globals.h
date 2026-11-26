@@ -15,6 +15,7 @@ extern uint32_t  lastActivityMs;
 extern WebServer transferServer;
 extern bool      transferServerActive;
 extern String    transferUrl;
+extern String    transferHostname;
 
 extern bool      timeReady;
 

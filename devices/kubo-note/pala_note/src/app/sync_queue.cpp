@@ -7,6 +7,7 @@
 #include "../../globals.h"
 #include "brain.h"
 #include "notes.h"
+#include "recorder_store.h"
 #include "storage_commit.h"
 #include <SD_MMC.h>
 #include <esp_attr.h>
@@ -153,6 +154,9 @@ void invalidate() {
 }
 
 void initializeSyncQueue() {
+#if PALA_RECORDER_FIRST
+  return;
+#endif
   initialized = true;
   recoverStoredFile(SD_MMC, String(queuePath));
   ready = !SD_MMC.exists(dirtyPath) && inspectQueue();
@@ -174,6 +178,10 @@ void retainSyncQueueRecovery() {
 }
 
 bool requestSyncQueueRebuild(bool verifySources) {
+#if PALA_RECORDER_FIRST
+  startRecorderWork();
+  return true;
+#endif
   if (!markDirty()) return false;
   verifyReplacement |= verifySources;
   invalidate();
@@ -181,15 +189,34 @@ bool requestSyncQueueRebuild(bool verifySources) {
   return true;
 }
 
-bool syncQueueReady() { return ready; }
+bool syncQueueReady() {
+#if PALA_RECORDER_FIRST
+  return recorderWorkReady();
+#else
+  return ready;
+#endif
+}
 
 bool verifySyncQueueSources(bool finalPass) {
+#if PALA_RECORDER_FIRST
+  return recorderWorkReady();
+#else
   return ready && verifyQueueFile(queuePath, finalPass);
+#endif
 }
 int syncQueueRebuildProgressNote() { return cursor.lastNote; }
-SyncQueueCounts syncQueueCounts() { return ready ? counts : SyncQueueCounts{}; }
+SyncQueueCounts syncQueueCounts() {
+#if PALA_RECORDER_FIRST
+  return recorderWorkCounts();
+#else
+  return ready ? counts : SyncQueueCounts{};
+#endif
+}
 
 bool maintainSyncQueue() {
+#if PALA_RECORDER_FIRST
+  return scanRecorderWorkSlice();
+#endif
   if (ready || !initialized || depth) return ready;
   if (!building) {
     if (!markDirty()) return false;
@@ -231,6 +258,9 @@ bool maintainSyncQueue() {
 }
 
 bool visitSyncQueue(bool newestFirst, const std::function<bool(const SyncQueueEntry&)>& visit) {
+#if PALA_RECORDER_FIRST
+  return visitRecorderWork(newestFirst, visit);
+#endif
   if (!ready) return false;
   File file = SD_MMC.open(queuePath, FILE_READ);
   size_t size = 0;
@@ -250,6 +280,10 @@ SyncQueueKind syncQueueKindFor(int note) {
 }
 
 SyncQueueChange::SyncQueueChange(int note) {
+#if PALA_RECORDER_FIRST
+  accepted_ = recorderWorkReady();
+  return;
+#endif
   // Boot repairs happen before a queue can be served. Invalidate an old
   // snapshot even when the repair itself precedes queue initialization.
   if (!depth && !markDirty()) return;
@@ -260,6 +294,9 @@ SyncQueueChange::SyncQueueChange(int note) {
 }
 
 SyncQueueChange::~SyncQueueChange() {
+#if PALA_RECORDER_FIRST
+  return;
+#endif
   if (!accepted_ || --depth != 0) return;
   if (ready && changedNote > 0 && updateQueue(changedNote)) return;
   if (ready || changedNote == 0 || (building && changedNote <= cursor.lastNote)) invalidate();

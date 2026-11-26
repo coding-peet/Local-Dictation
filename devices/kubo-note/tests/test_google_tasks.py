@@ -1,7 +1,8 @@
 from pathlib import Path
 import sys
+import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "mac-bridge"))
@@ -201,6 +202,76 @@ class GoogleTasksDeliveryTests(unittest.TestCase):
         )
         self.tasks.insert.assert_called_once()
         self.assertEqual(self.tasks.patch.call_count, 2)
+
+    def settle_purchase(self, state, title, key="shopping-recording", mode="write"):
+        return google_tasks.settle_clean_purchase(state, self.api, self.list_id, title, key, mode)
+
+    def test_clean_purchase_uses_no_internal_note(self):
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder)
+            self.assertTrue(self.settle_purchase(state, "šunka"))
+            self.assertTrue(self.settle_purchase(state, "šunka", mode="reconcile"))
+        saved, = self.rows.values()
+        self.assertEqual(saved["title"], "šunka")
+        self.assertEqual(saved.get("notes", ""), "")
+        self.tasks.insert.assert_called_once_with(tasklist=self.list_id, body={"title": "šunka"})
+
+    def test_clean_purchase_merges_inflected_open_product(self):
+        self.add_task("manual", title="Šunku", notes="Od mäsiara")
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder)
+            self.assertTrue(self.settle_purchase(state, "šunka"))
+            self.assertTrue(self.settle_purchase(state, "šunka", mode="reconcile"))
+        saved, = self.rows.values()
+        self.assertEqual(saved["id"], "manual")
+        self.assertEqual(saved["notes"], "Od mäsiara\n\nOpakovaná požiadavka (x2)")
+        self.tasks.insert.assert_not_called()
+
+    def test_clean_purchase_reconciles_lost_readback_without_another_insert(self):
+        self.get_response_lost = True
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder)
+            with self.assertRaises(google_tasks.TaskWriteUncertain):
+                self.settle_purchase(state, "šunka")
+            self.get_response_lost = False
+            self.assertTrue(self.settle_purchase(state, "šunka", mode="reconcile"))
+            self.assertTrue(self.settle_purchase(state, "šunka", mode="reconcile"))
+        self.tasks.insert.assert_called_once()
+        self.tasks.patch.assert_not_called()
+
+    def test_unverified_clean_insert_is_never_reissued_by_other_bridge(self):
+        self.insert_response_lost = True
+        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+            with self.assertRaises(google_tasks.TaskWriteUncertain):
+                self.settle_purchase(Path(first), "šunka")
+            self.assertFalse(self.settle_purchase(Path(first), "šunka", mode="reconcile"))
+            self.assertFalse(self.settle_purchase(Path(second), "šunka", mode="reconcile"))
+        self.tasks.insert.assert_called_once()
+        self.assertEqual(len(self.rows), 1)
+
+    def test_recorder_syncs_two_ham_forms_as_one_clean_item_after_lost_ack(self):
+        import threading
+        import usb_sync
+        from bridge import Bridge
+        from test_recorder_delivery import DEVICE, RecorderNote, TOKEN
+
+        note = RecorderNote("DONE", modern=True)
+        note.files[42] = "Daj do nákupu šunka, šunku.".encode()
+        self.api.tasklists.return_value.get.return_value.execute.return_value = {"id": "account"}
+        profile = {"processing_mode": "kubo", "google_routes": {
+            "shopping": {"id": self.list_id, "title": "Nákup"},
+        }}
+        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second, \
+                patch("recorder_delivery._api") as connection, patch("recorder_delivery._verify_task_list"):
+            connection.return_value.__enter__.return_value = self.api
+            a, b = Bridge(Path(first), profile), Bridge(Path(second), profile)
+            with self.assertRaises(OSError):
+                usb_sync._drain_link(note, TOKEN, a, threading.Event(), device=DEVICE)
+            usb_sync._drain_link(note, TOKEN, a, threading.Event(), device=DEVICE)
+            usb_sync._drain_link(note, TOKEN, b, threading.Event(), device=DEVICE)
+        self.tasks.insert.assert_called_once_with(tasklist=self.list_id, body={"title": "šunka"})
+        self.tasks.patch.assert_not_called()
+        self.assertEqual(note.delivered, [42])
 
     def test_existing_manual_purchase_notes_are_preserved(self):
         user_notes = "Peterova poznámka\nOpakovaná požiadavka (x7)"

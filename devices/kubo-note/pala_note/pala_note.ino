@@ -6,6 +6,7 @@
 #include <esp_partition.h>
 #include <vector>
 #include <algorithm>
+#include <atomic>
 
 extern "C" {
 #include "config.h"
@@ -27,6 +28,7 @@ extern "C" {
 #include "src/app/display_pages.h"
 #include "src/app/network.h"
 #include "src/app/notes.h"
+#include "src/app/monthly_recordings.h"
 #include "src/app/note_config.h"
 #include "src/app/note_peers.h"
 #include "src/app/record.h"
@@ -61,6 +63,7 @@ uint32_t lastActivityMs = 0;
 WebServer transferServer(80);
 bool transferServerActive = false;
 String transferUrl;
+String transferHostname;
 
 bool timeReady = false;
 bool audioPlaying = false;
@@ -104,6 +107,10 @@ struct BacklogScreen {
 } backlogScreen;
 #if PALA_BRIDGE_DISCOVERY
 bool usbDataConnected = false;
+UsbDataPresence usbDataPresence;
+#if ARDUINO_USB_MODE && ARDUINO_USB_CDC_ON_BOOT
+std::atomic<bool> usbBusReset{false};
+#endif
 bool usbQueueChecked = false;
 bool triedPreferredBluetooth = false;
 RTC_DATA_ATTR int64_t retryHomeWeatherAfter = 0;
@@ -528,7 +535,19 @@ void requestBacklogSync() {
 #endif
 }
 
+uint32_t homeRefreshStartedAt = 0;
+bool homeRefreshTriedBluetooth = false;
+bool homeRefreshTriedWifi = false;
+
+void requestManualHomeRefresh() {
+  startManualHomeRefresh();
+  homeRefreshStartedAt = millis();
+  homeRefreshTriedBluetooth = false;
+  homeRefreshTriedWifi = false;
+}
+
 void beginRecordingSync(SyncTiming event) {
+  if (PALA_RECORDER_FIRST && event == SyncTiming::Manual && !waitingManualSync) requestManualHomeRefresh();
   if (!recordingSync.begin(palaSyncTiming(), event, lastActivityMs)) return;
   const auto queue = syncQueueCounts();
   if (!noteCatalogReady() || !syncQueueReady() || queue.audio || queue.organization) {
@@ -542,21 +561,28 @@ void beginRecordingSync(SyncTiming event) {
 
 void pollUsbBacklog() {
 #if PALA_BRIDGE_DISCOVERY
-  const bool dataCable = usb_serial_jtag_is_connected();
+  const bool dataCable = usbDataPresence.update(usb_serial_jtag_is_connected(), millis());
+#if ARDUINO_USB_MODE && ARDUINO_USB_CDC_ON_BOOT
+  const bool busReset = usbBusReset.exchange(false);
+#else
+  constexpr bool busReset = false;
+#endif
+  if ((!dataCable && usbDataConnected) || busReset) {
+    const bool wasProbing = backlogScreen.link == BacklogLink::Usb || backlogRequested;
+    const bool resumeBacklog = resumeBacklogAfterUsbDetach(state == STATE_IDLE, usbSyncActive(), wasProbing);
+    cancelUsbSync();
+    // A reset starts a fresh USB pairing attachment even if SOF has resumed.
+    noteUsbLinkChanged(false);
+    usbSetupLine = "";
+    discardUsbLine = false;
+    // Discard the preceding session's retry deadline when the cable goes away.
+    if (resumeBacklog && recordingSyncAllowed()) requestBacklogSync();
+  }
   noteUsbLinkChanged(dataCable);
   if (dataCable && !usbDataConnected && state == STATE_IDLE && recordingSyncAllowed() && !bluetoothSyncActive() &&
       !bluetoothEnrollmentOpen()) {
     stopBluetoothSync();
     requestBacklogSync();
-  }
-  if (!dataCable && usbDataConnected) {
-    const bool wasProbing = backlogScreen.link == BacklogLink::Usb || backlogRequested;
-    const bool resumeBacklog = resumeBacklogAfterUsbDetach(state == STATE_IDLE, usbSyncActive(), wasProbing);
-    cancelUsbSync();
-    usbSetupLine = "";
-    discardUsbLine = false;
-    // Discard the preceding session's retry deadline when the cable goes away.
-    if (resumeBacklog && recordingSyncAllowed()) requestBacklogSync();
   }
   usbDataConnected = dataCable;
 #endif
@@ -785,7 +811,12 @@ bool refreshCompanionConnection() {
   const IPAddress ip = !available ? IPAddress() : companionUsesHotspot ? WiFi.softAPIP() : WiFi.localIP();
   const String address = ip == IPAddress() ? String() : ip.toString();
   const String network = address.isEmpty() ? String() : companionUsesHotspot ? WiFi.softAPSSID() : WiFi.SSID();
-  const bool changed = transferUrl != address || companionNetworkName != network;
+  String hostname;
+#if PALA_RECORDER_FIRST
+  if (!address.isEmpty() && !companionUsesHotspot) hostname = companionLocalAddress();
+#endif
+  const bool changed = transferUrl != address || companionNetworkName != network || transferHostname != hostname;
+  transferHostname = hostname;
   transferUrl = address;
   companionNetworkName = network;
   return changed;
@@ -830,6 +861,9 @@ void enterCompanion() {
   setupTransferServer();
   transferServer.begin();
   transferServerActive = true;
+#if PALA_RECORDER_FIRST
+  if (!companionUsesHotspot) startCompanionMdns();
+#endif
   refreshCompanionConnection();
   nextCompanionNetworkCheckAt = millis() + 1000;
   redrawCompanionHome(false);
@@ -855,7 +889,7 @@ void redrawCompanionHome(bool adjustingVolume) {
   const CompanionLink link = transferUrl.isEmpty() ? CompanionLink::Offline
       : companionUsesHotspot ? CompanionLink::Hotspot : CompanionLink::Wifi;
   const int overlay = adjustingVolume || companionDisplay.volumeVisible() ? palaPlaybackVolume() : -1;
-  showTransferMode(link, companionNetworkName, transferUrl, companionApPassword,
+  showTransferMode(link, companionNetworkName, transferUrl, transferHostname, companionApPassword,
                    companionDisplay.batteryPercent(), overlay);
   // Start the visible interval after the e-paper refresh finishes.
   if (adjustingVolume) companionDisplay.showVolume(millis());
@@ -948,7 +982,7 @@ void askBrain() {
 #if PALA_BRIDGE_DISCOVERY
   if (wifiBridgeTranscriptionOnly()) {
     stopWifi();
-    showError("KUBO DISABLED");
+    showError("PROCESSING OFF");
     delay(1400);
     returnToReady();
     return;
@@ -991,7 +1025,7 @@ void askBrain() {
   if (asksForNewest && !noteIndex.empty() && !noteIndex.back().hasText) {
     const int newest = noteIndex.back().num;
     char newestPath[64];
-    snprintf(newestPath, sizeof(newestPath), "%s/note_%03d.wav", NOTES_DIR, newest);
+    monthly_recordings::path(newestPath, sizeof(newestPath), NOTES_DIR, newest, "wav");
     showAskProgress("PREPARING", "LATEST THOUGHT");
     transcribe(String(newestPath), newest);
   }
@@ -1125,6 +1159,7 @@ void returnFromAgenda() {
 }
 
 void advanceDisplayPage(bool fromHome) {
+  if (PALA_RECORDER_FIRST) return;
   if (fromHome) {
     resetTodayAgenda();
     activeDisplayPages = palaDisplayPages();
@@ -1237,7 +1272,7 @@ void handleIdle() {
       case ButtonAction::Single: advanceDisplayPage(true); break;
       case ButtonAction::Double:
         takeLatchedPress(false);
-        playDailyBriefing();
+        if (!PALA_RECORDER_FIRST) playDailyBriefing();
         break;
       case ButtonAction::Triple:
         beginRecordingSync(SyncTiming::Manual);
@@ -1256,6 +1291,7 @@ void handleIdle() {
   switch (input.action) {
     case ButtonAction::None: break;
     case ButtonAction::Single:
+      if (PALA_RECORDER_FIRST) break;
 #if PALA_BRIDGE_DISCOVERY
       if (palaDisplayPages().indexOf(static_cast<char>(DisplayPage::Events)) < 0) break;
 #endif
@@ -1266,13 +1302,13 @@ void handleIdle() {
       showAgendaPage();
       break;
     case ButtonAction::Double:
-      playWeeklyBriefing();
+      if (!PALA_RECORDER_FIRST) playWeeklyBriefing();
       break;
     case ButtonAction::Triple:
       if (!backlogSyncActive && backlogScreen.link == BacklogLink::Deferred) enterAquarium();
       break;
     case ButtonAction::Hold:
-      if (liveButtonHold(lowerButton, BTN_PWR)) askBrain();
+      if (!PALA_RECORDER_FIRST && liveButtonHold(lowerButton, BTN_PWR)) askBrain();
       break;
   }
 }
@@ -1604,6 +1640,50 @@ bool canFollowHomeDeliveryOverBluetooth() {
 #endif
 }
 
+bool pollManualHomeRefresh(uint32_t homeSleepMs) {
+#if PALA_BRIDGE_DISCOVERY
+  const uint32_t request = manualHomeRefreshRequest();
+  if (!request) return false;
+  const uint32_t age = millis() - homeRefreshStartedAt;
+  if (age >= homeSleepMs || age >= 35000) {
+    completeManualHomeRefresh(request);
+    return false;
+  }
+  if (usbSyncActive() || bluetoothSyncActive() || bluetoothEnrollmentOpen() ||
+      (usbDataConnected && age < 6500)) return true;
+  RecordingWindow microphone;
+  const auto startBle = [] {
+    if (homeRefreshTriedBluetooth || !palaBluetoothEnabled() || !notePeerCount()) return false;
+    homeRefreshTriedBluetooth = true;
+    return startBluetoothSync();
+  };
+  if (palaPreferBluetooth() && startBle()) return true;
+  if (!homeRefreshTriedWifi && palaWifiEnabled() && palaHasWifi()) {
+    homeRefreshTriedWifi = true;
+    if (connectConfiguredWifi(8, 4500) && !::recordingRequestedDuringSync() &&
+        pairedWifiBacklog(true) != WifiBacklog::Unavailable) {
+      refreshHomeDelivery(true);
+      if (!::recordingRequestedDuringSync()) refreshHomeForecast();
+      if (!::recordingRequestedDuringSync()) refreshHomeHolidays();
+      if (!::recordingRequestedDuringSync()) refreshHomeNoteName();
+      stopWifi();
+      resetBridgeAddressCache();
+      if (!::recordingRequestedDuringSync()) {
+        completeManualHomeRefresh(request);
+        renderReadyHome();
+      }
+      return true;
+    }
+    stopWifi();
+    resetBridgeAddressCache();
+    if (::recordingRequestedDuringSync()) return true;
+  }
+  if (startBle()) return true;
+  completeManualHomeRefresh(request);
+#endif
+  return false;
+}
+
 void refreshHomeMetadataWhenIdle(uint32_t homeSleepMs) {
 #if PALA_BRIDGE_DISCOVERY
   RecordingWindow microphone;
@@ -1641,6 +1721,12 @@ void refreshHomeMetadataWhenIdle(uint32_t homeSleepMs) {
 
 void handleCompanion() {
   if (transferServerActive) transferServer.handleClient();
+#if PALA_RECORDER_FIRST
+  if (!noteCatalogReady()) {
+    RecordingWindow microphone;
+    maintainNoteCatalog();
+  }
+#endif
   if (!palaWifiEnabled()) {
     // Give the settings reply time to leave before shutting down the radio.
     delay(250);
@@ -1709,13 +1795,10 @@ void initializeDisplay() {
   // the controller base image, avoiding two slow full refreshes during wake.
 }
 
-void initializeStorage() {
+bool initializeStorage() {
   SD_MMC.setPins(SD_CLK, SD_CMD, SD_D0);
-  if (!SD_MMC.begin("/sdcard", true)) {
-    showError("SD ERROR");
-    while (true) delay(1000);
-  }
-  if (!SD_MMC.exists(NOTES_DIR)) SD_MMC.mkdir(NOTES_DIR);
+  if (!SD_MMC.begin("/sdcard", true)) return false;
+  return (SD_MMC.exists(NOTES_DIR) || SD_MMC.mkdir(NOTES_DIR)) && initializeRecordingLayout();
 }
 
 bool pollRestartConfirmation() {
@@ -1814,7 +1897,7 @@ void finishDrainedRecordingSync() {
   if (!recordingSync.running() || !noteCatalogReady() || !syncQueueReady() ||
       recordingRequestedDuringSync()) return;
   const auto queue = syncQueueCounts();
-  if (queue.audio || queue.organization) return;
+  if (queue.audio || (queue.organization && !PALA_RECORDER_FIRST)) return;
   recordingSync.finish();
   backlogRequested = false;
   backlogSyncActive = false;
@@ -1861,12 +1944,16 @@ void setup() {
   latchLowerEdge();
   interrupts();
   Serial.begin(115200);
+#if PALA_BRIDGE_DISCOVERY && ARDUINO_USB_MODE && ARDUINO_USB_CDC_ON_BOOT
+  Serial.onEvent(ARDUINO_HW_CDC_BUS_RESET_EVENT,
+      [](void*, esp_event_base_t, int32_t, void*) { usbBusReset.store(true); });
+#endif
   delay(40);
   Serial.println("\n=== Pala Note " FIRMWARE_VERSION " ===");
 
   releasePeripheralPowerHolds();
   palaSettingsBegin();
-  const bool fullCheck = claimNoteStorageAuditForBoot();
+  const bool fullCheck = !PALA_RECORDER_FIRST && claimNoteStorageAuditForBoot();
   importFlashSetup();
   noteConfigSeedEntropy();
   batteryBegin();
@@ -1874,7 +1961,8 @@ void setup() {
   board.VBAT_POWER_ON();
 
   const bool wokeFromUltraSleep = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1;
-  Serial.printf("[Wake] cause=%d\n", static_cast<int>(esp_sleep_get_wakeup_cause()));
+  Serial.printf("[Wake] cause=%d boot_ms=%lu\n",
+                static_cast<int>(esp_sleep_get_wakeup_cause()), (unsigned long)millis());
   if (wokeFromUltraSleep) {
     // EXT1 keeps the pin that caused wake-up even when a quick tap has already
     // been released by the time Arduino setup runs. Reading only digitalRead()
@@ -1893,30 +1981,39 @@ void setup() {
   }
   resetActivity();
   powerOnPeripherals();
-  initializeDisplay();
 
   const size_t psramBytes = ESP.getPsramSize();
   Serial.printf("[HW] Flash: %u MB, PSRAM: %u MB\n",
                 static_cast<unsigned>(ESP.getFlashChipSize() / (1024 * 1024)),
                 static_cast<unsigned>(psramBytes / (1024 * 1024)));
-  if (!psramFound() || psramBytes < 8UL * 1024UL * 1024UL) {
-    showError("8/8 ONLY");
+  const bool supportedMemory = psramFound() && psramBytes >= 8UL * 1024UL * 1024UL;
+  bool recordingReady = false;
+  if (supportedMemory) {
+    i2c_master_Init();
+    rtcSyncSystemFromChip();
+    delay(50);
+    audio_bsp_init();
+    audio_play_init();
+    recordingReady = initializeRecordingAudio();
+  }
+  setupRequired = (!palaHasWifi() && !PALA_BRIDGE_DISCOVERY) || !(PALA_MAC_BRIDGE || palaHasOpenAiKey());
+  const bool armBootRecording = recordingReady && !fullCheck && !setupRequired;
+  if (armBootRecording) initializeRecordingPriority();
+  RecordingWindow bootMicrophone(armBootRecording);
+  const bool storageReady = supportedMemory && initializeStorage();
+  if (armBootRecording) completeRecordingStorageInit(storageReady);
+  initializeDisplay();
+  if (!supportedMemory || !storageReady || !recordingReady) {
+    showError(!supportedMemory ? "8/8 ONLY" : !storageReady ? "SD ERROR" : "MIC ERROR");
     while (true) delay(1000);
   }
-
-  i2c_master_Init();
-  rtcSyncSystemFromChip();
-  delay(50);
-  audio_bsp_init();
-  audio_play_init();
-  initializeStorage();
-  setupRequired = (!palaHasWifi() && !PALA_BRIDGE_DISCOVERY) || !(PALA_MAC_BRIDGE || palaHasOpenAiKey());
-  if (!fullCheck && !setupRequired) initializeRecordingPriority();
-  RecordingWindow bootMicrophone(!fullCheck && !setupRequired);
   state = STATE_IDLE;
   if (fullCheck) {
     runRequestedNoteStorageAudit(showNoteStorageAuditProgress);
-    if (!setupRequired) initializeRecordingPriority();
+    if (!setupRequired) {
+      initializeRecordingPriority();
+      completeRecordingStorageInit(true);
+    }
   }
   if (setupRequired) showSetupRequired();
   else renderReadyHome();
@@ -2053,17 +2150,21 @@ void loop() {
     {
       RecordingWindow microphone;
       if (!catalogWasReady) maintainNoteCatalog();
+#if PALA_RECORDER_FIRST
+      else recoverSpooledRecordings();
+#else
       else if (!recoverSpooledRecordings()) return;
       else if (!queueWasReady) maintainSyncQueue();
       else if (!backlogSyncActive && !agendaIndexReady()) {
         agendaMaintenanceActive = maintainAgendaIndex() && !agendaIndexReady();
       }
+#endif
     }
     if (pendingPriorityRecording()) return;
     if (waitingManualSync && noteCatalogReady() && syncQueueReady()) {
-      waitingManualSync = false;
       resetActivity();
       beginRecordingSync(SyncTiming::Manual);
+      waitingManualSync = false;
       if (!recordingSync.running()) {
         backlogRequested = false;
         renderReadyHome();
@@ -2088,6 +2189,11 @@ void loop() {
     if (idleInputArmed && millis() - lastActivityMs >= sleep.homeMs) {
       beginRecordingSync(SyncTiming::BeforeSleep);
     }
+    if (!bluetoothOpen && pollManualHomeRefresh(sleep.homeMs)) {
+      if (pendingPriorityRecording()) return;
+      delay(8);
+      return;
+    }
     if (!bluetoothOpen) handleBackgroundBrain(sleep);
     if (pendingPriorityRecording()) return;
     // A panel refresh or Wi-Fi probe can service a newly authenticated USB session.
@@ -2111,7 +2217,7 @@ void loop() {
     if (state == STATE_IDLE) refreshHomeMetadataWhenIdle(sleep.homeMs);
     if (state == STATE_IDLE && !backlogRequested && !backlogSyncActive &&
         bothButtonsUp() && !upperButton.pressLatched && !lowerButton.pressLatched && !preferUsbForBacklog()) {
-      maintainNoteTrash();
+      if (!PALA_RECORDER_FIRST) maintainNoteTrash();
     }
     if (state == STATE_IDLE &&
         static_cast<int32_t>(millis() - nextHomeClockCheckAt) >= 0) {

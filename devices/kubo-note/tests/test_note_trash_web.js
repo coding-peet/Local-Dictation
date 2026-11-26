@@ -30,7 +30,7 @@ class Element {
   scrollIntoView() { this.scrolled = true; }
 }
 
-function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, hash = '', name = 'Willow', displayPages, sleepMinutes, syncTiming, pageWrap, preferBluetooth, bridge, webPasswordConfigured, weeklyCodexLimit, wifiEnabled, bluetoothEnabled, health, storageAudit, locked = false } = {}) {
+function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, hash = '', name = 'Willow', displayPages, sleepMinutes, syncTiming, pageWrap, preferBluetooth, bridge, recorderFirst, webPasswordConfigured, webPasswordRequired, weeklyCodexLimit, wifiEnabled, bluetoothEnabled, health, storageAudit, locked = false } = {}) {
   const elements = new Map();
   const buttons = [];
   for (const match of settings.matchAll(/<([a-z][a-z0-9]*)\b[^<>]*\bid="([^"]+)"[^<>]*>/g)) {
@@ -80,7 +80,7 @@ function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, ha
             ...reply, ok: connected, csrf: writePermission, transport, capabilities: { devicePortal: portal },
             targetKey: connected ? targetKey : undefined,
             device: connected ? { name, language: 'en', memoryTrash, displayPages, sleepMinutes, syncTiming,
-              pageWrap, preferBluetooth, webPasswordConfigured, weeklyCodexLimit, wifiEnabled, bluetoothEnabled,
+              pageWrap, preferBluetooth, recorderFirst, webPasswordConfigured, webPasswordRequired, weeklyCodexLimit, wifiEnabled, bluetoothEnabled,
               r: storageAudit ? 1 : undefined, ...health } : undefined,
             wifi: [], peers: [], bridge,
           };
@@ -102,6 +102,9 @@ function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, ha
         case 'settings.save':
           name = data.name;
           if ('weeklyCodexLimit' in data) weeklyCodexLimit = data.weeklyCodexLimit;
+          break;
+        case 'auth.policy':
+          webPasswordRequired = data.required;
           break;
         case 'auth.save':
           webPasswordConfigured = true;
@@ -343,6 +346,39 @@ test('USB password save renews an expired permission and stays bound to the orig
       assert.deepEqual(writes, [{ op: 'auth.save', old: '', password, repeat: password }]);
       assert.equal(page.el('status').textContent, 'Note password saved.');
     }
+  }
+});
+
+test('Recorder shows delivery and hides legacy calendar and processing controls', async () => {
+  const bridge = { processing: { mode: 'kubo', calendarId: 'example', tasksLoginConfigured: true } };
+  const usb = fixture({ transport: 'USB', recorderFirst: true, bridge });
+  await usb.refresh();
+  assert.equal(usb.el('processing-label').textContent, 'Deliver transcripts');
+  assert.equal(usb.el('legacy-processing-fields').hidden, true);
+  assert.equal(usb.el('recorder-archive').hidden, true);
+  assert.doesNotMatch(usb.el('kubo-google-status').textContent, /Calendar/);
+  const portal = fixture({ transport: 'Wi-Fi', portal: true, recorderFirst: true });
+  await portal.refresh();
+  assert.equal(portal.el('recorder-archive').hidden, false);
+});
+
+test('password opt-out is visible over paired USB and wireless settings can show open status', async () => {
+  const usb = fixture({ transport: 'USB', webPasswordConfigured: false, webPasswordRequired: true });
+  await usb.refresh();
+  assert.equal(usb.el('note-protection-form').hidden, false);
+  assert.equal(usb.el('note-protection').checked, true);
+  usb.el('note-protection').checked = false;
+  await usb.dispatch('note-protection-form', 'change');
+  await usb.dispatch('note-protection-form', 'submit');
+  assert.deepEqual(usb.calls.find(call => call.op === 'auth.policy'), { op: 'auth.policy', required: false });
+  assert.equal(usb.el('note-password-open').hidden, false);
+  for (const transport of ['BLE', 'Wi-Fi']) {
+    const wireless = fixture({ transport, webPasswordConfigured: false, webPasswordRequired: false });
+    await wireless.refresh();
+    assert.equal(wireless.el('note-protection-form').hidden, true);
+    assert.equal(wireless.el('note-password-form').hidden, true);
+    await wireless.dispatch('note-protection-form', 'submit');
+    assert.equal(wireless.calls.some(call => call.op === 'auth.policy'), false);
   }
 });
 

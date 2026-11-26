@@ -389,7 +389,7 @@ public sealed partial class AppController : IDisposable
             readClipboard.Text=readAloud.IsActive?"Stop reading":"Read from clipboard";
             readClipboard.Enabled=readAloud.IsActive||!IsBusy;
             var status = PalaBridge.ReadStatus();
-            bridgeStatus.Text = "Pala Bridge · " + status.Summary;
+            bridgeStatus.Text = "Bridge · " + status.Summary;
             bridgeRestart.Enabled = status.CanStop;
         };
         menu.Items.Add(new Forms.ToolStripSeparator());

@@ -31,7 +31,7 @@ struct NoteStorageAuditProgress;
 void showNoteStorageAuditProgress(const NoteStorageAuditProgress& progress);
 void showNoteBluetoothPairingNumber(uint32_t code);
 enum class CompanionLink { Offline, Wifi, Hotspot };
-void showTransferMode(CompanionLink link, const String& network, const String& ip,
+void showTransferMode(CompanionLink link, const String& network, const String& ip, const String& hostname,
                       const String& apPassword, int batteryPercent, int volumeOverlay);
 void showSetupRequired();
 void showError(const char* message);

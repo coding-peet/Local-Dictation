@@ -12,6 +12,8 @@
 
 namespace {
 HomeDeliveryRefresh refreshSchedule;
+uint32_t manualGeneration = 0;
+uint32_t manualPending = 0;
 
 bool parseCounts(const String& payload, char (&day)[11], unsigned& delivered, unsigned& waiting) {
   int consumed = 0;
@@ -20,6 +22,19 @@ bool parseCounts(const String& payload, char (&day)[11], unsigned& delivered, un
          static_cast<size_t>(consumed) == payload.length() && validForecastDate(day) &&
          delivered <= 999999999 && waiting <= 999999999;
 }
+}
+
+void startManualHomeRefresh() {
+  if (++manualGeneration == 0) ++manualGeneration;
+  manualPending = manualGeneration;
+}
+
+uint32_t manualHomeRefreshRequest() { return manualPending; }
+
+bool completeManualHomeRefresh(uint32_t request) {
+  if (!request || request != manualPending) return false;
+  manualPending = 0;
+  return true;
 }
 
 HomeDeliveryCounts homeDeliveryCounts() {
@@ -89,7 +104,7 @@ void refreshHomeDeliveryAfterSubmission() {
   refreshHomeDelivery();
 }
 
-bool refreshHomeDelivery() {
+bool refreshHomeDelivery(bool manual) {
 #if PALA_BRIDGE_DISCOVERY
   ProviderClient client;
   client.setHandshakeTimeout(2);
@@ -97,10 +112,11 @@ bool refreshHomeDelivery() {
   const auto get = [&](const char* path) {
     HTTPClient http;
     http.setConnectTimeout(1500);
-    http.setTimeout(2000);
+    http.setTimeout(manual ? 5500 : 2000);
     const String url = client.url(path);
     if (url.isEmpty() || !http.begin(client, url)) return -1;
     http.addHeader("Authorization", "Bearer " + client.bridge().token);
+    if (manual) http.addHeader("X-Pala-Home", "1");
     const int status = http.GET();
     const int length = http.getSize();
     if (status == HTTP_CODE_OK && length > 0 && length <= 96) {

@@ -1,3 +1,4 @@
+#include "../pala_note/src/app/monthly_recordings.h"
 #include "../pala_note/src/app/capture_wav_recovery.h"
 #include "../pala_note/src/app/catalog_storage.h"
 #include "../pala_note/src/app/rec_spool.h"
@@ -88,6 +89,13 @@ static size_t cutPayload(const void* data, size_t element, size_t count, std::FI
 }
 static std::FILE* transient(const char*, const char*) { errno=EIO; return nullptr; }
 
+static std::string monthlyWav(const Card& card, int id) {
+  char path[512];
+  const auto root = (card.root / "notes").string();
+  monthly_recordings::path(path, sizeof(path), root.c_str(), id, "wav");
+  return path;
+}
+
 static void direct(uint32_t checkpoint, const std::vector<int16_t>& pcm, bool odd) {
   Card c;
   assert(note_catalog::reserveRecording(c.journal, 17, stamp));
@@ -139,7 +147,7 @@ static void priority(bool afterMove, uint32_t checkpoint) {
   std::string timestamp;
   bool cut=true;
   auto adopt = [&](const std::string& name) {
-    return rec_spool::adopt(c.inbox,c.notes,name,assigned,[&] { ++allocations; return 17; },
+    return rec_spool::adopt(c.inbox,c.notes,name,assigned,[&](uint32_t) { ++allocations; return 17; },
         [&](int id,uint32_t epoch) {
           // Boot replays the previous journal before each new reservation.
           return note_catalog::recoverReservation(c.journal.c_str(),[&](int,const char*) { return !fs::exists(c.wav); }) &&
@@ -165,6 +173,50 @@ static void priority(bool afterMove, uint32_t checkpoint) {
   assert(note_transcript::readField((c.notes+"note_017.meta").c_str(),"created_utc=",onCard));
   assert(onCard==timestamp);
   assert(get(c.wav+".recovery-original")==input && allocations==1);
+}
+
+static void monthlyPowerCut(bool priorityCapture) {
+  Card card;
+  const std::string captured = "2023-11-14T22:13:20Z";
+  const int id = monthly_recordings::makeId(23, captured.c_str());
+  const auto wav = monthlyWav(card, id);
+  assert(fs::create_directory(fs::path(wav).parent_path()));
+  const std::vector<int16_t> pcm{-32768, 0, 37, 32000};
+  const auto source = recording(pcm, 0, true);
+  const auto otherMonth = card.root / "notes" / "202312";
+  assert(fs::create_directory(otherMonth));
+  const auto oldRecording = (otherMonth / "existing.wav").string();
+  put(oldRecording, {6, 7, 8});
+  if (priorityCapture) {
+    const std::string filename = "s1700000000_00000017.wav";
+    put(card.inbox + filename, source);
+    int assigned = 0;
+    const bool result = rec_spool::adopt(card.inbox, card.notes, filename, assigned,
+        [&](uint32_t seconds) {
+          return monthly_recordings::makeId(23, rec_spool::captureUtc(seconds).c_str());
+        },
+        [&](int number, uint32_t seconds) { return note_catalog::reserveRecording(
+            card.journal, number, rec_spool::captureUtc(seconds).c_str()); },
+        [](int, uint32_t) { return true; },
+        [](int) { return false; }, // after WAV move, before catalog publication
+        [&](int number, const std::string&) { return monthlyWav(card, number); });
+    assert(!result && assigned == id && !fs::exists(card.inbox + filename));
+  } else {
+    assert(note_catalog::reserveRecording(card.journal, id, captured.c_str()));
+    put(wav, source); // cut during PCM checkpoint or header write
+  }
+  const auto journal = get(card.journal);
+  auto replay = [&](bool ioFault) {
+    return note_catalog::recoverReservation(card.journal.c_str(), [&](int reserved, const char* utc) {
+      assert(reserved == id && utc == captured);
+      return capture_wav::recover(monthlyWav(card, reserved), ioFault ? transient : std::fopen) == State::Ready;
+    });
+  };
+  assert(!replay(true) && get(wav) == source && get(card.journal) == journal);
+  assert(replay(false) && !fs::exists(card.journal));
+  play(wav, pcm);
+  assert(get(wav + ".recovery-original") == source);
+  assert(get(oldRecording) == Bytes({6, 7, 8}));
 }
 
 static void boundaries() {
@@ -206,5 +258,6 @@ int main() {
   for (int i=0;i<6203;++i) pcm.push_back(static_cast<int16_t>(i*19));
   direct(4096,pcm,true);
   priority(false,0); priority(true,4); boundaries();
-  std::cout<<"normal + inbox cuts, original bytes, WAV headers, sample playback, UTC, legacy and IO faults passed\n";
+  monthlyPowerCut(false); monthlyPowerCut(true);
+  std::cout<<"flat and monthly direct/inbox cuts, original bytes, WAV headers, sample playback, UTC, legacy and IO faults passed\n";
 }

@@ -12,6 +12,7 @@ constexpr size_t kTokenBytes = 24;
 constexpr unsigned kPasswordRounds = 60000;
 constexpr uint32_t kSessionMs = 15 * 60 * 1000;
 constexpr char kRecordKey[] = "web_auth_v1";
+constexpr char kOpenAccessKey[] = "allow_no_pw";
 constexpr char kCookieName[] = "pala_note_session=";
 // Keep the inline login script limited to this hash in the response policy.
 constexpr char kLoginEyeScript[] =
@@ -29,6 +30,7 @@ Preferences prefs;
 Credential credential{};
 bool storageOpen = false;
 bool configured = false;
+bool passwordRequired = true;
 Session webSession;
 Session bluetoothSession;
 uint8_t failedAttempts = 0;
@@ -41,6 +43,7 @@ Session& sessionFor(NoteConfigTransport transport) {
 bool openStorage() {
   if (!storageOpen) {
     storageOpen = prefs.begin("pala_access", false);
+    if (storageOpen) passwordRequired = prefs.getUChar(kOpenAccessKey, 0) != 1;
     if (storageOpen && prefs.isKey(kRecordKey)) {
       configured = prefs.getBytesLength(kRecordKey) == sizeof(credential) &&
                    prefs.getBytes(kRecordKey, &credential, sizeof(credential)) == sizeof(credential);
@@ -158,6 +161,23 @@ bool noteAccessConfigured() {
   return openStorage() && configured;
 }
 
+bool noteAccessPasswordRequired() {
+  return !openStorage() || passwordRequired;
+}
+
+const char* noteAccessSetPasswordRequired(bool required) {
+  if (!openStorage()) return "Could not open Note password storage.";
+  if (passwordRequired == required) return nullptr;
+  const uint8_t open = required ? 0 : 1;
+  if (prefs.putUChar(kOpenAccessKey, open) != sizeof(open) || prefs.getUChar(kOpenAccessKey, 0xff) != open)
+    return "Could not save password protection.";
+  passwordRequired = required;
+  webSession = {};
+  bluetoothSession = {};
+  failedAttempts = 0;
+  return nullptr;
+}
+
 bool noteAccessSessionValid(NoteConfigTransport transport, const String& token) {
   if (transport == NoteConfigTransport::Usb || token.length() != kTokenBytes * 2) return false;
   auto& session = sessionFor(transport);
@@ -209,6 +229,7 @@ const char* noteAccessSave(bool localUsb, const String& oldPassword, const Strin
 
 bool noteAccessGuardHttp(WebServer& server) {
   server.sendHeader("Cache-Control", "no-store");
+  if (!noteAccessPasswordRequired()) return true;
   const String uri = server.uri();
   if (uri == "/login" && (server.method() == HTTP_GET || server.method() == HTTP_POST)) return true;
   if (noteAccessSessionValid(NoteConfigTransport::Web, cookieToken(server.header("Cookie")))) return true;
@@ -224,8 +245,12 @@ bool noteAccessGuardHttp(WebServer& server) {
 }
 
 void noteAccessHttp(WebServer& server) {
-  server.on("/login", HTTP_GET, [&server]() { sendLogin(server); });
+  server.on("/login", HTTP_GET, [&server]() {
+    if (noteAccessPasswordRequired()) sendLogin(server);
+    else redirectTo(server, "/");
+  });
   server.on("/login", HTTP_POST, [&server]() {
+    if (!noteAccessPasswordRequired()) { redirectTo(server, "/"); return; }
     String token;
     if (const char* error = noteAccessLogin(NoteConfigTransport::Web, server.arg("password"), token)) {
       sendLogin(server, error);

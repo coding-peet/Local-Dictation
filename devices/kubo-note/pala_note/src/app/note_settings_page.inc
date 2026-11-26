@@ -61,6 +61,12 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 #bridge-address-form, #bridge-order { margin-top: .85rem; }
 #note-health { display: grid; gap: .45rem; margin: 0 0 .85rem; padding: 0 0 .85rem; border-bottom: 1px solid var(--line); }
 #note-health dd { margin: 0; font-variant-numeric: tabular-nums; }
+.weather-help { border-top: 1px solid var(--line); margin-top: .9rem; padding-top: .75rem; }
+.weather-help summary { cursor: pointer; font-weight: 650; }
+.weather-help[open] summary { margin-bottom: .5rem; }
+.weather-icons { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 10.75rem), 1fr)); gap: .5rem; list-style: none; padding: 0; }
+.weather-icons li { display: flex; align-items: center; gap: .4rem; margin: 0; padding: .25rem; min-width: 0; font-size: .9rem; }
+.weather-icons img { flex: none; background: #fff; border-radius: 4px; image-rendering: pixelated; }
 .setting-row {
   display: grid;
   grid-template-columns: min(15rem, 44%) minmax(0, 1fr);
@@ -68,7 +74,7 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
   gap: .75rem;
 }
 #bridge-processing-form { margin-top: 1.15rem; padding-top: 1.15rem; border-top: 1px solid var(--line); }
-#kubo-processing-fields { display: grid; gap: .75rem; }
+#kubo-processing-fields, #legacy-processing-fields { display: grid; gap: .75rem; }
 .setting-with-help, .bridge-codex-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -247,6 +253,58 @@ dialog .actions { justify-content: end; }
 </section>
 
 <div id="settings-content" hidden>
+<section id="note" hidden>
+  <h2>Note</h2>
+  <p id="recorder-archive" hidden><a href="/archive">Archive recordings</a></p>
+  <dl id="note-health" hidden>
+    <div id="note-battery-row" class="setting-row" hidden><dt>Battery</dt><dd id="note-battery"></dd></div>
+    <div id="note-sd-row" class="setting-row" hidden><dt>SD card</dt><dd id="note-sd"></dd></div>
+    <div id="note-fw-row" class="setting-row" hidden><dt>Firmware</dt><dd id="note-fw"></dd></div>
+    <div id="note-audio-row" class="setting-row" hidden><dt>Waiting for transcription</dt><dd id="note-audio"></dd></div>
+    <div id="note-delivery-row" class="setting-row" hidden><dt>Waiting for delivery</dt><dd id="note-delivery"></dd></div>
+    <div id="note-ram-row" class="setting-row" hidden><dt>Internal RAM</dt><dd id="note-ram"></dd></div>
+    <div id="note-psram-row" class="setting-row" hidden><dt>PSRAM</dt><dd id="note-psram"></dd></div>
+  </dl>
+  <form id="note-form">
+    <label class="setting-row">Name <input id="note-name" maxlength="12" required></label>
+    <label class="setting-row">Language
+      <select id="note-language">
+        <option value="en">English</option><option value="de">Deutsch</option>
+        <option value="sk">Slovenčina</option><option value="cs">Čeština</option>
+        <option value="fr">Français</option><option value="es">Español</option>
+        <option value="it">Italiano</option><option value="pl">Polski</option>
+        <option value="nl">Nederlands</option><option value="pt">Português</option>
+        <option value="ru">Русский</option><option value="uk">Українська</option>
+      </select>
+    </label>
+    <label class="setting-row" id="note-codex-limit-row" hidden>Codex limit on Home
+      <select id="note-codex-limit">
+        <option value="5h">5 hours (weekly fallback)</option>
+        <option value="weekly">Weekly</option>
+      </select>
+    </label>
+    <div class="actions"><button class="primary" type="submit">Save Note settings</button></div>
+  </form>
+  <details class="weather-help">
+    <summary>Weather icons</summary>
+    <p class="muted">The forecast appears on the left of Home beside today's low and high.
+      The Moon is on the right. A full Moon is an empty circle and a new Moon is solid black.
+      White shows the illuminated part.</p>
+    <!-- Icon pixels rendered from drawWeatherGlyph in the Note firmware. -->
+    <ul class="weather-icons" aria-label="Weather icon legend">
+      <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAARCAAAAADr+JOWAAAAQ0lEQVR4nGP4jwIY8PBwSSILM2CIYWGhmcOAwsfgYDMewUYSwcLEsJyBAUUSajUxOgnaid+1ePyJL4Twhy02W/BJAgAw6bZY3MC1vwAAAABJRU5ErkJggg==" width="56" height="34" alt=""><span>Clear</span></li>
+      <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAARCAAAAADr+JOWAAAAUklEQVR4nI2QAQoAIAgD9/9PG1akmxUKIezIscEM5gOsnQfyCjxLKatCYe4VIlnLz2l9MB3S620IdY770gIFvzXwSLhTduCF/iAXV1iWPEyMKwP5FZ1xv5AbFgAAAABJRU5ErkJggg==" width="56" height="34" alt=""><span>Partly cloudy</span></li>
+      <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAARCAAAAADr+JOWAAAARklEQVR4nJXPWwoAIAgEwL3/pYsEaX2i/qRNZeI0gTkCpuZChDlJsUXK9Gld0q+gmEg2zBGvA0y0Q+oZ1HV7w/yomoX7BV4us6xi6IIHvAAAAABJRU5ErkJggg==" width="56" height="34" alt=""><span>Overcast</span></li>
+      <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAARCAAAAADr+JOWAAAAIklEQVR4nGP4jwcwUCrJgA6oYywlkgyY7hlAB2EPIFrZCQCpx6pk3V5maQAAAABJRU5ErkJggg==" width="56" height="34" alt=""><span>Fog</span></li>
+      <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAARCAAAAADr+JOWAAAASUlEQVR4nI3PWxYAIAQE0Nn/pnV8OIxR8dHrioLVAEBbohgUIUdLLKsoHdP4FM5pSild8cdBX1h6irZu/pmMWzO5z12y2goHswNH8aNrP8ySegAAAABJRU5ErkJggg==" width="56" height="34" alt=""><span>Rain</span></li>
+      <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAARCAAAAADr+JOWAAAATklEQVR4nJWQ2w4AIAhC+f+frrUuoDFXvaSeCCYaD+aRwV3iF0q1v95X8Bo9YQBUPUBDKwifX9ozXOsJWzJRsj4nz0rIuxyETs6zVDrPDipmk3uxr6hSAAAAAElFTkSuQmCC" width="56" height="34" alt=""><span>Snow</span></li>
+      <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAARCAAAAADr+JOWAAAAUElEQVR4nI3QWQrAIAxF0bv/TVsKDX2Dgn5o9IQYZekAbGs0UyN1dIkSTelZtq14TqilaLM08kdVVi4uDLPHvS1/XreBTLs3nD8+zTEs0G09Ho6ZdTw4wu4AAAAASUVORK5CYII=" width="56" height="34" alt=""><span>Thunderstorm</span></li>
+    </ul>
+    <p class="muted">Drizzle, freezing rain and rain showers use Rain. Without a
+      forecast for today, the weather icon and temperatures are blank.</p>
+  </details>
+</section>
+
 <section id="wireless-radios" hidden>
   <h2>Wireless connections</h2>
   <form id="radios-form">
@@ -356,35 +414,6 @@ dialog .actions { justify-content: end; }
   </form>
 </section>
 
-<section id="note" hidden>
-  <h2>Note</h2>
-  <dl id="note-health" hidden>
-    <div id="note-battery-row" class="setting-row" hidden><dt>Battery</dt><dd id="note-battery"></dd></div>
-    <div id="note-ram-row" class="setting-row" hidden><dt>Internal RAM</dt><dd id="note-ram"></dd></div>
-    <div id="note-psram-row" class="setting-row" hidden><dt>PSRAM</dt><dd id="note-psram"></dd></div>
-  </dl>
-  <form id="note-form">
-    <label class="setting-row">Name <input id="note-name" maxlength="10" required></label>
-    <label class="setting-row">Language
-      <select id="note-language">
-        <option value="en">English</option><option value="de">Deutsch</option>
-        <option value="sk">Slovenčina</option><option value="cs">Čeština</option>
-        <option value="fr">Français</option><option value="es">Español</option>
-        <option value="it">Italiano</option><option value="pl">Polski</option>
-        <option value="nl">Nederlands</option><option value="pt">Português</option>
-        <option value="ru">Русский</option><option value="uk">Українська</option>
-      </select>
-    </label>
-    <label class="setting-row" id="note-codex-limit-row" hidden>Codex limit on Home
-      <select id="note-codex-limit">
-        <option value="5h">5 hours (weekly fallback)</option>
-        <option value="weekly">Weekly</option>
-      </select>
-    </label>
-    <div class="actions"><button class="primary" type="submit">Save Note settings</button></div>
-  </form>
-</section>
-
 <section id="restart-note" hidden>
   <h2>Restart Note</h2>
   <p id="restart-status" class="muted" aria-live="polite"></p>
@@ -441,23 +470,25 @@ dialog .actions { justify-content: end; }
   <form id="bridge-processing-form" hidden>
     <div class="setting-with-help">
       <label class="bridge-switch-label">
-        Enable Kubo processing
+        <span id="processing-label">Deliver transcripts</span>
         <span class="bridge-switch">
           <input id="kubo-processing" type="checkbox" role="switch" aria-describedby="kubo-processing-hint">
           <span class="bridge-switch-track" aria-hidden="true"></span>
         </span>
       </label>
       <details class="context-help">
-        <summary aria-label="About Kubo processing">&#9432;</summary>
-        <p id="kubo-processing-hint" class="help-popup">Turn off for local transcription only. Transcripts are saved on Note.</p>
+        <summary id="processing-help" aria-label="About transcript delivery">&#9432;</summary>
+        <p id="kubo-processing-hint" class="help-popup">Route saved transcripts to Google Tasks. Local transcription and the archive work independently.</p>
       </details>
     </div>
     <div id="kubo-processing-fields" hidden>
-      <label class="setting-row">Default Google Tasks list <input id="kubo-task-list" maxlength="120" placeholder="Kubo notes general"></label>
-      <label class="setting-row">Personal Google Calendar ID <input id="kubo-calendar" maxlength="240" placeholder="primary" spellcheck="false"></label>
-      <div class="bridge-codex-row">
-        <p class="muted">Run <code>codex login</code> for note recognition and sorting.</p>
-        <button id="kubo-check-login" type="button">Check Codex sign-in</button>
+      <label class="setting-row">Default Google Tasks list <input id="kubo-task-list" maxlength="120" placeholder="Notes"></label>
+      <div id="legacy-processing-fields">
+        <label class="setting-row">Personal Google Calendar ID <input id="kubo-calendar" maxlength="240" placeholder="primary" spellcheck="false"></label>
+        <div class="bridge-codex-row">
+          <p class="muted">Run <code>codex login</code> for note recognition and sorting.</p>
+          <button id="kubo-check-login" type="button">Check Codex sign-in</button>
+        </div>
       </div>
       <p id="kubo-google-status" class="muted"></p>
     </div>
@@ -485,6 +516,18 @@ dialog .actions { justify-content: end; }
 
 <section id="note-password" hidden>
   <h2>Note password</h2>
+  <p id="note-password-open" class="muted" hidden>Password protection is off.</p>
+  <form id="note-protection-form" hidden>
+    <label class="bridge-switch-label setting-row">
+      <span>Require password</span>
+      <span class="bridge-switch">
+        <input id="note-protection" type="checkbox" role="switch" aria-describedby="note-protection-help">
+        <span class="bridge-switch-track" aria-hidden="true"></span>
+      </span>
+    </label>
+    <p id="note-protection-help" class="muted">Applies to Web Companion and Bluetooth settings.</p>
+    <div class="actions"><button class="primary" type="submit">Save protection</button></div>
+  </form>
   <form id="note-password-form">
     <div class="setting-row">
       <label for="note-password-old">Current password</label>
@@ -840,16 +883,25 @@ function showNoteHealth(device) {
   const ram = device ? usageText(device.ramUsage) : '';
   const psram = device ? usageText(device.psramUsage) : '';
 
-  for (const [id, content] of [['note-battery', battery], ['note-ram', ram], ['note-psram', psram]]) {
+  const firmware = device && typeof device.firmware === 'string' ? device.firmware : '';
+  const sd = device && Number.isInteger(device.sdTotalMiB) && Number.isInteger(device.sdUsedMiB)
+    ? (device.sdUsedMiB / 1024).toFixed(2) + ' / ' + (device.sdTotalMiB / 1024).toFixed(2) + ' GiB' : '';
+  const audio = device && Number.isInteger(device.pendingAudio) ? String(device.pendingAudio) : '';
+  const delivery = device && Number.isInteger(device.pendingDelivery) ? String(device.pendingDelivery) : '';
+  for (const [id, content] of [['note-battery', battery], ['note-ram', ram], ['note-psram', psram],
+                               ['note-sd', sd], ['note-fw', firmware], ['note-audio', audio], ['note-delivery', delivery]]) {
     el(id).textContent = content;
     el(id + '-row').hidden = !content;
   }
-  el('note-health').hidden = !(battery || ram || psram);
+  el('note-health').hidden = !(battery || ram || psram || sd || firmware || audio || delivery);
 }
 
 function show(data) {
   const caps = data.capabilities || {};
   const attached = Boolean(data.ok && data.device);
+  const recorder = attached && data.device.recorderFirst === true;
+  el('recorder-archive').hidden = !recorder || caps.devicePortal !== true;
+  el('restart-audit').hidden = recorder;
   // A temporary BLE disconnect must not reveal settings from a locked page.
   if (data.access === 'locked' || data.access === 'setup') passwordAccess = data.access;
   else if (attached) passwordAccess = '';
@@ -878,9 +930,17 @@ function show(data) {
 
   const usb = data.transport === 'USB';
   const passwordSupported = attached && typeof data.device.webPasswordConfigured === 'boolean';
+  const passwordRequired = !attached || data.device.webPasswordRequired !== false;
+  const canSetProtection = usb && attached && typeof data.device.webPasswordRequired === 'boolean';
   el('note-password').hidden = !passwordSupported;
-  el('note-password-old').required = !usb;
-  el('note-password-logout').hidden = usb;
+  el('note-password-open').hidden = passwordRequired;
+  el('note-protection-form').hidden = !canSetProtection;
+  el('note-password-form').hidden = !usb && !passwordRequired;
+  el('note-password-old').required = !usb && passwordRequired;
+  el('note-password-logout').hidden = usb || !passwordRequired;
+  if (canSetProtection) showFormValues('auth.policy', () => {
+    el('note-protection').checked = passwordRequired;
+  });
   const wifiAvailable = attached && Array.isArray(data.wifi);
   const wifi = wifiAvailable ? data.wifi : [];
   const peers = Array.isArray(data.peers) ? data.peers : [];
@@ -913,7 +973,7 @@ function show(data) {
   const expectedPages = legacyPages ? 'TECN' : 'TECNM';
   const hasPages = typeof pages === 'string' && pages.length === expectedPages.length &&
     [...expectedPages].every(page => pages.toUpperCase().includes(page));
-  el('display-pages').hidden = !hasPages;
+  el('display-pages').hidden = recorder || !hasPages;
   const pageWrap = attached ? data.device.pageWrap : null;
   el('page-wrap-field').hidden = !hasPages || typeof pageWrap !== 'boolean';
   if (hasPages) showFormValues('pages.save', () => {
@@ -1000,6 +1060,12 @@ function show(data) {
   const processing = bridge?.processing;
   el('bridge-processing-form').hidden = !processing;
   if (processing) {
+    el('processing-label').textContent = recorder ? 'Deliver transcripts' : 'Process transcripts';
+    el('processing-help').ariaLabel = recorder ? 'About transcript delivery' : 'About transcript processing';
+    el('kubo-processing-hint').textContent = recorder
+      ? 'Route saved transcripts to Google Tasks. Local transcription and the archive work independently.'
+      : 'Process transcripts for configured destinations. Local transcripts are saved on the Note.';
+    el('legacy-processing-fields').hidden = recorder;
     showFormValues('bridge.processing.save', () => {
       el('kubo-processing').checked = processing.mode === 'kubo';
       el('kubo-processing-fields').hidden = !el('kubo-processing').checked;
@@ -1007,8 +1073,8 @@ function show(data) {
       el('kubo-calendar').value = processing.calendarId || '';
     });
     el('kubo-google-status').textContent = 'Google Tasks sign-in ' +
-      (processing.tasksLoginConfigured ? 'configured' : 'required') + '. Calendar sign-in ' +
-      (processing.calendarLoginConfigured ? 'configured' : 'required') + '.';
+      (processing.tasksLoginConfigured ? 'configured' : 'required') + '.' +
+      (recorder ? '' : ' Calendar sign-in ' + (processing.calendarLoginConfigured ? 'configured' : 'required') + '.');
   }
   el('bridge-form').hidden = !bridge;
   if (bridge) showFormValues('bridge.save', () => {
@@ -1362,6 +1428,11 @@ el('access-login-form').addEventListener('submit', event => {
   clearPasswords('access-password');
   save('auth.login', { password }, 'Signed in.');
 });
+el('note-protection-form').addEventListener('submit', event => {
+  event.preventDefault();
+  if (el('note-protection-form').hidden || savedTransport !== 'USB') return;
+  save('auth.policy', { required: el('note-protection').checked }, 'Password protection saved.');
+});
 el('note-password-form').addEventListener('submit', event => {
   event.preventDefault();
   if (el('note-password').hidden) return;
@@ -1450,6 +1521,7 @@ el('pair-enable').addEventListener('click', () => save('pair.enableBle', {}, 'Bl
 const values = (...ids) => () => ids.map(id => el(id).value);
 trackDraft('settings.save', 'note-form', values('note-name', 'note-language', 'note-codex-limit'));
 trackDraft('wifi.save', 'wifi-form', () => [el('wifi-name').value, Boolean(el('wifi-secret').value)]);
+trackDraft('auth.policy', 'note-protection-form', () => [el('note-protection').checked]);
 trackDraft('auth.save', 'note-password-form', () => newPasswordFields.map(id => Boolean(el(id).value)));
 trackDraft('pages.save', 'display-pages-form', () => [displayPages.join(''), el('page-wrap').checked === true]);
 trackDraft('sync.save', 'sync-timing-form', values('sync-mode'));

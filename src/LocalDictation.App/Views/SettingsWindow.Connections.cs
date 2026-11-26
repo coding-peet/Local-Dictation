@@ -18,7 +18,7 @@ public sealed partial class SettingsWindow
     Button palaOpenSettings = null!;
     readonly ComboBox palaBridgeModel = new() { DisplayMemberPath = nameof(BridgeModelChoice.Label) };
     readonly System.Windows.Controls.Primitives.ToggleButton palaBridgeAutoStart = Ui.Switch("Start with Local Dictation");
-    readonly System.Windows.Controls.Primitives.ToggleButton palaIntegration = Ui.Switch("Enable Pala sync");
+    readonly System.Windows.Controls.Primitives.ToggleButton palaIntegration = Ui.Switch("Enable Note sync");
     readonly TextBlock palaBridgeStatus = Ui.Text("", 12);
     readonly TextBlock palaBridgeError = Ui.Text("", 12);
     const double PalaActivityBarHeight = 10;
@@ -65,7 +65,7 @@ public sealed partial class SettingsWindow
     FrameworkElement PalaBridgeCard()
     {
         var group = new StackPanel();
-        group.Children.Add(Ui.Text("Pala Note Configuration", 18, true));
+        group.Children.Add(Ui.Text("Note Configuration", 18, true));
         palaOpenSettings = Ui.Button("Open Note settings", () =>
         {
             palaSettingsError.Text = controller.OpenPalaNoteSettings() ? "" :
@@ -77,14 +77,14 @@ public sealed partial class SettingsWindow
         palaOpenSettings.VerticalAlignment = VerticalAlignment.Center;
         ToolTipService.SetShowOnDisabled(palaOpenSettings, true);
         AutomationProperties.SetHelpText(palaOpenSettings,
-            "Enable Pala sync to open the local browser page for Note settings, Bridge settings, weather and pairing.");
-        group.Children.Add(Ui.SwitchRow("Enable Pala sync", palaIntegration,
+            "Enable Note sync to open the local browser page for Note settings, Bridge settings, weather and pairing.");
+        group.Children.Add(Ui.SwitchRow("Enable Note sync", palaIntegration,
             "Enable access to Note settings and sync the paired Note over USB or Bluetooth. For Wi-Fi sync, also start Bridge on an approved network.",
             palaOpenSettings));
         palaSettingsError.SetResourceReference(TextBlock.ForegroundProperty, "Warning");
         palaSettingsError.Visibility = Visibility.Collapsed;
         group.Children.Add(palaSettingsError);
-        Ui.Label(group, "Pala transcription model", palaBridgeModel, "Choose the Dictation model or one of the installed models that supports Slovak.");
+        Ui.Label(group, "Note transcription model", palaBridgeModel, "Choose the Dictation model or one of the installed models that supports Slovak.");
         AddKuboControls(group);
 
         var bridgeHeader = new Grid { Margin = new(0, 16, 0, 0) };
@@ -212,7 +212,7 @@ public sealed partial class SettingsWindow
         var settings = controller.Settings;
         palaIntegration.IsChecked = settings.PalaIntegrationEnabled;
         palaOpenSettings.IsEnabled = settings.PalaIntegrationEnabled;
-        palaOpenSettings.ToolTip = settings.PalaIntegrationEnabled ? null : "Turn on Enable Pala sync to open Note settings.";
+        palaOpenSettings.ToolTip = settings.PalaIntegrationEnabled ? null : "Turn on Enable Note sync to open Note settings.";
         if (!settings.PalaIntegrationEnabled) palaSettingsError.Visibility = Visibility.Collapsed;
 
         var legacy = controller.PalaBridge.ProfileModel;

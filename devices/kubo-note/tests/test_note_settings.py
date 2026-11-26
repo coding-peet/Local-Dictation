@@ -25,6 +25,15 @@ from test_usb_sync import FakePala, TOKEN
 from usb_sync import main, paired_config
 
 
+class RecorderDeviceNameTests(unittest.TestCase):
+    def test_backup_name_round_trips_through_settings(self):
+        device = {"name": "kubo-backup", "language": "sk"}
+        self.assertEqual(note_request({"op": "settings.save", **device}), {"op": "settings.save", **device})
+        self.assertEqual(note_response({"ok": True, "device": device}, "USB")["device"], device)
+        with self.assertRaises(SettingsError):
+            note_request({"op": "settings.save", **device, "name": "a" * 13})
+
+
 class DisplayPagesTests(unittest.TestCase):
     def test_reordering_and_disabling_are_preserved_in_request_and_readback(self):
         operation = {"op": "pages.save", "pages": "NetC"}
@@ -81,6 +90,34 @@ class DeviceHealthSettingsTests(unittest.TestCase):
             with self.subTest(health=health):
                 reply = {"ok": True, "device": {**base, **health}}
                 self.assertEqual(note_response(reply, "BLE")["device"], base)
+
+
+class RecorderSettingsTests(unittest.TestCase):
+    def test_recorder_capability_and_password_policy_round_trip(self):
+        base = {"name": "Note", "language": "en"}
+        for transport in ("USB", "BLE"):
+            reply = {"ok": True, "device": {**base, "rf": 1, "pa": False}}
+            device = note_response(reply, transport)["device"]
+            self.assertIs(device["recorderFirst"], True)
+            self.assertIs(device["webPasswordRequired"], False)
+        old_recorder = {"ok": True, "device": {**base, "memoryTrash": False, "r": 1}}
+        self.assertIs(note_response(old_recorder, "USB")["device"]["recorderFirst"], True)
+        legacy = {"ok": True, "device": {**base, "memoryTrash": True, "r": 1}}
+        self.assertNotIn("recorderFirst", note_response(legacy, "USB")["device"])
+
+    def test_password_policy_accepts_only_explicit_booleans(self):
+        for required in (True, False):
+            request = {"op": "auth.policy", "required": required}
+            self.assertEqual(note_request(request), request)
+        for value in (0, 1, "false", None):
+            with self.subTest(value=value), self.assertRaises(SettingsError):
+                note_request({"op": "auth.policy", "required": value})
+
+    def test_note_is_first_with_generic_settings_copy(self):
+        page = settings_page().decode("utf-8")
+        self.assertLess(page.index('<section id="note"'), page.index('<section id="wireless-radios"'))
+        self.assertIn("Deliver transcripts", page)
+        self.assertNotIn("Enable Kubo processing", page)
 
 
 class LoopbackSettingsTests(unittest.TestCase):
@@ -510,6 +547,7 @@ class ManagedWatcherSettingsTests(unittest.TestCase):
                   patch("note_web.serve_settings"),
                   patch("note_transport.SettingsTransport.serve_bluetooth",
                         side_effect=lambda _device, _exchange, *, keep_open: actions.append(("settings", keep_open))),
+                  patch("usb_sync.manual_home_request", return_value=0),
                   patch("usb_sync.transfer_note_name", side_effect=lambda *_: actions.append("metadata")),
                   patch("pala_google.home_dashboard_payload",
                         side_effect=["h2,3,0,19:30", "h2,3,0,-", "h2,3,0,-", "h2,3,1,-", "h2,3,1,-"]),

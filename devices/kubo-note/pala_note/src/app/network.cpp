@@ -5,13 +5,16 @@
 #include "network.h"
 #include "provider.h"
 #include "bridge_address.h"
+#include "companion_host.h"
 #include "bridge_client.h"
 #include "recording_owner.h"
 #include <mbedtls/md.h>
 #include "home_delivery.h"
 #include "note_config.h"
 #include "note_access.h"
+#include "monthly_recordings.h"
 #include "notes.h"
+#include "recorder_store.h"
 #include "catalog_storage.h"
 #include "sync_queue.h"
 #include "rtc.h"
@@ -21,6 +24,8 @@
 #include "HTTPClient.h"
 #include <WebServer.h>
 #include "SD_MMC.h"
+#include <dirent.h>
+#include "note_trash_policy.h"
 #include "esp_heap_caps.h"
 #include <ArduinoJson.h>
 #include <algorithm>
@@ -353,12 +358,13 @@ String recordingBridge(int note, const String& candidate) {
 }
 
 void confirmWifiTranscriptReceipt(int note, const String& peer) {
+  if (PALA_RECORDER_FIRST) return;
   if (peer.isEmpty() || recordingBridge(note, "") != peer || recordingRequestedDuringSync()) return;
   const auto source = storedNoteTranscript(note);
   if (!note_transcript::committed(source)) return;
   char path[80];
-  snprintf(path, sizeof(path), NOTES_DIR "/note_%03d.txt%s", note,
-           source == note_transcript::Stored::Backup ? ".bak" : "");
+  monthly_recordings::path(path, sizeof(path), NOTES_DIR, note,
+      source == note_transcript::Stored::Backup ? "txt.bak" : "txt");
   File file = SD_MMC.open(path, FILE_READ);
   if (!file || !file.size() || file.size() > 32000) return;
   mbedtls_md_context_t hash;
@@ -397,7 +403,8 @@ static bool transcribeTextOnce(const String& wavPath, String& text, int noteNum 
   transcriptionHadNoSpeech = false;
 #if PALA_BRIDGE_DISCOVERY
   const auto selected = selectedWifiBridge();
-  ProviderClient client(noteNum > 0 ? notePeerById(recordingBridge(noteNum, selected.id)) : selected);
+  ProviderClient client(noteNum > 0 && !PALA_RECORDER_FIRST ?
+      notePeerById(recordingBridge(noteNum, selected.id)) : selected);
 #else
   ProviderClient client;
 #endif
@@ -553,7 +560,7 @@ static String lastOrganizationError;
 static bool understandNoteWithPost(int noteNum, OrganizationPost post, bool (*serviceConnection)(), const String& sessionPeer) {
   lastOrganizationError = "organization: transcript unavailable";
   char transcriptPath[64];
-  snprintf(transcriptPath, sizeof(transcriptPath), "%s/note_%03d.txt", NOTES_DIR, noteNum);
+  monthly_recordings::path(transcriptPath, sizeof(transcriptPath), NOTES_DIR, noteNum, "txt");
   // Never silently organize only a prefix and mark the entire recording done.
   File transcriptFile = SD_MMC.open(transcriptPath);
   if (!transcriptFile) return false;
@@ -1529,6 +1536,58 @@ bool synthesizeBrainSpeech(const String& text, const char* outputPath, bool fast
   return false;
 }
 
+#if PALA_RECORDER_FIRST
+static bool deliverRecorderText(int note) {
+  if (recordingRequestedDuringSync()) return false;
+  const auto source = storedNoteTranscript(note);
+  if (!note_transcript::committed(source)) return false;
+  char path[72];
+  monthly_recordings::path(path, sizeof(path), NOTES_DIR, note,
+      source == note_transcript::Stored::Backup ? "txt.bak" : "txt");
+  File textFile = SD_MMC.open(path, FILE_READ);
+  const size_t size = textFile ? textFile.size() : 0;
+  if (!size || size > kMemoryTranscriptBytes) return false;
+  textFile.close();
+  const String text = readSmallFile(path, size);
+  if (text.length() != size) return false;
+  const String peer = selectedWifiBridge().id;
+  if (peer.isEmpty()) return false;
+
+  JsonDocument body;
+  body["note"] = note;
+  body["text"] = text;
+  body["captured"] = noteCreatedUtc(note);
+  String storedPlan;
+  if (!recorderDeliveryPlan(note, "", storedPlan)) return false;
+  body["plan"] = storedPlan;
+  const auto exchange = [&](const char* route, JsonDocument& response) {
+    if (recordingRequestedDuringSync()) return false;
+    String payload, reply;
+    return serializeJson(body, payload) &&
+           openAiJsonPost(route, payload, reply, strcmp(route, "/pala/recorder-plan") == 0 ? 60000 : 30000,
+                         nullptr, peer) &&
+           !deserializeJson(response, reply);
+  };
+  JsonDocument plan;
+  if (!exchange("/pala/recorder-plan", plan) || recordingRequestedDuringSync()) return false;
+  const String digest = plan["digest"] | "";
+  const String selectedPlan = plan["plan"] | "";
+  if (storedPlan.isEmpty()) {
+    if (!recorder_work::validPlan({selectedPlan.c_str(), selectedPlan.length()}) ||
+        !recorderDeliveryPlan(note, selectedPlan, storedPlan)) return false;
+  }
+  if (storedPlan != selectedPlan) return false;
+  body["plan"] = storedPlan;
+  const auto claim = claimRecorderDelivery(note, digest);
+  if (claim != recorder_work::Claim::Granted && claim != recorder_work::Claim::Reconcile) return false;
+  body["digest"] = digest;
+  body["mode"] = claim == recorder_work::Claim::Granted ? "write" : "reconcile";
+  JsonDocument receipt;
+  return exchange("/pala/recorder-apply", receipt) && (receipt["confirmed"] | false) &&
+         digest == String(receipt["digest"] | "") && finishRecorderDelivery(note, digest);
+}
+#endif
+
 int processPendingNotes(int preferredNote, int maxNotes) {
 #if PALA_BRIDGE_DISCOVERY
   const bool transcribeOnly = wifiBridgeTranscriptionOnly();
@@ -1581,6 +1640,14 @@ int processPendingNotes(int preferredNote, int maxNotes) {
       }
     }
     permanentCloudFailure = false;
+#if PALA_RECORDER_FIRST
+    if (entry->hasText) {
+      if (deliverRecorderText(noteNum)) ++done;
+      else if (!recordingRequestedDuringSync())
+        writeNoteQueueState(noteNum, "retry", "delivery pending", true);
+      continue;
+    }
+#endif
     const bool memoryCurrent = entry->hasText && brainMemoryIsCurrent(noteNum);
     if (memoryCurrent) {
       if (brainEmbeddingExists(noteNum)) {
@@ -1597,7 +1664,7 @@ int processPendingNotes(int preferredNote, int maxNotes) {
       continue;
     }
     char wavPath[64];
-    snprintf(wavPath, sizeof(wavPath), "%s/note_%03d.wav", NOTES_DIR, noteNum);
+    monthly_recordings::path(wavPath, sizeof(wavPath), NOTES_DIR, noteNum, "wav");
     if (!entry->hasText) {
       File recording = SD_MMC.open(wavPath);
       if (!recording) {
@@ -1981,8 +2048,8 @@ static void handlePortalRoot() {
       int num = noteIndex[i].num;
 
       char txtPath[64], wavPath[64];
-      snprintf(txtPath, sizeof(txtPath), "%s/note_%03d.txt", NOTES_DIR, num);
-      snprintf(wavPath, sizeof(wavPath), "%s/note_%03d.wav", NOTES_DIR, num);
+      monthly_recordings::path(txtPath, sizeof(txtPath), NOTES_DIR, num, "txt");
+      monthly_recordings::path(wavPath, sizeof(wavPath), NOTES_DIR, num, "wav");
 
       String transcript = readSmallFile(txtPath, 1200);
       std::vector<uint32_t> moments = loadNoteMoments(num);
@@ -2125,7 +2192,8 @@ static void handleExportTxt() {
     int i = (int)noteIndex.size() - 1 - v;
     if (!(filter == "All" || filter == String(noteIndex[i].tag))) continue;
     int num = noteIndex[i].num;
-    char txtPath[64]; snprintf(txtPath, sizeof(txtPath), "%s/note_%03d.txt", NOTES_DIR, num);
+    char txtPath[64];
+  monthly_recordings::path(txtPath, sizeof(txtPath), NOTES_DIR, num, "txt");
     String transcript = readSmallFile(txtPath, 4000);
     if (transcript.length() == 0)
       transcript = noteIndex[i].hasText
@@ -2157,19 +2225,143 @@ static void sendFileByNum(const char* ext, const char* mime, bool attachment) {
   if (!transferServer.hasArg("num")) { transferServer.send(400, "text/plain", "Missing num"); return; }
   int num = transferServer.arg("num").toInt();
   if (num <= 0) { transferServer.send(400, "text/plain", "Invalid num"); return; }
+#if PALA_RECORDER_FIRST
+  RecordingWindow microphone;
+  const bool live = monthly_recordings::sequence(num) > 0;
+#else
   const bool live = std::any_of(noteIndex.begin(), noteIndex.end(),
       [num](const NoteEntry& note) { return note.num == num; });
+#endif
   if (!live || noteIsTrashed(num)) { transferServer.send(404, "text/plain", "File not found"); return; }
-  char path[64]; snprintf(path, sizeof(path), "%s/note_%03d.%s", NOTES_DIR, num, ext);
+  char path[64];
+  monthly_recordings::path(path, sizeof(path), NOTES_DIR, num, ext);
   File f = SD_MMC.open(path);
   if (!f) { transferServer.send(404, "text/plain", "File not found"); return; }
   if (attachment) {
     String filename = String("note_") + String(num) + "." + String(ext);
     transferServer.sendHeader("Content-Disposition", "attachment; filename=\"" + filename + "\"");
   }
+#if PALA_RECORDER_FIRST
+  transferServer.setContentLength(f.size());
+  transferServer.send(200, mime, "");
+  uint8_t bytes[1024];
+  while (f.available() && transferServer.client().connected() && !pendingPriorityRecording()) {
+    const size_t count = f.read(bytes, sizeof(bytes));
+    if (!count || transferServer.client().write(bytes, count) != count) break;
+  }
+  if (f.available()) transferServer.client().stop();
+#else
   transferServer.streamFile(f, mime);
+#endif
   f.close();
 }
+
+#if PALA_RECORDER_FIRST
+static bool validArchiveMonth(std::string_view name) {
+  if (name == "000000") return true;
+  if (name.size() != 6) return false;
+  int value = 0;
+  for (char letter : name) {
+    if (letter < '0' || letter > '9') return false;
+    value = value * 10 + letter - '0';
+  }
+  return value / 100 >= 2020 && value / 100 <= 2100 && value % 100 >= 1 && value % 100 <= 12;
+}
+
+static int archivedNote(std::string_view filename, int month, std::string_view extension) {
+  if (filename.size() <= extension.size() || filename.substr(filename.size() - extension.size()) != extension)
+    return 0;
+  const int id = note_trash::fileNumber(filename);
+  return monthly_recordings::sequence(id) && monthly_recordings::folderMonth(id) == month ? id : 0;
+}
+
+static void handleRecorderArchive() {
+  RecordingWindow microphone;
+  const String month = transferServer.arg("month");
+  if (!month.isEmpty() && !validArchiveMonth({month.c_str(), month.length()})) {
+    transferServer.send(400, "text/plain", "Invalid archive month");
+    return;
+  }
+  const bool monthView = !month.isEmpty();
+  const bool exporting = monthView && transferServer.hasArg("export");
+  const int skip = constrain(transferServer.arg("offset").toInt(), 0L, 65536L);
+  const bool legacy = transferServer.arg("legacy") == "1";
+  const String archiveRoot = legacy ? NOTES_DIR : "/recordings";
+  const String monthsUrl = legacy ? "/archive?legacy=1" : "/archive";
+  const String monthParam = legacy ? "/archive?legacy=1&amp;month=" : "/archive?month=";
+  String path = "/sdcard" + archiveRoot;
+  if (monthView) path += "/" + month;
+  DIR* directory = opendir(path.c_str());
+  if (!directory) { transferServer.send(404, "text/plain", "Archive month unavailable"); return; }
+
+  transferServer.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  if (exporting) transferServer.sendHeader("Content-Disposition",
+      "attachment; filename=\"pala-" + month + ".txt\"");
+  transferServer.send(200, exporting ? "text/plain; charset=utf-8" : "text/html; charset=utf-8", "");
+  if (!exporting) {
+    transferServer.sendContent(portalPageStart("Archive recordings") +
+        "<div class='top'><h1>Archive recordings</h1><a class='btn' href='/settings'>Settings</a></div>");
+    if (monthView) transferServer.sendContent("<div class='actions'><a class='btn' href='" + monthsUrl +
+        "'>Months</a><a class='btn' href='" + monthParam + month +
+        "&amp;export=1'>Download month transcripts</a></div>");
+    else transferServer.sendContent(legacy ?
+        "<p><a class='btn' href='/archive'>Current recordings</a></p>" :
+        "<p><a class='btn' href='/archive?legacy=1'>Earlier recordings</a></p>");
+  }
+  int match = 0;
+  bool more = false;
+  bool readError = false;
+  for (;;) {
+    if (pendingPriorityRecording() || !transferServer.client().connected()) break;
+    errno = 0;
+    const auto* entry = readdir(directory);
+    if (!entry) { readError = errno != 0; break; }
+    const std::string_view name(entry->d_name);
+    if (!monthView) {
+      if (!validArchiveMonth(name)) continue;
+      const String label = name == "000000" ? "Time not set" : String(entry->d_name);
+      transferServer.sendContent("<p><a class='btn' href='" + monthParam +
+          String(entry->d_name) + "'>" + label + "</a></p>");
+      continue;
+    }
+    const int id = archivedNote(name, month.toInt(), exporting ? ".txt" : ".wav");
+    if (!id || monthly_recordings::inRecordings(id) == legacy) continue;
+    if (exporting) {
+      const String member = archiveRoot + "/" + month + "/" + entry->d_name;
+      File file = SD_MMC.open(member);
+      if (!file || file.isDirectory()) { readError = true; break; }
+      transferServer.sendContent("\n" + noteCreatedUtc(id) + " #" + String(id) + "\n");
+      char bytes[512];
+      while (file.available() && transferServer.client().connected() && !pendingPriorityRecording()) {
+        const size_t count = file.read(reinterpret_cast<uint8_t*>(bytes), sizeof(bytes));
+        if (!count) { readError = true; break; }
+        transferServer.sendContent(bytes, count);
+      }
+      if (readError) break;
+      transferServer.sendContent("\n");
+      continue;
+    }
+    if (match++ < skip) continue;
+    if (match > skip + 40) { more = true; break; }
+    const String number(id);
+    const String date = noteCreatedUtc(id);
+    transferServer.sendContent("<section class='card'><h2 class='title'>" +
+        htmlEscape(date.isEmpty() ? String("Time not set") : date) + "</h2>"
+        "<audio controls preload='none' src='/audio?num=" + number + "'></audio>"
+        "<div class='actions'><a class='btn' href='/wav?num=" + number + "'>Download WAV</a>" +
+        (noteHasCommittedTranscript(id) ? "<a class='btn' href='/txt?num=" + number + "'>Transcript</a>" : "") +
+        "</div></section>");
+  }
+  readError |= closedir(directory) != 0;
+  if (readError || pendingPriorityRecording()) { transferServer.client().stop(); return; }
+  if (!exporting) {
+    if (more) transferServer.sendContent("<p><a class='btn' href='" + monthParam + month +
+        "&amp;offset=" + String(skip + 40) + "'>Next recordings</a></p>");
+    transferServer.sendContent("</div></body></html>");
+  }
+  transferServer.sendContent("");
+}
+#endif
 
 static bool positiveFormValue(const char* name, int& value) {
   const String entry = transferServer.arg(name);
@@ -2456,7 +2648,7 @@ void handleSettingsPage() {
   html += "<div class='status'><span class='pill " + String(palaHasWifi() ? "ok" : "missing") + "'>" +
           String(palaHasWifi() ? (viewerText("WLAN gespeichert", "Wi-Fi saved")) : (viewerText("WLAN fehlt", "Wi-Fi missing"))) + "</span>";
   html += "<span class='pill " + String((PALA_MAC_BRIDGE || palaHasOpenAiKey()) ? "ok" : "missing") + "'>" +
-          String(PALA_MAC_BRIDGE ? "Pala Bridge" : palaHasOpenAiKey() ? (viewerText("API-Key gespeichert", "API key saved")) : (viewerText("API-Key fehlt", "API key missing"))) + "</span></div>";
+          String(PALA_MAC_BRIDGE ? "Bridge" : palaHasOpenAiKey() ? (viewerText("API-Key gespeichert", "API key saved")) : (viewerText("API-Key fehlt", "API key missing"))) + "</span></div>";
   if (transferServer.hasArg("saved")) html += "<div class='card ok'>" + String(viewerText("Einstellungen gespeichert.", "Settings saved.")) + "</div>";
   if (transferServer.hasArg("wifiRemoved")) html += "<div class='card ok'>" + String(viewerText("WLAN entfernt.", "Wi-Fi removed.")) + "</div>";
   html += "<div class='settingsgrid'><section class='card'><div class='settingintro'><div><div class='num'>" +
@@ -2619,8 +2811,10 @@ void setupTransferServer() {
 #endif
       if (PALA_BRIDGE_DISCOVERY || trash || settings) {
         const String host = server.hostHeader();
-        const bool correctHost = !transferUrl.isEmpty() &&
-                                 (host == transferUrl || host == transferUrl + ":80");
+        String normalizedHost = host;
+        normalizedHost.toLowerCase();
+        const bool correctHost = companion_host::accepts(normalizedHost.c_str(), transferUrl.c_str(),
+                                                        transferHostname.c_str());
         const bool checkOrigin = server.method() == HTTP_POST && (settings || (trash && PALA_BRIDGE_DISCOVERY));
         if (!correctHost || (checkOrigin && server.header("Origin") != "http://" + host)) {
           if (settings) {
@@ -2654,6 +2848,12 @@ void setupTransferServer() {
     });
     activityMiddlewareInstalled = true;
   }
+#if PALA_RECORDER_FIRST
+  transferServer.on("/", HTTP_GET, []() {
+    transferServer.sendHeader("Location", "/settings");
+    transferServer.send(303);
+  });
+#else
   transferServer.on("/", HTTP_GET, handlePortalRoot);
   transferServer.on("/note/delete", HTTP_POST, handleNoteDelete);
   transferServer.on("/tasks", HTTP_GET, handleTasksPage);
@@ -2662,14 +2862,17 @@ void setupTransferServer() {
   transferServer.on("/recap", HTTP_GET, handleRecap);
   transferServer.on("/memories/delete-all", HTTP_POST, handleDeleteAllNotes);
   transferServer.on("/ask", HTTP_POST, handleBrainAsk);
+#endif
 #if !PALA_BRIDGE_DISCOVERY
   transferServer.on("/settings", HTTP_GET, handleSettingsPage);
 #endif
+#if !PALA_RECORDER_FIRST
   transferServer.on("/trash", HTTP_GET, handleTrashPage);
   transferServer.on("/trash/audio", HTTP_GET, handleTrashAudio);
   transferServer.on("/trash/restore", HTTP_POST, handleTrashRestore);
   transferServer.on("/trash/retention", HTTP_POST, handleTrashRetention);
   transferServer.on("/trash/empty", HTTP_POST, handleTrashEmpty);
+#endif
   transferServer.on("/settings/save", HTTP_POST, handleSettingsSave);
 #if PALA_BRIDGE_DISCOVERY
   transferServer.on("/settings/bridge", HTTP_POST, handleBridgeAddressSave);
@@ -2677,8 +2880,12 @@ void setupTransferServer() {
   transferServer.on("/settings/language", HTTP_POST, handleLanguageSave);
   transferServer.on("/settings/wifi/remove", HTTP_POST, handleWifiRemove);
   transferServer.on("/settings/key/clear", HTTP_POST, handleKeyClear);
+#if PALA_RECORDER_FIRST
+  transferServer.on("/archive", HTTP_GET, handleRecorderArchive);
+#else
   transferServer.on("/api/notes", HTTP_GET, handlePortalJson);
   transferServer.on("/export.txt", HTTP_GET, handleExportTxt);
+#endif
   transferServer.on("/txt",   HTTP_GET, [](){ sendFileByNum("txt", "text/plain", true); });
   transferServer.on("/wav",   HTTP_GET, [](){ sendFileByNum("wav", "audio/wav",  true); });
   transferServer.on("/audio", HTTP_GET, [](){ sendFileByNum("wav", "audio/wav",  false); });
@@ -2689,10 +2896,14 @@ void setupTransferServer() {
 
 void stopTransferMode() {
   if (transferServerActive) {
+#if PALA_RECORDER_FIRST
+    stopNoteMdns();
+#endif
     transferServer.stop();
     transferServerActive = false;
   }
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
   transferUrl = "";
+  transferHostname = "";
 }

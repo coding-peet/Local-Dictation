@@ -32,7 +32,9 @@ class InterruptedNote(FakePala):
             raise OSError("link gone")
         command, *args = raw[len(PREFIX):].decode().strip().split()
         pending = [n for n in self.queue if n not in self.files]
-        if command == "BATCH":
+        if command == "WORK-PROTOCOL":
+            self.reply("ERROR COMMAND")
+        elif command == "BATCH":
             self.reply(f"BATCH {len(pending)}")
         elif command == "BATCH-NEXT":
             self.reply(f"WORK {pending[0]} AUDIO" if pending else "EMPTY")

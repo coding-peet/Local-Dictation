@@ -112,6 +112,30 @@ bool rtcSyncChipFromSystem() {
   return ok;
 }
 
+time_t rtcUtcEpoch() {
+  struct tm utc;
+  return rtcReadUtcTm(&utc) ? utcTmToEpoch(utc) : 0;
+}
+
+bool rtcApplyBridgeUtc(time_t epoch) {
+  struct tm utc;
+  if (!gmtime_r(&epoch, &utc) || utc.tm_year < 124 || utc.tm_year > 199) return false;
+  // Leave a ticking clock alone within normal USB latency and one-second RTC resolution.
+  time_t chip = rtcUtcEpoch();
+  if (chip < epoch - 1 || chip > epoch + 1) {
+    if (!rtcWriteUtcTm(utc)) return false;
+    chip = rtcUtcEpoch();
+    if (chip < epoch || chip > epoch + 1) return false;
+  }
+  const time_t system = time(nullptr);
+  if (!timeReady || system < chip - 1 || system > chip + 1) {
+    timeval tv{chip, 0};
+    if (settimeofday(&tv, nullptr) != 0) return false;
+  }
+  timeReady = true;
+  return true;
+}
+
 String rtcUtcIso() {
   struct tm utc;
   if (!rtcReadUtcTm(&utc)) return "";

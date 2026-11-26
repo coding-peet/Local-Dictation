@@ -15,6 +15,7 @@
 #include "../../globals.h"
 #include "date_validation.h"
 #include "note_trash_policy.h"
+#include "monthly_recordings.h"
 #include "notes.h"
 #include "sync_queue.h"
 #include "tasks.h"
@@ -98,7 +99,7 @@ bool readLine(File& file, char (&buffer)[N], std::string_view& line, bool& overf
 }
 
 void notePath(char (&path)[64], int note, const char* extension) {
-  snprintf(path, sizeof(path), NOTES_DIR "/note_%03d.%s", note, extension);
+  monthly_recordings::path(path, sizeof(path), NOTES_DIR, note, extension);
 }
 
 bool readWav(int note) {

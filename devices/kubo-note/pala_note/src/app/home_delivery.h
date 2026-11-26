@@ -13,4 +13,7 @@ bool homeDeliveryNeedsBluetoothFollowup(uint32_t now);
 void homeDeliveryBluetoothAttempted(uint32_t now);
 bool homeDeliveryKeepingBluetoothAwake(uint32_t now);
 void refreshHomeDeliveryAfterSubmission();
-bool refreshHomeDelivery();
+bool refreshHomeDelivery(bool manual = false);
+void startManualHomeRefresh();
+uint32_t manualHomeRefreshRequest();
+bool completeManualHomeRefresh(uint32_t request);

@@ -46,7 +46,7 @@ class BluetoothBacklogTest(unittest.TestCase):
                 return ["OK"]
             self.fail(command)
 
-        with patch.object(usb_sync, "_paired_session"), patch.object(usb_sync, "_exchange", side_effect=exchange), \
+        with patch.object(usb_sync, "_paired_session"), patch.object(usb_sync, "_recorder_protocol", return_value=False), patch.object(usb_sync, "_exchange", side_effect=exchange), \
              patch.object(usb_sync, "processing_config", return_value={"processing_mode": "kubo"}):
             self.assertTrue(usb_sync.drain_bluetooth_backlog(note, "key", bridge, "device", stop))
 
@@ -60,7 +60,7 @@ class BluetoothBacklogTest(unittest.TestCase):
         bridge = Mock()
         bridge.local_transcription_ready.return_value = True
         replies = iter([["BATCH", "2"], ["WORK", "17", "AUDIO"], ["WORK", "17", "TEXT"], ["OK"]])
-        with patch.object(usb_sync, "_paired_session"), \
+        with patch.object(usb_sync, "_paired_session"), patch.object(usb_sync, "_recorder_protocol", return_value=False), \
              patch.object(usb_sync, "_exchange", side_effect=lambda *_: next(replies)) as exchange, \
              patch.object(usb_sync, "processing_config", return_value={"processing_mode": "kubo"}), \
              patch.object(usb_sync, "sync_one", return_value=usb_sync.SyncedNote(17, 8000)) as sync, \
@@ -79,7 +79,7 @@ class BluetoothBacklogTest(unittest.TestCase):
         bridge = Mock()
         bridge.local_transcription_ready.return_value = True
         unsupported = usb_sync.UsbSyncError("Unsupported", diagnostic=usb_sync.UsbFailure("firmware", FirmwareCode="COMMAND"))
-        with patch.object(usb_sync, "_paired_session"), \
+        with patch.object(usb_sync, "_paired_session"), patch.object(usb_sync, "_recorder_protocol", return_value=False), \
              patch.object(usb_sync, "_exchange", side_effect=[unsupported, ["OK"]]), \
              patch.object(usb_sync, "processing_config", return_value={"processing_mode": "kubo"}), \
              patch.object(usb_sync, "_drain_link") as legacy:

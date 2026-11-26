@@ -11,13 +11,27 @@ class InterruptedCaptureWiring(unittest.TestCase):
         self.assertIn("record(capturedUtc)", main)
         rec = (APP / "record.cpp").read_text(encoding="utf8")
         entry = rec.split("bool record(const String& capturedUtc) {",1)[1].split("bool recordQuestion",1)[0]
-        self.assertLess(entry.index("beginNoteRecording(num, capturedUtc)"), entry.index("recordHeldToPath("))
+        self.assertLess(entry.index("beginNoteRecording(num, capturedUtc)"), entry.index("return String(path)"))
+        writer = rec.split("static bool recordHeldToPath(", 1)[1]
+        self.assertLess(writer.index("preparePath(noteNum)"), writer.index("SD_MMC.open("))
         notes = (APP / "notes.cpp").read_text(encoding="utf8")
         self.assertIn("note_catalog::reserveRecording(",notes)
         recovery = notes.split("bool recoverCaptureIntent() {",1)[1].split("bool loadCatalogBase",1)[0]
         self.assertLess(recovery.index("capture_wav::recover("), recovery.index("repairCatalogRecording("))
         self.assertIn("capture_wav::restoreTimestamp(meta.c_str(), utc",recovery)
         self.assertIn('writeNoteMeta(note, "Inbox", captured)',recovery)
+
+    def test_monthly_wav_has_one_resolver_for_capture_and_transport(self):
+        rec = (APP / "record.cpp").read_text(encoding="utf-8")
+        notes = (APP / "notes.cpp").read_text(encoding="utf-8")
+        usb = (APP / "usb_sync.cpp").read_text(encoding="utf-8")
+        wifi = (APP / "network.cpp").read_text(encoding="utf-8")
+        for source in (rec, notes, usb, wifi):
+            self.assertIn("monthly_recordings::path(", source)
+        direct = rec.split("bool record(const String& capturedUtc)", 1)[1].split("bool recordQuestion", 1)[0]
+        self.assertIn("nextNoteNumber(capturedUtc)", direct)
+        priority = rec.split("bool adopt(String name,", 1)[1].split("bool readSpoolNames", 1)[0]
+        self.assertIn("nextNoteNumber(rec_spool::captureUtc(seconds).c_str())", priority)
 
     def test_spool_repairs_before_catalog_ack(self):
         rec = (APP / "record.cpp").read_text(encoding="utf8")

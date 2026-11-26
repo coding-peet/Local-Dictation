@@ -1,6 +1,7 @@
 #include "provider.h"
 #include "brain.h"
 
+#include "monthly_recordings.h"
 #include "notes.h"
 #include "rtc.h"
 #include "tasks.h"
@@ -34,7 +35,7 @@ constexpr uint16_t kEmbeddingDimensions = 256;
 
 String transcriptPath(int noteNum) {
   char path[64];
-  snprintf(path, sizeof(path), "%s/note_%03d.txt", NOTES_DIR, noteNum);
+  monthly_recordings::path(path, sizeof(path), NOTES_DIR, noteNum, "txt");
   return String(path);
 }
 

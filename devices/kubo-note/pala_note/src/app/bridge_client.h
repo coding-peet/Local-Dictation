@@ -23,7 +23,10 @@ private:
 NotePeer selectedWifiBridge();
 bool wifiBridgeTranscriptionOnly();
 void resetBridgeAddressCache();
-WifiBacklog pairedWifiBacklog();
+void startCompanionMdns();
+void stopNoteMdns();
+String companionLocalAddress();
+WifiBacklog pairedWifiBacklog(bool homeOnly = false);
 #else
 using ProviderClient = WiFiClientSecure;
 #endif
