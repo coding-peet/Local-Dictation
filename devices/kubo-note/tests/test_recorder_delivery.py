@@ -79,8 +79,9 @@ class RecorderDeliveryTest(unittest.TestCase):
 
 
 class RecorderNote(InterruptedNote):
-    def __init__(self, cut, *, modern=False):
+    def __init__(self, cut, *, modern=False, record_on_done=False):
         super().__init__(cut)
+        self.record_on_done = record_on_done
         self.modern = modern
         self.plans = {}
         self.claimed = {}
@@ -117,6 +118,9 @@ class RecorderNote(InterruptedNote):
             if note not in self.delivered:
                 self.delivered.append(note)
             if self.cut == "DONE":
+                if self.record_on_done:
+                    self.queue.append(43)
+                    self.offline = True
                 self.cut = None
                 raise OSError("Note committed delivery but its response was lost")
             self.reply(f"DELIVERED {note}")
@@ -126,6 +130,40 @@ class RecorderNote(InterruptedNote):
 
 
 class RecorderWifiTest(unittest.TestCase):
+    def test_wifi_apply_is_a_single_attempt_after_the_device_grants_a_write(self):
+        source = (BRIDGE.parent / "pala_note/src/app/network.cpp").read_text(encoding="utf8")
+        delivery = source.split("static bool deliverRecorderText(", 1)[1].split("int processPendingNotes(", 1)[0]
+        self.assertIn("postBackgroundJson(", delivery)
+        self.assertNotIn("openAiJsonPost(", delivery)
+
+    def test_modern_wifi_reconciliation_checks_other_bridge_account_and_route(self):
+        from recorder_delivery import dispatch_work
+        cfg = {"processing_mode": "kubo", "google_routes": {"general": {"id": "list-a", "title": "Test"}}}
+        other = {"processing_mode": "kubo", "google_routes": {"general": {"id": "list-b", "title": "Other"}}}
+        api = Mock()
+        account = api.tasklists.return_value.get.return_value.execute
+        account.return_value = {"id": "account-a"}
+        doc = {"note": 42, "text": "Bench note", "plan": ""}
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b, \
+                patch("recorder_delivery._api") as connect, patch("recorder_delivery._verify_task_list"), \
+                patch("recorder_delivery.apply_task") as write, patch("recorder_delivery.read_task_action") as read:
+            connect.return_value.__enter__.return_value = api
+            saved = dispatch_work(Path(a), cfg, "/pala/recorder-plan", DEVICE, doc)
+            request = {**doc, **saved}
+            def settle(folder, config, mode):
+                return dispatch_work(Path(folder), config, "/pala/recorder-apply", DEVICE,
+                                     {**request, "mode": mode})["confirmed"]
+            self.assertTrue(settle(a, cfg, "write"))
+            read.return_value = None
+            self.assertFalse(settle(b, cfg, "reconcile"))
+            read.return_value = {"id": "verified"}
+            self.assertTrue(settle(b, cfg, "reconcile"))
+            self.assertFalse(settle(b, other, "reconcile"))
+            account.return_value = {"id": "account-b"}
+            self.assertFalse(settle(b, cfg, "reconcile"))
+            write.assert_called_once()
+            self.assertEqual(read.call_count, 2)
+
     def test_lost_wifi_provider_reply_reconciles_without_another_insert(self):
         delivered = set()
         modes = []
@@ -170,10 +208,10 @@ class RecorderWifiTest(unittest.TestCase):
 
 
 class RecorderWorkerTest(unittest.IsolatedAsyncioTestCase):
-    async def run_cut(self, transport, cut, state):
+    async def run_cut(self, transport, cut, state, modern):
         from test_bluetooth_sync import GattPeer, BleLink
 
-        card = RecorderNote(cut)
+        card = RecorderNote(cut, modern=modern, record_on_done=True)
         stop = threading.Event()
         recognized = []
         writes = []
@@ -185,10 +223,12 @@ class RecorderWorkerTest(unittest.IsolatedAsyncioTestCase):
             return {"text": f"Text from recording {n}"}
 
         @contextmanager
-        def adapter(state, config, device, note, captured, text):
+        def adapter(state, config, device, note, captured, text, *, plan=None):
+            self.assertIn(plan, ("", "V2") if modern else (None,))
             assert text == f"Text from recording {note}"
             class Plan:
-                digest = plan_digest(device, note, captured, text, "same-account", "same-list", "general")
+                plan = "V2"
+                digest = plan_digest(device, note, captured, text, "same-account", "same-list", "general", plan)
 
                 def settle(self, mode):
                     if mode == "write":
@@ -236,6 +276,7 @@ class RecorderWorkerTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_reconnect_commits_a_then_b_over_usb_and_ble(self):
         for transport in ("USB", "BLE"):
-            for cut in ("TEXT", "COMMIT", "PROVIDER"):
-                with self.subTest(transport=transport, cut=cut), tempfile.TemporaryDirectory() as tmp:
-                    await self.run_cut(transport, cut, Path(tmp))
+            for cut in ("TEXT", "COMMIT", "PROVIDER", "DONE"):
+                for modern in (False, True):
+                    with self.subTest(transport=transport, cut=cut, modern=modern), tempfile.TemporaryDirectory() as tmp:
+                        await self.run_cut(transport, cut, Path(tmp), modern)

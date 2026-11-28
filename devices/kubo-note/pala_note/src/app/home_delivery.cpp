@@ -1,4 +1,5 @@
 #include "home_delivery.h"
+#include "owner_trace.h"
 #include "home_delivery_refresh.h"
 #include "home_bridge_status.h"
 #include "bridge_client.h"
@@ -48,6 +49,7 @@ HomeDeliveryCounts homeDeliveryCounts() {
 }
 
 void restoreHomeDeliveryRefresh() {
+  owner_trace::WorkScope ownerWork(owner_trace::Work::Delivery);
   const unsigned waiting = homeDeliveryCounts().waiting;
   if (waiting > 0) refreshSchedule.received(millis(), waiting);
 }

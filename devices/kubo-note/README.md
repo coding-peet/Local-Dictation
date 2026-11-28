@@ -144,6 +144,13 @@ Home and recording are available during routine recovery. A manual sync
 requested during recovery starts when the queue is ready. Rebooting clears
 that request and retains any recordings still waiting for a new sync.
 
+You can hold REC again as soon as Saving appears. A small disk and caption
+on the new recording indicate that the previous recording is still being
+saved. The indicator clears on the next available panel refresh after that
+save finishes. Each of the two microphone buffers holds 16.384 seconds at
+16 kHz if the card stops accepting data. The writer reuses space as it
+drains each buffer, so normal recordings can be longer.
+
 To record during sync, hold the upper button as usual. The Note releases
 the active transport at a safe boundary. After saving the recording, it
 resumes the interrupted item before continuing through the queue, including
@@ -152,7 +159,7 @@ the recording just saved.
 ## Restart and storage checks
 
 In **Note settings**, choose **Restart** or **Restart and check storage**.
-Approve with the upper button on the Note or decline with the lower button.
+Press the lower button (Yes) to restart or the upper button (No) to cancel.
 
 The full check can take several minutes. It verifies the catalog, queue,
 metadata, and WAV headers and sizes. The screen shows check progress.
@@ -465,16 +472,19 @@ saved the name. The existing pairing and DNS identity stay in use.
 
 ## Home delivery status
 
-**General open** shows unfinished items in the configured Google Tasks
-General list. The Bridge reads statuses for that list. A dash means the
-count is unavailable. The Note keeps its latest snapshot while offline.
+**General** shows the number of unfinished items in the configured Google
+Tasks General list. Zero means the list has no unfinished items. A dash
+means the count is unavailable. The Note keeps its latest snapshot offline.
 
-**Last delivery** shows the local time of the last confirmed Google
-delivery. While confirmed delivery is pending, this column shows
-**Awaiting Google** and the number of waiting dictations. After submitting
-a note over Wi-Fi, the Note fetches an update on the same connection and
-briefly checks again while delivery is pending. Bluetooth checks also run
-automatically while Home shows a pending delivery.
+A stopwatch beside **Google** shows how many dictations are waiting for
+confirmation. Once the queue is empty, a check mark beside **Delivered**
+(**Doručené** in Slovak) appears above the local time of the last confirmed
+delivery. A plain **Google** label with a dash means there is no confirmed
+time to display.
+
+After submitting a note over Wi-Fi, the Note fetches an update on the same
+connection and briefly checks again while delivery is pending. Bluetooth
+checks also run automatically while Home shows a pending delivery.
 
 Connect the paired Note by USB to transfer and verify only the counters:
 
@@ -513,6 +523,45 @@ and verifies the values selected for the device's local date.
 Weather data by [Open-Meteo](https://open-meteo.com/). The Moon phase
 estimate uses the January 2000 epoch from
 [NASA's Moon phase tables](https://eclipse.gsfc.nasa.gov/phase/phases1901.html).
+
+## Stage 3 candidate
+
+Build `pala_note_stage3` for Calendar, Saved items, Ask Kubo and Archive.
+From Home, an upper triple tap refreshes Calendar and Saved items over
+paired Wi-Fi. An upper single tap opens Calendar, with the next 14 days
+and up to 32 rows from Google Tasks and the primary Google calendar.
+A lower single tap opens Saved items, with the selected list's first 32
+open items in provider order. The last Calendar page also leads to Saved items.
+Each view shows when the last successful update is being used offline.
+
+Hold the lower button on Home to ask a public question or read open scheduled
+Tasks for today, tomorrow or the next seven days. The paired Bridge keeps
+Tasks reads local to that route. Calendar and Tasks changes use dictation
+and delivery. The existing voice player can stop an answer with REC.
+
+Under Settings, open Archive recordings and select a month. View logs shows
+local recording and transcript status and streams any log files in that
+month as plain text. Delete month shows the two pending counts before a
+destructive confirmation. Files and work approved in that confirmation
+are journaled on the card. A reboot resumes the journal. A new recording
+is outside the approved set. Google items stay in the account. The Note
+resamples SD usage after deletion once recording and sync are idle. Settings
+reads the cached totals.
+
+The smaller `pala_note_workspace_calendar` environment is available for
+Calendar-only qualification.
+
+Use a dedicated candidate Bridge profile. Set `workspace_calendar.note_id` to
+the selected Note's paired device ID and `workspace_calendar.saved_list_id` to
+the stable Tasks list ID. The optional `workspace_calendar.zone` defaults to
+`Europe/Bratislava`.
+
+Run the existing `bridge.py --workspace-task-views` verification with
+`--calendar-id primary`. Adding `--save-bridge-grant` requests renewable
+read access. After a successful read it creates `workspace-read-token.json`
+in the local Bridge profile. The profile must stay private. A read without
+that option is temporary. Restart the candidate Bridge to load a new grant.
+Google's external testing mode expires renewable grants after seven days.
 
 ## Calendar holidays
 

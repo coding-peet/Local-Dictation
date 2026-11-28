@@ -15,7 +15,7 @@ void noteSettingsHttp(WebServer& server);
 void noteUsbLinkChanged(bool active);
 uint32_t noteUsbAttachment();
 bool noteUsbPairingOpen();
-bool noteUsbPairingPrompt(String& name);
+bool noteUsbPairingPrompt(String& name, String* id = nullptr);
 void noteUsbPairingConfirm(bool accept);
 void notePairingDetach(NoteConfigTransport transport, uint32_t attachment);
 bool takeNoteBleEnableRequest();

@@ -30,7 +30,7 @@ class Element {
   scrollIntoView() { this.scrolled = true; }
 }
 
-function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, hash = '', name = 'Willow', displayPages, sleepMinutes, syncTiming, pageWrap, preferBluetooth, bridge, recorderFirst, webPasswordConfigured, webPasswordRequired, weeklyCodexLimit, wifiEnabled, bluetoothEnabled, health, storageAudit, locked = false } = {}) {
+function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, hash = '', name = 'Willow', displayPages, sleepMinutes, syncTiming, pageWrap, preferBluetooth, bridge, recorderFirst, webPasswordConfigured, webPasswordRequired, weeklyCodexLimit, wifiEnabled, bluetoothEnabled, health, storageAudit, confirmation, locked = false } = {}) {
   const elements = new Map();
   const buttons = [];
   for (const match of settings.matchAll(/<([a-z][a-z0-9]*)\b[^<>]*\bid="([^"]+)"[^<>]*>/g)) {
@@ -48,7 +48,9 @@ function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, ha
   let trash = Array.from({ length: count }, (_, index) =>
     ({ num: index + 1, tag: 'Recording', capturedUtc: '', trashedAt: 0 }));
   const calls = [];
+  const timers = [];
   const context = vm.createContext({
+    setTimeout: callback => timers.push(callback),
     location: { hash },
     window: new Element(),
     document: {
@@ -128,9 +130,11 @@ function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, ha
           break;
         case 'restart.status':
           reply.storageAudit = storageAudit;
+          if (confirmation) reply.confirmation = confirmation;
           break;
         case 'restart.request':
           reply.pending = true;
+          if (confirmation) reply.ticket = confirmation.ticket;
           break;
         case 'trash.status':
           reply = { ...reply, days: retention, count: trash.length };
@@ -164,6 +168,7 @@ function fixture({ memoryTrash, transport = 'BLE', portal = false, count = 0, ha
     selectOtherNote() { targetKey = 'note-b'; },
     expireWritePermission() { writePermission = 'renewed-nonce'; },
     refresh: () => vm.runInContext('refresh()', context),
+    runTimer: () => timers.shift()(),
     async setTrashOpen(open) {
       el('trash-disclosure').open = open;
       await el('trash-disclosure').dispatch('toggle');
@@ -237,6 +242,16 @@ test('restart choices report interrupted audit and only request a local confirma
   page.disconnect();
   await page.refresh();
   assert.equal(page.el('restart-note').hidden, true);
+});
+
+test('expired and cancelled restart requests show their actual outcome', async () => {
+  for (const [state, message] of [['expired', /expired/], ['cancelled', /cancelled/]]) {
+    const page = fixture({ storageAudit: { state: 'never', notes: 4 }, confirmation: { ticket: 7, state } });
+    await page.refresh();
+    await page.dispatch('restart-normal', 'click');
+    await page.runTimer();
+    assert.match(page.el('restart-status').textContent, message);
+  }
 });
 
 test('wireless controls, sync connection priority and network list are grouped in that order', () => {
@@ -691,4 +706,23 @@ test('disabling the active Bluetooth connection acknowledges the save without re
   assert.deepEqual(page.calls.slice(firstSaveCall).map(call => call.op), ['radios.save']);
   assert.equal(page.el('wireless-radios').hidden, true);
   assert.match(page.el('status').textContent, /Reconnect by USB/);
+});
+
+test('Settings reflects new cached SD usage after a month deletion', async () => {
+  const health = { sdUsedMiB: 1536, sdTotalMiB: 2048 };
+  const page = fixture({ health, portal: true, recorderFirst: true });
+  await page.refresh();
+  assert.equal(page.el('note-sd').textContent, '1.50 / 2.00 GiB');
+  assert.equal(page.el('note-sd-row').hidden, false);
+
+  health.sdUsedMiB = 512;
+  await page.refresh();
+  assert.equal(page.el('note-sd').textContent, '0.50 / 2.00 GiB');
+  assert.ok(page.calls.every(call => call.op === 'get'));
+
+  delete health.sdUsedMiB;
+  delete health.sdTotalMiB;
+  await page.refresh();
+  assert.equal(page.el('note-sd').textContent, '');
+  assert.equal(page.el('note-sd-row').hidden, true);
 });

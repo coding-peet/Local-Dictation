@@ -1,8 +1,11 @@
+#include "recording_parts.h"
 #include "Arduino.h"
+#include "owner_trace.h"
 #include "../../config.h"
 #include "../../globals.h"
 #include "../../types.h"
 #include "network.h"
+#include "stage2_bench.h"
 #include "provider.h"
 #include "bridge_address.h"
 #include "companion_host.h"
@@ -13,6 +16,9 @@
 #include "note_config.h"
 #include "note_access.h"
 #include "monthly_recordings.h"
+#if PALA_STAGE3
+#include "archive_month.h"
+#endif
 #include "notes.h"
 #include "recorder_store.h"
 #include "catalog_storage.h"
@@ -214,6 +220,28 @@ static bool postBackgroundJson(ProviderClient& client, const char* endpoint,
   return response.length() > 0;
 }
 
+#if PALA_STAGE3
+bool requestKuboAnswer(const String& question, String& answer) {
+  if (question.isEmpty() || question.length() > 1600 || WiFi.status() != WL_CONNECTED) return false;
+  ProviderClient bridge(selectedWifiBridge());
+  const auto credential = providerCredential(bridge);
+  if (bridge.bridge().token.isEmpty() || credential.length() < 10) return false;
+  secureClient(bridge);
+  bridge.setTimeout(50000);
+  JsonDocument request;
+  request["question"] = question;
+  request["language"] = palaUiLanguage();
+  String payload, response;
+  serializeJson(request, payload);
+  RecordingWindow microphone;
+  if (!postBackgroundJson(bridge, "/pala/ask-kubo", credential, payload, response, 50000, nullptr)) return false;
+  JsonDocument reply;
+  if (deserializeJson(reply, response)) return false;
+  answer = reply["answer"] | "";
+  return !answer.isEmpty() && answer.length() <= 3600;
+}
+#endif
+
 static bool openAiJsonPost(const char* endpoint, const String& payload, String& response,
                            uint16_t timeoutMs = 0, String* failure = nullptr,
                            const String& bridgeId = "") {
@@ -398,7 +426,9 @@ void confirmWifiTranscriptReceipt(int note, const String& peer) {
 }
 #endif
 
-static bool transcribeTextOnce(const String& wavPath, String& text, int noteNum = 0) {
+static bool transcribeTextOnce(const String& wavPath, String& text, int noteNum = 0,
+                               unsigned part=0, unsigned count=0, uint32_t crc=0,
+                               recording_parts::TranscriptArchive* archive=nullptr) {
   permanentCloudFailure = false;
   transcriptionHadNoSpeech = false;
 #if PALA_BRIDGE_DISCOVERY
@@ -410,6 +440,47 @@ static bool transcribeTextOnce(const String& wavPath, String& text, int noteNum 
 #endif
   const String apiKey = providerCredential(client);
   if (apiKey.length() < 10) return false;
+  auto readTranscript = [&](const char* body) {
+    JsonDocument transcriptDocument;
+    if (deserializeJson(transcriptDocument,body)) return false;
+    if (count) {
+      if (!transcriptDocument["part"].is<unsigned>() || transcriptDocument["part"].as<unsigned>()!=part ||
+          transcriptDocument["count"].as<unsigned>()!=count || !transcriptDocument["crc"].is<uint32_t>() ||
+          transcriptDocument["crc"].as<uint32_t>()!=crc) return false;
+      if (!archive || !transcriptDocument["piece"].is<const char*>()) return false;
+      const auto piece=transcriptDocument["piece"].as<JsonString>();
+      if (!archive->piece(part,piece.c_str(),piece.size())) return false;
+      if (part+1<count) return true;
+    }
+    if (!transcriptDocument["text"].is<const char*>()) return false;
+    text = transcriptDocument["text"].as<const char*>();
+    text.trim();
+    if (transcriptHasNoSpeech(transcriptDocument["text"])) {
+      // A valid successful response with no speech is terminal, not a network
+      // failure. Preserve the WAV, but never re-upload it automatically.
+      transcriptionHadNoSpeech = true;
+      permanentCloudFailure = true;
+      Serial.println("[Whisper] no speech recognized");
+      return false;
+    }
+    return true;
+  };
+  if (count) {
+#if !PALA_BRIDGE_DISCOVERY
+    return false;
+#endif
+    secureClient(client);
+    JsonDocument query;
+    query["note"]=noteNum; query["part"]=part; query["count"]=count; query["crc"]=crc;
+    String payload, reply;
+    serializeJson(query,payload);
+    if (!postBackgroundJson(client,"/pala/recording-part-status",apiKey,payload,reply,12000,nullptr))
+      return false;
+    JsonDocument status;
+    if (deserializeJson(status,reply)) return false;
+    if (status["missing"]!=true) return readTranscript(reply.c_str());
+    client.stop();
+  }
   File f = SD_MMC.open(wavPath.c_str());
   if (!f) return false;
   size_t fileSize = f.size();
@@ -426,6 +497,8 @@ static bool transcribeTextOnce(const String& wavPath, String& text, int noteNum 
   if (noteNum > 0) pre = "--" + bnd + "\r\nContent-Disposition: form-data; name=\"pala_note\"\r\n\r\n" +
                          String(noteNum) + "\r\n" + pre;
 #endif
+  if (count) pre = "--"+bnd+"\r\nContent-Disposition: form-data; name=\"pala_part\"\r\n\r\n"+
+      String(noteNum)+" "+part+" "+count+" "+crc+"\r\n"+pre;
   String post = "\r\n--" + bnd + "--\r\n";
   size_t totalLen = pre.length() + fileSize + post.length();
 
@@ -439,7 +512,7 @@ static bool transcribeTextOnce(const String& wavPath, String& text, int noteNum 
   if (!connectProvider(client)) { f.close(); return false; }
   const uint32_t connectedAt = millis();
 
-  String headers = String("POST /v1/audio/transcriptions HTTP/1.1\r\n") +
+  String headers = String(count ? "POST /pala/recording-part HTTP/1.1\r\n" : "POST /v1/audio/transcriptions HTTP/1.1\r\n") +
                    "Host: " + providerAuthority(client) + "\r\n" +
                    "Authorization: Bearer " + apiKey + "\r\n" +
                    "Content-Type: multipart/form-data; boundary=" + bnd + "\r\n" +
@@ -517,19 +590,7 @@ static bool transcribeTextOnce(const String& wavPath, String& text, int noteNum 
                   response.error ? response.error : "timeout or non-success response");
     return false;
   }
-  JsonDocument transcriptDocument;
-  if (deserializeJson(transcriptDocument, response.body.c_str()) ||
-      !transcriptDocument["text"].is<const char*>()) return false;
-  text = transcriptDocument["text"].as<const char*>();
-  text.trim();
-  if (transcriptHasNoSpeech(transcriptDocument["text"])) {
-    // A valid successful response with no speech is terminal, not a network
-    // failure. Preserve the WAV, but never re-upload it automatically.
-    transcriptionHadNoSpeech = true;
-    permanentCloudFailure = true;
-    Serial.println("[Whisper] no speech recognized");
-    return false;
-  }
+  if (!readTranscript(response.body.c_str())) return false;
   Serial.printf("[Whisper] tls=%lu ms upload=%lu ms model=%lu ms total=%lu ms bytes=%u body=%u\n",
                 static_cast<unsigned long>(connectedAt - startedAt),
                 static_cast<unsigned long>(uploadedAt - connectedAt),
@@ -545,7 +606,18 @@ bool transcribe(const String& wavPath, int noteNum) {
       [&] { return reconcileNoteTranscript(noteNum); },
       [&] {
         String text;
-        return transcribeTextOnce(wavPath, text, noteNum) && saveNoteTranscript(noteNum, text);
+        std::vector<recording_parts::Entry> parts;
+        const auto state=recording_parts::read(std::string("/sdcard")+wavPath.c_str(),parts);
+        if (state==recording_parts::State::Single)
+          return transcribeTextOnce(wavPath, text, noteNum) && saveNoteTranscript(noteNum, text);
+        if (state!=recording_parts::State::Complete && state!=recording_parts::State::Interrupted) return false;
+        recording_parts::TranscriptArchive archive;
+        archive.start(std::string("/sdcard")+wavPath.c_str(),"wifi");
+        for (unsigned i=0;i<parts.size();++i) {
+          const auto name=recording_parts::path(wavPath.c_str(),i);
+          if (!transcribeTextOnce(name.c_str(),text,noteNum,i,parts.size(),parts[i].crc,&archive)) return false;
+        }
+        return archive.finish(parts.size(),{text.c_str(),text.length()}) && saveNoteTranscript(noteNum,text);
       });
 }
 
@@ -1563,9 +1635,14 @@ static bool deliverRecorderText(int note) {
   const auto exchange = [&](const char* route, JsonDocument& response) {
     if (recordingRequestedDuringSync()) return false;
     String payload, reply;
+    ProviderClient client(notePeerById(peer));
+    const String key = providerCredential(client);
+    if (key.length() < 10) return false;
+    const uint16_t timeout = strcmp(route, "/pala/recorder-plan") == 0 ? 60000 : 30000;
+    secureClient(client);
+    client.setTimeout(timeout);
     return serializeJson(body, payload) &&
-           openAiJsonPost(route, payload, reply, strcmp(route, "/pala/recorder-plan") == 0 ? 60000 : 30000,
-                         nullptr, peer) &&
+           postBackgroundJson(client, route, key, payload, reply, timeout, nullptr) &&
            !deserializeJson(response, reply);
   };
   JsonDocument plan;
@@ -1582,13 +1659,17 @@ static bool deliverRecorderText(int note) {
   if (claim != recorder_work::Claim::Granted && claim != recorder_work::Claim::Reconcile) return false;
   body["digest"] = digest;
   body["mode"] = claim == recorder_work::Claim::Granted ? "write" : "reconcile";
+  stage2::transport("wifi", claim == recorder_work::Claim::Granted ? "write" : "reconcile", note);
   JsonDocument receipt;
-  return exchange("/pala/recorder-apply", receipt) && (receipt["confirmed"] | false) &&
-         digest == String(receipt["digest"] | "") && finishRecorderDelivery(note, digest);
+  if (!exchange("/pala/recorder-apply", receipt) || !(receipt["confirmed"] | false) ||
+      digest != String(receipt["digest"] | "")) return false;
+  stage2::transport("wifi", "confirmed", note);
+  return finishRecorderDelivery(note, digest);
 }
 #endif
 
 int processPendingNotes(int preferredNote, int maxNotes) {
+  owner_trace::WorkScope ownerWork(owner_trace::Work::Sync);
 #if PALA_BRIDGE_DISCOVERY
   const bool transcribeOnly = wifiBridgeTranscriptionOnly();
 #else
@@ -1684,6 +1765,7 @@ int processPendingNotes(int preferredNote, int maxNotes) {
       // between transcription, organization, and semantic indexing.
       if (!writeNoteQueueState(noteNum, "transcribing")) continue;
       if (transcribe(String(wavPath), noteNum)) {
+        stage2::transport("wifi", "transcribed", noteNum);
         writeNoteQueueState(noteNum, "organizing", nullptr, false, true);
         done++;
       } else if (!recordingRequestedDuringSync()) {
@@ -2221,6 +2303,10 @@ static void handleExportTxt() {
   transferServer.send(200, "text/plain", exportText);
 }
 
+static recording_parts::State readArchiveParts(const char* path,std::vector<recording_parts::Entry>& parts) {
+  return recording_parts::read(std::string("/sdcard")+path,parts);
+}
+
 static void sendFileByNum(const char* ext, const char* mime, bool attachment) {
   if (!transferServer.hasArg("num")) { transferServer.send(400, "text/plain", "Missing num"); return; }
   int num = transferServer.arg("num").toInt();
@@ -2235,13 +2321,54 @@ static void sendFileByNum(const char* ext, const char* mime, bool attachment) {
   if (!live || noteIsTrashed(num)) { transferServer.send(404, "text/plain", "File not found"); return; }
   char path[64];
   monthly_recordings::path(path, sizeof(path), NOTES_DIR, num, ext);
-  File f = SD_MMC.open(path);
+  String selectedPath=path;
+  if (strcmp(ext,"txt")==0) {
+    char wav[64];
+    monthly_recordings::path(wav,sizeof(wav),NOTES_DIR,num,"wav");
+    const String full=String(wav)+".transcript";
+    if (SD_MMC.exists(full)) selectedPath=full;
+  }
+  File f = SD_MMC.open(selectedPath);
   if (!f) { transferServer.send(404, "text/plain", "File not found"); return; }
   if (attachment) {
     String filename = String("note_") + String(num) + "." + String(ext);
     transferServer.sendHeader("Content-Disposition", "attachment; filename=\"" + filename + "\"");
   }
 #if PALA_RECORDER_FIRST
+  std::vector<recording_parts::Entry> parts;
+  if (strcmp(ext,"wav")==0) {
+    const auto state=readArchiveParts(path,parts);
+    if (state!=recording_parts::State::Single) {
+      if (state!=recording_parts::State::Complete && state!=recording_parts::State::Interrupted) {
+        transferServer.send(503,"text/plain","Recording recovery pending"); return;
+      }
+      uint64_t total=0;
+      for (const auto& row:parts) total+=row.bytes;
+      uint8_t header[44];
+      if (total>UINT32_MAX-44 || f.read(header,sizeof(header))!=sizeof(header)) {
+        transferServer.send(503,"text/plain","Invalid recording"); return;
+      }
+      capture_wav::putSize(header+4,total+36);
+      capture_wav::putSize(header+40,total);
+      transferServer.setContentLength(total+44);
+      transferServer.send(200,mime,"");
+      auto&& client=transferServer.client();
+      bool ok=client.write(header,sizeof(header))==sizeof(header);
+      for (unsigned i=0;ok && i<parts.size();++i) {
+        if (i) f=SD_MMC.open(recording_parts::path(path,i).c_str(),FILE_READ);
+        ok=f && f.size()==parts[i].bytes+44 && f.seek(44);
+        uint8_t buf[1024];
+        uint32_t left=parts[i].bytes;
+        while (ok && left) {
+          const auto n=std::min<size_t>(left,sizeof(buf));
+          ok=client.connected() && !pendingPriorityRecording() && f.read(buf,n)==n && client.write(buf,n)==n;
+          left-=n;
+        }
+      }
+      if (!ok) client.stop();
+      return;
+    }
+  }
   transferServer.setContentLength(f.size());
   transferServer.send(200, mime, "");
   uint8_t bytes[1024];
@@ -2275,6 +2402,16 @@ static int archivedNote(std::string_view filename, int month, std::string_view e
   return monthly_recordings::sequence(id) && monthly_recordings::folderMonth(id) == month ? id : 0;
 }
 
+static bool streamArchiveText(File& file) {
+  char bytes[512];
+  while (file.available() && transferServer.client().connected() && !pendingPriorityRecording()) {
+    const size_t count = file.read(reinterpret_cast<uint8_t*>(bytes), sizeof(bytes));
+    if (!count) return false;
+    transferServer.sendContent(bytes, count);
+  }
+  return true;
+}
+
 static void handleRecorderArchive() {
   RecordingWindow microphone;
   const String month = transferServer.arg("month");
@@ -2284,6 +2421,11 @@ static void handleRecorderArchive() {
   }
   const bool monthView = !month.isEmpty();
   const bool exporting = monthView && transferServer.hasArg("export");
+#if PALA_STAGE3
+  const bool logs = monthView && !exporting && transferServer.hasArg("logs");
+#else
+  constexpr bool logs = false;
+#endif
   const int skip = constrain(transferServer.arg("offset").toInt(), 0L, 65536L);
   const bool legacy = transferServer.arg("legacy") == "1";
   const String archiveRoot = legacy ? NOTES_DIR : "/recordings";
@@ -2297,8 +2439,9 @@ static void handleRecorderArchive() {
   transferServer.setContentLength(CONTENT_LENGTH_UNKNOWN);
   if (exporting) transferServer.sendHeader("Content-Disposition",
       "attachment; filename=\"pala-" + month + ".txt\"");
-  transferServer.send(200, exporting ? "text/plain; charset=utf-8" : "text/html; charset=utf-8", "");
-  if (!exporting) {
+  if (logs) transferServer.sendHeader("X-Content-Type-Options", "nosniff");
+  transferServer.send(200, exporting || logs ? "text/plain; charset=utf-8" : "text/html; charset=utf-8", "");
+  if (!exporting && !logs) {
     transferServer.sendContent(portalPageStart("Archive recordings") +
         "<div class='top'><h1>Archive recordings</h1><a class='btn' href='/settings'>Settings</a></div>");
     if (monthView) transferServer.sendContent("<div class='actions'><a class='btn' href='" + monthsUrl +
@@ -2307,6 +2450,13 @@ static void handleRecorderArchive() {
     else transferServer.sendContent(legacy ?
         "<p><a class='btn' href='/archive'>Current recordings</a></p>" :
         "<p><a class='btn' href='/archive?legacy=1'>Earlier recordings</a></p>");
+#if PALA_STAGE3
+    if (monthView) {
+      transferServer.sendContent("<div class='actions'><a class='btn' href='" + monthParam + month +
+          "&amp;logs=1'>View logs</a><a class='btn' href='/archive/delete?month=" + month +
+          (legacy ? "&amp;legacy=1" : "") + "'>Delete month...</a></div>");
+    }
+#endif
   }
   int match = 0;
   bool more = false;
@@ -2324,20 +2474,39 @@ static void handleRecorderArchive() {
           String(entry->d_name) + "'>" + label + "</a></p>");
       continue;
     }
+#if PALA_STAGE3
+    if (logs) {
+      const bool logFile = (name.size() > 4 && name.substr(name.size() - 4) == ".log") ||
+                           (name.size() > 8 && name.substr(name.size() - 8) == ".log.txt");
+      if (logFile && archive_month::validFilename(name)) {
+        File file = SD_MMC.open(archiveRoot + "/" + month + "/" + entry->d_name);
+        if (!file || file.isDirectory()) { readError = true; break; }
+        transferServer.sendContent("\n" + String(entry->d_name) + "\n");
+        if (!streamArchiveText(file)) {
+          readError = true;
+          break;
+        }
+        transferServer.sendContent("\n");
+      } else {
+        const int note = archivedNote(name, month.toInt(), ".wav");
+        if (note && monthly_recordings::inRecordings(note) != legacy) {
+          const String captured = noteCreatedUtc(note);
+          transferServer.sendContent((captured.isEmpty() ? String("Time not set") : captured) + " #" +
+              String(note) + (noteHasCommittedTranscript(note) ? " Transcript saved\n" : " Recording saved\n"));
+        }
+      }
+      continue;
+    }
+#endif
     const int id = archivedNote(name, month.toInt(), exporting ? ".txt" : ".wav");
     if (!id || monthly_recordings::inRecordings(id) == legacy) continue;
     if (exporting) {
       const String member = archiveRoot + "/" + month + "/" + entry->d_name;
-      File file = SD_MMC.open(member);
+      const String full=member.substring(0,member.length()-4)+".wav.transcript";
+      File file = SD_MMC.open(SD_MMC.exists(full) ? full : member);
       if (!file || file.isDirectory()) { readError = true; break; }
       transferServer.sendContent("\n" + noteCreatedUtc(id) + " #" + String(id) + "\n");
-      char bytes[512];
-      while (file.available() && transferServer.client().connected() && !pendingPriorityRecording()) {
-        const size_t count = file.read(reinterpret_cast<uint8_t*>(bytes), sizeof(bytes));
-        if (!count) { readError = true; break; }
-        transferServer.sendContent(bytes, count);
-      }
-      if (readError) break;
+      if (!streamArchiveText(file)) { readError = true; break; }
       transferServer.sendContent("\n");
       continue;
     }
@@ -2354,7 +2523,7 @@ static void handleRecorderArchive() {
   }
   readError |= closedir(directory) != 0;
   if (readError || pendingPriorityRecording()) { transferServer.client().stop(); return; }
-  if (!exporting) {
+  if (!exporting && !logs) {
     if (more) transferServer.sendContent("<p><a class='btn' href='" + monthParam + month +
         "&amp;offset=" + String(skip + 40) + "'>Next recordings</a></p>");
     transferServer.sendContent("</div></body></html>");
@@ -2373,6 +2542,55 @@ static bool positiveFormValue(const char* name, int& value) {
   }
   return value > 0;
 }
+
+#if PALA_STAGE3
+static void handleArchiveMonthDeletion(bool submit) {
+  const String key = transferServer.arg("month");
+  const bool legacy = transferServer.arg("legacy") == "1";
+  if (archiveMonthDeletionFailed()) {
+    transferServer.send(503, "text/plain; charset=utf-8", "Archive deletion stopped because its saved journal could not be read.");
+    return;
+  }
+  const auto month = archive_month::parseMonth({key.c_str(), key.length()}, legacy);
+  if (!month) {
+    transferServer.send(400, "text/plain", "Invalid archive month");
+    return;
+  }
+  const String back = "/archive?month=" + key + (legacy ? "&amp;legacy=1" : "");
+  const String label = month->key == 0 ? String("Time not set") : key.substring(0, 4) + "-" + key.substring(4);
+  if (submit) {
+    const String token = transferServer.arg("confirmation");
+    const auto result = confirmArchiveMonthDeletion(*month, {token.c_str(), token.length()});
+    if (result != archive_month::Stage::Accepted) {
+      const bool changed = result == archive_month::Stage::Changed;
+      transferServer.send(changed ? 409 : 503, "text/plain; charset=utf-8",
+          changed ? "The confirmation expired or the month changed. Open it again to review the counts."
+                  : "Storage or delivery is busy. Try again after it reaches a safe point.");
+      return;
+    }
+    transferServer.send(202, "text/html; charset=utf-8", portalPageStart("Archive deletion scheduled") +
+        "<h1>Archive deletion scheduled</h1><p>The Note will process this month in the background.</p>"
+        "<p><a href='/archive'>Archive</a></p></div></body></html>");
+    return;
+  }
+  const auto approval = prepareArchiveMonthDeletion(*month);
+  if (!approval) {
+    transferServer.send(503, "text/plain; charset=utf-8", "This month is unavailable while storage or delivery is busy.");
+    return;
+  }
+  const auto& counts = approval->inventory;
+  transferServer.send(200, "text/html; charset=utf-8", portalPageStart("Confirm archive deletion") +
+      "<h1>Delete " + label + (legacy ? " (earlier recordings)" : "") +
+      "?</h1><p>Pending audio: " + String(counts.audio) + "</p><p>Pending delivery: " +
+      String(counts.delivery) + "</p><p>This removes the selected month's local files and pending work.</p>"
+      "<p>Items already delivered to Google stay there.</p>"
+      "<form method='post' action='/archive/delete'><input type='hidden' name='month' value='" + key +
+      "'><input type='hidden' name='legacy' value='" + (legacy ? "1" : "0") +
+      "'><input type='hidden' name='confirmation' value='" + approval->token.c_str() +
+      "'><button type='submit'>Delete this month</button> <a href='" + back +
+      "'>Cancel</a></form></div></body></html>");
+}
+#endif
 
 static void handleNoteDelete() {
   int num = 0;
@@ -2732,9 +2950,10 @@ static void handleBridgeAddressSave() {
   String address = transferServer.arg("bridgeIp");
   address.trim();
   uint8_t octets[4];
+  uint16_t port = 0;
   if (address.length() && (strlen(address.c_str()) != address.length() ||
-                           !parseBridgeAddress(address.c_str(), octets))) {
-    transferServer.send(400, "text/plain", "Enter a private IPv4 address or leave the field empty.");
+                           !parseBridgeEndpoint(address.c_str(), octets, port))) {
+    transferServer.send(400, "text/plain", "Enter a private IPv4 address with an optional port, or leave the field empty.");
     return;
   }
   if (!palaSetBridgeAddress(address)) {
@@ -2793,6 +3012,9 @@ void setupTransferServer() {
   noteSettingsBegin();
   noteAccessLogout(NoteConfigTransport::Web);
 #endif
+#if PALA_STAGE3
+  cancelArchiveMonthConfirmation();
+#endif
   static bool activityMiddlewareInstalled = false;
   if (!activityMiddlewareInstalled) {
     const char* collected[] = {"Origin", "Referer", "Sec-Fetch-Site", "X-Pala-Settings", "X-Pala-CSRF", "Cookie"};
@@ -2815,7 +3037,13 @@ void setupTransferServer() {
         normalizedHost.toLowerCase();
         const bool correctHost = companion_host::accepts(normalizedHost.c_str(), transferUrl.c_str(),
                                                         transferHostname.c_str());
-        const bool checkOrigin = server.method() == HTTP_POST && (settings || (trash && PALA_BRIDGE_DISCOVERY));
+#if PALA_STAGE3
+        const bool archiveDelete = uri == "/archive/delete";
+#else
+        constexpr bool archiveDelete = false;
+#endif
+        const bool checkOrigin = server.method() == HTTP_POST &&
+                                 (settings || archiveDelete || (trash && PALA_BRIDGE_DISCOVERY));
         if (!correctHost || (checkOrigin && server.header("Origin") != "http://" + host)) {
           if (settings) {
             server.send(403, "application/json", F("{\"ok\":false,\"error\":\"Open the address shown on the Note.\"}"));
@@ -2882,6 +3110,10 @@ void setupTransferServer() {
   transferServer.on("/settings/key/clear", HTTP_POST, handleKeyClear);
 #if PALA_RECORDER_FIRST
   transferServer.on("/archive", HTTP_GET, handleRecorderArchive);
+#if PALA_STAGE3
+  transferServer.on("/archive/delete", HTTP_GET, [] { handleArchiveMonthDeletion(false); });
+  transferServer.on("/archive/delete", HTTP_POST, [] { handleArchiveMonthDeletion(true); });
+#endif
 #else
   transferServer.on("/api/notes", HTTP_GET, handlePortalJson);
   transferServer.on("/export.txt", HTTP_GET, handleExportTxt);

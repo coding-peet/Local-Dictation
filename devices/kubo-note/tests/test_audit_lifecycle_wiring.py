@@ -16,7 +16,10 @@ class AuditLifecycleWiring(unittest.TestCase):
         self.assertIn("if (fullCheck) {\n    runRequestedNoteStorageAudit", setup)
         prompt = sketch.split("bool pollRestartConfirmation() {", 1)[1].split("bool pollPairingOverlay", 1)[0]
         self.assertIn("showNoteRestartPrompt(request.mode == NoteRestartMode::Audit)", prompt)
-        self.assertLess(prompt.index("armed = bothButtonsUp()"), prompt.index("answerNoteRestart(shown, input.upper)"))
+        self.assertLess(prompt.index("armed = armReleasedPrompt()"), prompt.index("answerNoteRestart(shown, !input.upper)"))
+        ui = (APP / "ui.cpp").read_text(encoding="utf-8")
+        restart_screen = ui.split("void showNoteRestartPrompt(bool audit) {", 1)[1].split("void showNoteRestartExpired()", 1)[0]
+        self.assertIn('drawSideButtonChoices(sk ? "NIE" : "NO", sk ? "ANO" : "YES")', restart_screen)
         maintenance = (APP / "restart_maintenance.cpp").read_text(encoding="utf-8")
         claim = maintenance.split("bool claimNoteStorageAuditForBoot() {", 1)[1].split("bool runRequested", 1)[0]
         self.assertLess(claim.index("auditCookie = 0;"), claim.index("claimAuditBoot("))

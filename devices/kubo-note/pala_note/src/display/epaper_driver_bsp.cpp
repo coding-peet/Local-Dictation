@@ -3,6 +3,7 @@
 #include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "epaper_driver_bsp.h"
+#include "../app/stage2_bench.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 
@@ -134,22 +135,30 @@ void epaper_driver_display::spi_port_init()
     ESP_ERROR_CHECK(ret);
 }
 
-void epaper_driver_display::read_busy()
+bool epaper_driver_display::read_busy(bool waveform)
 {
-    // A failed panel must not prevent recording or entry into deep sleep.
-    // Only wait once per initialization after a fault.
-    if (busyTimedOut) return;
+    if (busyTimedOut) return false;
     const TickType_t started = xTaskGetTickCount();
-    int busy = lcd_spi_data.busy;
-    while (gpio_get_level((gpio_num_t)busy) == 1)
-    {
-        if (xTaskGetTickCount() - started >= pdMS_TO_TICKS(5000)) {
+    const auto busy = static_cast<gpio_num_t>(lcd_spi_data.busy);
+    bool seen = false;
+    for (;;) {
+        const bool high = gpio_get_level(busy) == 1;
+        const auto elapsed = xTaskGetTickCount() - started;
+        if (high) {
+            if (waveform && !seen) signal("busy");
+            seen = true;
+        } else if (!waveform || seen || elapsed >= pdMS_TO_TICKS(12)) {
+            if (waveform) signal(seen ? "idle" : "no_busy");
+            return !waveform || seen;
+        }
+        if (elapsed >= pdMS_TO_TICKS(5000)) {
             busyTimedOut = true;
-            ESP_LOGE(TAG, "EPD busy timeout; continuing without panel acknowledgement");
-            return;
+            if (waveform) signal("timeout");
+            ESP_LOGE(TAG, "EPD busy timeout");
+            return false;
         }
         if (waitCallback) waitCallback();
-        vTaskDelay(pdMS_TO_TICKS(5));   // LOW: idle, HIGH: busy
+        vTaskDelay(1);
     }
 }
 
@@ -252,7 +261,7 @@ void epaper_driver_display::EPD_SetLut(const uint8_t *lut)
 {
     EPD_SendCommand(0x32);
     writeBytes(lut, 153);
-    read_busy();
+    if (!read_busy()) return;
 
     EPD_SendCommand(0x3f);
     EPD_SendData(lut[153]);
@@ -273,16 +282,18 @@ void epaper_driver_display::EPD_TurnOnDisplay()
 {
     EPD_SendCommand(0x22);
     EPD_SendData(0xc7);
+    signal("wave_full");
     EPD_SendCommand(0x20);
-    read_busy();
+    waveOk = read_busy(true);
 }
 
 void epaper_driver_display::EPD_TurnOnDisplayPart()
 {
     EPD_SendCommand(0x22);
     EPD_SendData(0xcf);
+    signal("wave_partial");
     EPD_SendCommand(0x20);
-    read_busy();
+    waveOk = read_busy(true);
 }
 
 void epaper_driver_display::EPD_Init()
@@ -295,9 +306,9 @@ void epaper_driver_display::EPD_Init()
     set_rst_1();
     waitForReset(50);
 
-    read_busy();
+    if (!read_busy()) return;
     EPD_SendCommand(0x12);
-    read_busy();
+    if (!read_busy()) return;
 
     EPD_SendCommand(0x01);
     EPD_SendData(0xC7);
@@ -320,7 +331,7 @@ void epaper_driver_display::EPD_Init()
     EPD_SendCommand(0x20);
 
     EPD_SetCursor(0, Height - 1);
-    read_busy();
+    if (!read_busy()) return;
 
     EPD_SetLut(WF_Full_1IN54);
 }
@@ -340,15 +351,15 @@ void epaper_driver_display::EPD_Display()
     EPD_TurnOnDisplay();
 }
 
-void epaper_driver_display::EPD_DisplayPartBaseImage()
+void epaper_driver_display::EPD_DisplayPartBaseImage(const uint8_t* image)
 {
     int buffer_len = lcd_spi_data.buffer_len;
     EPD_SendCommand(0x24);
-    assert(buffer);
-    writeBytes(buffer, buffer_len);
-
+    signal("upload");
+    writeBytes(image, buffer_len);
     EPD_SendCommand(0x26);
-    writeBytes(buffer, buffer_len);
+    writeBytes(image, buffer_len);
+    signal("plane");
 
     EPD_TurnOnDisplay();
 }
@@ -362,9 +373,9 @@ void epaper_driver_display::EPD_Init_Partial()
     set_rst_1();
     waitForReset(50);
 
-    read_busy();
-
+    if (!read_busy()) return;
     EPD_SetLut(WF_PARTIAL_1IN54_0);
+    if (!healthy()) return;
 
     EPD_SendCommand(0x37);
     EPD_SendData(0x00);
@@ -387,19 +398,21 @@ void epaper_driver_display::EPD_Init_Partial()
     read_busy();
 }
 
-void epaper_driver_display::EPD_DisplayPart()
+void epaper_driver_display::EPD_DisplayPart(const uint8_t* image)
 {
     int buffer_len = lcd_spi_data.buffer_len;
     EPD_SendCommand(0x24);
-    assert(buffer);
-    writeBytes(buffer, buffer_len);
+    signal("upload");
+    writeBytes(image, buffer_len);
     EPD_TurnOnDisplayPart();
+    if (!waveAcknowledged()) return;
 
     // Keep the controller's previous-image plane in sync. Without this, every
     // later partial update is compared against the boot-time white image and
     // old screens remain visible underneath the new one.
     EPD_SendCommand(0x26);
-    writeBytes(buffer, buffer_len);
+    writeBytes(image, buffer_len);
+    signal("plane");
 }
 
 void epaper_driver_display::EPD_DrawColorPixel(uint16_t x, uint16_t y, uint8_t color)

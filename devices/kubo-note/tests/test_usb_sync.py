@@ -588,6 +588,20 @@ class UsbSyncTests(unittest.TestCase):
             sync_one(device, ["other-device-token"], self.fail)
         self.assertEqual([name for name, _ in device.calls], ["HELLO"])
 
+    def test_authentication_discards_a_delayed_challenge_for_an_old_nonce(self):
+        class DelayedChallenge(FakePala):
+            def write(self, raw):
+                result = super().write(raw)
+                if raw.startswith(PREFIX + b"HELLO "):
+                    stale = usb_sync._proof(TOKEN, "device", "0" * 32, self.peer)
+                    delayed = PREFIX + f"CHALLENGE {self.peer} {stale}\n".encode("ascii")
+                    self.outbox = io.BytesIO(delayed + self.outbox.read())
+                return result
+
+        device = DelayedChallenge()
+        usb_sync._paired_session(device, [TOKEN])
+        self.assertEqual([command for command, _ in device.calls], ["HELLO", "AUTH"])
+
     def test_closes_the_proven_session_when_auth_acknowledgment_is_lost(self):
         device = FakePala(drop_auth=True)
         ticks = iter(step / 10 for step in range(10000))

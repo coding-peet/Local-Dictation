@@ -1,4 +1,5 @@
 #include "aquarium_view.h"
+#include "display_pipeline.h"
 
 #include "../../globals.h"
 #include "draw.h"
@@ -48,7 +49,7 @@ bool showAquariumFrame(int frame, void (*serviceWhileWaiting)()) {
   const auto& packed = reefFrame ? kReefFrames[frame - kAnemoneFrameCount] : kAquariumFrames[frame];
   const auto* pixels = reefFrame ? kReefPixels : kAquariumPixels;
   constexpr size_t bytes = BPR * H;
-  uint8_t* const frameBuffer = display->getBuffer();
+  uint8_t* const frameBuffer = note_display::pixels();
   size_t inputBytes = packed.size;
   size_t outputBytes = bytes;
   tinfl_init(&aquariumInflater);

@@ -1,4 +1,5 @@
 #include "restart_maintenance.h"
+#include "owner_trace.h"
 
 #include <Arduino.h>
 #include <Preferences.h>
@@ -413,10 +414,10 @@ void noteAuditWork(NoteStorageAuditPhase phase, uint32_t done, uint32_t total) {
   if (activeDisplay) activeDisplay->update(millis(), phase, done, total, activeReport->problems());
 }
 
-bool requestNoteRestart(NoteRestartMode mode) {
+uint32_t requestNoteRestart(NoteRestartMode mode) {
   const uint32_t now = millis();
   portENTER_CRITICAL(&confirmationLock);
-  const bool accepted = confirmation.request(mode, now);
+  const uint32_t accepted = confirmation.request(mode, now) ? confirmation.ticket() : 0;
   portEXIT_CRITICAL(&confirmationLock);
   return accepted;
 }
@@ -429,10 +430,35 @@ NoteRestartRequest pendingNoteRestartRequest() {
   return request;
 }
 
+void noteRestartDisplayed(NoteRestartRequest request) {
+  const uint32_t now = millis();
+  portENTER_CRITICAL(&confirmationLock);
+  confirmation.displayed(request, now);
+  portEXIT_CRITICAL(&confirmationLock);
+}
+
+bool noteRestartExpired(uint32_t ticket) {
+  const uint32_t now = millis();
+  portENTER_CRITICAL(&confirmationLock);
+  const bool expired = ticket == confirmation.ticket() && !strcmp(confirmation.state(now), "expired");
+  portEXIT_CRITICAL(&confirmationLock);
+  return expired;
+}
+
+void addNoteRestartConfirmation(JsonObject result) {
+  const uint32_t now = millis();
+  portENTER_CRITICAL(&confirmationLock);
+  const uint32_t ticket = confirmation.ticket();
+  const char* state = confirmation.state(now);
+  portEXIT_CRITICAL(&confirmationLock);
+  result["ticket"] = ticket;
+  result["state"] = state;
+}
+
 bool answerNoteRestart(NoteRestartRequest request, bool accepted) {
   const uint32_t now = millis();
   portENTER_CRITICAL(&confirmationLock);
-  const bool matched = confirmation.answer(request, now);
+  const bool matched = confirmation.answer(request, now, accepted);
   portEXIT_CRITICAL(&confirmationLock);
   if (!matched) return false;
   return executeConfirmedRestart(request.mode, accepted, auditCookie, kAuditCookie, [] {
@@ -480,6 +506,7 @@ bool claimNoteStorageAuditForBoot() {
 }
 
 bool runRequestedNoteStorageAudit(NoteStorageAuditProgressCallback notify) {
+  owner_trace::WorkScope ownerWork(owner_trace::Work::Audit);
   if (!bootClaimed) return false;
   bootClaimed = false;
   auto& report = bootReport;

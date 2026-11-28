@@ -1,9 +1,12 @@
 #include "../../config.h"
 #if PALA_RECORDER_FIRST
 #include "recorder_store.h"
+#include "stage2_bench.h"
 #include "../../globals.h"
 #include "../../types.h"
 #include "capture_wav_recovery.h"
+#include "recording_parts.h"
+#include "esp_rom_crc.h"
 #include "catalog_storage.h"
 #include "monthly_recordings.h"
 #include "notes.h"
@@ -37,7 +40,7 @@ auto findWork(int note) {
 }
 
 bool cleanup(int note) {
-  for (const char* suffix : {".claim", ".plan", ".plan.tmp", ".queue", ".queue.tmp", ".queue.bak", ".job"})
+  for (const char* suffix : {".claim", ".claim.bak", ".plan", ".plan.bak", ".plan.tmp", ".queue", ".queue.tmp", ".queue.bak", ".job"})
     if (!note_catalog::removeIfPresent(workPath(note, suffix).c_str())) return false;
   return true;
 }
@@ -51,7 +54,7 @@ bool loadJob(int note, bool boot) {
   if (receipt == note_transcript::Stored::Error) return false;
   if (note_transcript::committed(receipt)) {
     // Require the receipt bytes to be well formed before dropping work.
-    FILE* file = std::fopen(receiptPath(note).c_str(), "rb");
+    FILE* file = std::fopen(recorder_work::storedPath(receiptPath(note), receipt).c_str(), "rb");
     if (!file) return false;
     char digest[65];
     const auto bytes = std::fread(digest, 1, sizeof(digest), file);
@@ -69,7 +72,8 @@ bool loadJob(int note, bool boot) {
     if (boot) obsolete.push_back(note);
     return boot;
   }
-  if (audio != capture_wav::State::Ready) return false;
+  if (audio != capture_wav::State::Ready || !recording_parts::recover(wav,esp_rom_crc32_le)) return false;
+  if (!recording_parts::recoverTranscript(wav,archivePath(note,"txt"))) return false;
   const auto transcript = storedNoteTranscript(note);
   if (transcript == note_transcript::Stored::Error) return false;
   const String meta = String("/sdcard") + noteMetaPath(note);
@@ -160,6 +164,15 @@ bool visitRecorderWork(bool newestFirst, const std::function<bool(const SyncQueu
   return true;
 }
 
+#if PALA_STAGE3
+bool discardRecorderArchiveWork(int note) {
+  if (!monthly_recordings::sequence(note) || !cleanup(note)) return false;
+  const auto at = findWork(note);
+  if (at != noteIndex.end() && at->num == note) noteIndex.erase(at);
+  return true;
+}
+#endif
+
 SyncQueueCounts recorderWorkCounts() {
   SyncQueueCounts result;
   visitRecorderWork(false, [&](const SyncQueueEntry& entry) {
@@ -190,6 +203,16 @@ recorder_work::Claim claimRecorderDelivery(int note, const String& digest) {
 
 bool finishRecorderDelivery(int note, const String& digest) {
   if (!loaded || !monthly_recordings::sequence(note) || !noteHasCommittedTranscript(note)) return false;
+#if PALA_STAGE2_BENCH
+  const auto claim = workPath(note, ".claim");
+  const auto stored = note_transcript::inspect(claim.c_str());
+  if (note_transcript::inspect(receiptPath(note).c_str()) == note_transcript::Stored::Missing &&
+      note_transcript::committed(stored) && recorder_work::validDigest(digest.c_str()) &&
+      note_transcript::sameBytes(recorder_work::storedPath(claim, stored).c_str(), digest.c_str())) {
+    if (stage2::loseReceipt(note)) return false;
+    stage2::cutWindow(stage2::Point::Receipt, note);
+  }
+#endif
   if (!recorder_work::complete(workPath(note, ".claim"), receiptPath(note), {digest.c_str(), digest.length()}))
     return false;
   if (!cleanup(note)) return false;

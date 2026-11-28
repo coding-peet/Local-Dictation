@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include "../interface/audio_codec_data_if.h"
+#include "../../audio/microphone_loss.h"
 #include "../include/esp_codec_dev_defaults.h"
 #include "freertos/FreeRTOS.h"
 #include "esp_idf_version.h"
@@ -298,7 +299,7 @@ static int check_fs_compatible(i2s_data_t *i2s_data, bool playback, esp_codec_de
             if (playback == false) {
                 i2s_data->out_reconfig = true;
             } else {
-                i2s_data->in_reconfig = true;
+                __atomic_store_n(&i2s_data->in_reconfig, true, __ATOMIC_RELEASE);
             }
             ret = _i2s_drv_enable(i2s_data, !playback, false);
             if (ret != ESP_CODEC_DEV_OK) {
@@ -322,7 +323,8 @@ static int check_fs_compatible(i2s_data_t *i2s_data, bool playback, esp_codec_de
             }
         }
     } while (0);
-    i2s_data->out_reconfig = i2s_data->in_reconfig = false;
+    i2s_data->out_reconfig = false;
+    __atomic_store_n(&i2s_data->in_reconfig, false, __ATOMIC_RELEASE);
     return ret;
 }
 #endif
@@ -491,10 +493,9 @@ static int _i2s_data_read(const audio_codec_data_if_t *h, uint8_t *data, int siz
     if (rx_chan == NULL) {
         return ESP_CODEC_DEV_DRV_ERR;
     }
-    if (i2s_data->in_reconfig) {
-        memset(data, 0, size);
-        esp_codec_dev_sleep(10);
-        return ESP_CODEC_DEV_OK;
+    if (__atomic_load_n(&i2s_data->in_reconfig, __ATOMIC_ACQUIRE)) {
+        // No microphone data exists during input reconfiguration.
+        return AUDIO_RX_RECONFIGURING;
     }
     int ret = i2s_channel_read(rx_chan, data, size, &bytes_read, 1000);
 #else

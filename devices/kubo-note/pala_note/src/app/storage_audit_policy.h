@@ -10,6 +10,7 @@ enum class NoteRestartMode : uint8_t { None, Restart, Audit };
 struct NoteRestartRequest {
   NoteRestartMode mode = NoteRestartMode::None;
   uint32_t ticket = 0;
+  uint32_t requestedAt = 0;
 };
 
 namespace note_maintenance {
@@ -23,25 +24,46 @@ public:
     mode_ = mode;
     if (++ticket_ == 0) ++ticket_;
     requestedAt_ = now;
+    visible_ = false;
+    state_ = "pending";
     return true;
   }
 
-  NoteRestartRequest pending(uint32_t now) const {
-    return mode_ != NoteRestartMode::None && now - requestedAt_ < 30'000
-        ? NoteRestartRequest{mode_, ticket_} : NoteRestartRequest{};
+  NoteRestartRequest pending(uint32_t now) {
+    const uint32_t since = visible_ ? displayedAt_ : requestedAt_;
+    if (mode_ != NoteRestartMode::None && now - since >= 30'000) {
+      mode_ = NoteRestartMode::None;
+      state_ = "expired";
+    }
+    return mode_ == NoteRestartMode::None ? NoteRestartRequest{} : NoteRestartRequest{mode_, ticket_, requestedAt_};
   }
 
-  bool answer(NoteRestartRequest request, uint32_t now) {
+  void displayed(NoteRestartRequest request, uint32_t now) {
+    const auto current = pending(now);
+    if (!visible_ && current.ticket && current.ticket == request.ticket && current.mode == request.mode) {
+      visible_ = true;
+      displayedAt_ = now;
+    }
+  }
+
+  uint32_t ticket() const { return ticket_; }
+  const char* state(uint32_t now) { pending(now); return state_; }
+
+  bool answer(NoteRestartRequest request, uint32_t now, bool accepted = true) {
     const auto current = pending(now);
     if (request.ticket == 0 || request.ticket != current.ticket || request.mode != current.mode) return false;
     mode_ = NoteRestartMode::None;
+    state_ = accepted ? "confirmed" : "cancelled";
     return true;
   }
 
 private:
+  bool visible_ = false;
+  const char* state_ = "none";
   NoteRestartMode mode_ = NoteRestartMode::None;
   uint32_t ticket_ = 0;
   uint32_t requestedAt_ = 0;
+  uint32_t displayedAt_ = 0;
 };
 
 constexpr bool shouldRunConfirmedAudit(bool cookie, bool softwareReset, AuditState state) {

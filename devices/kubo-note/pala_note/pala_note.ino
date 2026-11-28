@@ -7,9 +7,11 @@
 #include <vector>
 #include <algorithm>
 #include <atomic>
+#include <optional>
 
 extern "C" {
 #include "config.h"
+#include "src/app/owner_trace.h"
 #include "src/i2c_bsp/i2c_bsp.h"
 #include "src/audio/audio_bsp.h"
 }
@@ -24,8 +26,12 @@ extern "C" {
 #include "src/app/provider.h"
 #include "src/app/battery.h"
 #include "src/app/button_gesture.h"
+#include "src/app/prompt_input.h"
 #include "src/app/companion_controls.h"
 #include "src/app/display_pages.h"
+#include "src/app/display_pipeline.h"
+#include "src/app/stage2_bench.h"
+#include "src/app/wifi_trial.h"
 #include "src/app/network.h"
 #include "src/app/notes.h"
 #include "src/app/monthly_recordings.h"
@@ -34,6 +40,7 @@ extern "C" {
 #include "src/app/record.h"
 #include "src/app/restart_maintenance.h"
 #include "src/app/rtc.h"
+#include "src/app/capture_clock.h"
 #include "src/app/settings.h"
 #include "src/app/sleep.h"
 #include "src/app/sleep_policy.h"
@@ -41,12 +48,26 @@ extern "C" {
 #include "src/app/tasks.h"
 #include "src/app/ui.h"
 #include "src/app/usb_sync.h"
+#if PALA_USB_CARD_SERVICE
+#include "src/app/usb_card_service.h"
+#include "src/app/usb_storage_boot.h"
+#endif
 #include "src/app/bridge_client.h"
 #include "src/app/bluetooth_sync.h"
 #include "src/app/home_weather.h"
 #include "src/app/home_holidays.h"
 #include "src/app/home_delivery.h"
 #include "src/app/home_bridge_status.h"
+#if PALA_STAGE3
+#include "src/app/archive_month.h"
+#endif
+#if PALA_WORKSPACE_CALENDAR
+#include "src/app/workspace_calendar.h"
+constexpr int kWorkspaceCalendarPage = -2;
+#if PALA_STAGE3
+constexpr int kWorkspaceSavedItemsPage = -3;
+#endif
+#endif
 #if PALA_BRIDGE_DISCOVERY
 #include <driver/usb_serial_jtag.h>
 #endif
@@ -65,16 +86,21 @@ bool transferServerActive = false;
 String transferUrl;
 String transferHostname;
 
-bool timeReady = false;
+std::atomic<bool> timeReady{false};
 bool audioPlaying = false;
 bool stopPlayback = false;
 
+#if PALA_USB_CARD_SERVICE
+void pollUsbStorageRestart();
+#endif
 void resetActivity();
 bool recordingSyncAllowed();
 bool recordingRequestedDuringSync();
 int preferredRecordingSyncNote();
 uint32_t recordingPressTime();
+bool physicalRecordingPress(uint32_t& edgeMs);
 bool physicalRecordingHold(uint32_t& edgeMs);
+uint32_t recordingButtonRelease(uint32_t edge);
 void finishDrainedRecordingSync();
 void rememberRecordingSyncNote(int note);
 void finishTransportRecording(int note);
@@ -88,11 +114,15 @@ void requestBacklogSync();
 
 bool idleInputArmed = true;
 bool replayPageTaps = false;
-bool bootHomeNeedsRefresh = false;
+bool homeRefreshPending = false;
+std::optional<RecordingWindow> bootPanelMicrophone;
+bool redrawRestartPrompt = false;
 enum class PairingView { None, BluetoothWait, BluetoothCode, UsbWait, UsbPrompt };
 PairingView pairingView = PairingView::None;
 bool pairingButtonsArmed = false;
+bool pairingPresented = false;
 uint32_t pairingDisplayedCode = 0;
+String pairingDisplayedPeer;
 uint32_t companionGestureStartedAt = 0;
 uint32_t nextBackgroundAttemptAt = 0;
 uint32_t backlogRequestedAt = 0;
@@ -129,6 +159,9 @@ struct ButtonInput {
   volatile bool rawDown = false;
   volatile bool stableDown = false;
   volatile uint32_t rawAt = 0;
+  volatile uint32_t lastDownAt = 0;
+  volatile uint32_t releasedDownAt = 0;
+  volatile uint32_t releasedAt = 0;
   volatile bool overflow = false;
   volatile uint32_t overflowAt = 0;
   volatile bool pressLatched = false;
@@ -147,6 +180,12 @@ struct BufferedButtonAction {
 };
 ButtonInput upperButton;
 ButtonInput lowerButton;
+// The GPIO ISR and the Core 0 priority recorder share the physical hold.
+portMUX_TYPE recordingButtonLock = portMUX_INITIALIZER_UNLOCKED;
+bool recordingChordBlocked = false;
+uint32_t handsFreeCapture = 0, handsFreeUpperStop = 0, handsFreeStoppedAt = 0;
+bool haveHandsFreeStop = false;
+bool promptOwnsHold = false;
 ButtonInput* activeGestureButton = nullptr;
 bool bufferedChord = false;
 AquariumState aquarium;
@@ -293,7 +332,11 @@ void handleUsbSetup() {
     if (c == '\n') {
       if (!discardUsbLine) {
         usbSetupLine.trim();
-        if (!handleUsbSyncLine(usbSetupLine, state == STATE_IDLE) && !usbSyncActive())
+        bool idleForSync = state == STATE_IDLE;
+#if PALA_STAGE3
+        idleForSync = idleForSync && !archiveMonthDeletionActive();
+#endif
+        if (!handleUsbSyncLine(usbSetupLine, idleForSync) && !usbSyncActive())
           applyUsbSetupLine(usbSetupLine);
       }
       usbSetupLine = "";
@@ -339,8 +382,17 @@ void ARDUINO_ISR_ATTR latchButtonEdge(ButtonInput& button, int pin) {
   settleButtonEdge(button, now);
   if (down) button.pressLatched = true;
   if (button.rawDown != down) {
+    portENTER_CRITICAL_ISR(&recordingButtonLock);
     button.rawDown = down;
     button.rawAt = now;
+    if (down) {
+      button.lastDownAt = now;
+    } else {
+      button.releasedDownAt = button.lastDownAt;
+      button.releasedAt = now;
+    }
+    if (upperButton.rawDown == lowerButton.rawDown) recordingChordBlocked = upperButton.rawDown;
+    portEXIT_CRITICAL_ISR(&recordingButtonLock);
   }
 }
 
@@ -462,13 +514,61 @@ CompanionAction pollBufferedCompanionControls() {
   }
 }
 
-void clearLatchedPresses() {
-  noInterrupts();
+// The GPIO ISR runs on the foreground core. Keep discarding history and
+// observing a fresh release in one operation so a subsequent edge survives.
+void clearButtonHistory() {
   clearButtonEdges(upperButton);
   clearButtonEdges(lowerButton);
   bufferedChord = upperButton.replayDown || lowerButton.replayDown;
   replayPageTaps = false;
+}
+
+void clearLatchedPresses() {
+  noInterrupts();
+  clearButtonHistory();
   interrupts();
+}
+
+void routeHoldToPrompt(bool owns) {
+  portENTER_CRITICAL(&recordingButtonLock);
+  if (promptOwnsHold && !owns && (upperButton.rawDown || lowerButton.rawDown)) {
+    // A hold which answered or cancelled a prompt still belongs to it.
+    recordingChordBlocked = true;
+  }
+  promptOwnsHold = owns;
+  portEXIT_CRITICAL(&recordingButtonLock);
+}
+
+bool armReleasedPrompt() {
+  noInterrupts();
+  const uint32_t now = millis();
+  const bool released = bothButtonsUp() && !upperButton.rawDown && !lowerButton.rawDown &&
+      now - upperButton.rawAt >= ButtonGesture::kDebounceMs &&
+      now - lowerButton.rawAt >= ButtonGesture::kDebounceMs;
+  clearButtonHistory();
+  interrupts();
+  return released;
+}
+
+bool armPresentedPrompt(uint32_t visibleAt) {
+  noInterrupts();
+  const uint32_t now = millis();
+  settleButtonEdge(upperButton, now);
+  settleButtonEdge(lowerButton, now);
+  const bool intact = !upperButton.overflow && !lowerButton.overflow;
+  if (intact) {
+    // The panel may spend more time preparing the next waveform after this
+    // question is visible. Keep each new press that began in that interval.
+    button_prompt::discardThrough(upperButton, visibleAt);
+    button_prompt::discardThrough(lowerButton, visibleAt);
+    activeGestureButton = nullptr;
+    bufferedChord = upperButton.replayDown || lowerButton.replayDown;
+    replayPageTaps = false;
+  } else {
+    clearButtonHistory();
+  }
+  interrupts();
+  return intact;
 }
 
 bool takeLatchedPress(bool upper) {
@@ -568,6 +668,9 @@ void pollUsbBacklog() {
   constexpr bool busReset = false;
 #endif
   if ((!dataCable && usbDataConnected) || busReset) {
+#if PALA_WIFI_TRIAL
+    if (!dataCable && usbDataConnected) wifi_trial::detached();
+#endif
     const bool wasProbing = backlogScreen.link == BacklogLink::Usb || backlogRequested;
     const bool resumeBacklog = resumeBacklogAfterUsbDetach(state == STATE_IDLE, usbSyncActive(), wasProbing);
     cancelUsbSync();
@@ -615,6 +718,7 @@ void showBacklogLink(BacklogLink link, int completed, int total, bool authentica
 }
 
 void renderReadyHome() {
+  owner_trace::WorkScope ownerWork(owner_trace::Work::Home);
   backlogScreen.link = BacklogLink::Deferred;
   const BatteryReading battery = readBattery();
   // The home screen only exposes recordings that are not transcribed yet.
@@ -895,7 +999,14 @@ void redrawCompanionHome(bool adjustingVolume) {
   if (adjustingVolume) companionDisplay.showVolume(millis());
 }
 
+// An error on A must remain visible after an immediately following take B.
+bool previousRecordingFailed = false;
+
 bool saveHeldRecording() {
+  // A still-pending modal must be presented again after REC or a storage error.
+  redrawRestartPrompt = true;
+  pairingView = PairingView::None;
+  const uint32_t edge = recordingEdgeForSave(recordingPressTime());
   if (!pendingPriorityRecording() && recordingSpaceLow()) refreshRecordingSpace();
   if (!pendingPriorityRecording() && recordingSpaceLow()) {
     showError("STORAGE FULL");
@@ -903,47 +1014,89 @@ bool saveHeldRecording() {
     returnToReady();
     return false;
   }
+  RecordingSaveWindow saving(edge);
   state = STATE_RECORDING;
-  // E-paper refreshes are blocking. Starting one here used to delay I2S reads
-  // and cut the first spoken words from the recording.
   palaSoundSetEnabled(false);
+#if PALA_RECORDER_FIRST
+  String capturedUtc = capture_clock::captureUtc(captureEpochAtRec(edge)).c_str();
+#else
   String capturedUtc = currentUtcIso();
+#endif
   bool preempted = false;
-  const bool owned = takePriorityRecording(capturedUtc, preempted);
-  const bool recorded = owned && (preempted || record(capturedUtc));
+  const bool owned = takePriorityRecording(capturedUtc, preempted, edge);
+  const bool recorded = owned && (preempted || record(capturedUtc, edge));
+  // Keep the writer gate through publication so an elected follow-up cannot
+  // change lastRecNum while this take's tag and trace are being committed.
+  const bool saved = recorded && (preempted || saveTag(lastRecNum, "Inbox", capturedUtc));
+  finishRecordingSave(edge, saved);
+#if PALA_STAGE2_BENCH
+  if (saved && lastRecNum > 0) stage2::captureArchived(edge, lastRecNum);
+#endif
+  portENTER_CRITICAL(&recordingButtonLock);
+  const bool consumedStop = haveHandsFreeStop && handsFreeCapture == edge;
+  const auto stoppedAt = handsFreeStoppedAt;
+  portEXIT_CRITICAL(&recordingButtonLock);
+  if (consumedStop) {
+    noInterrupts();
+    settleButtonEdge(upperButton,millis());
+    settleButtonEdge(lowerButton,millis());
+    button_prompt::discardThrough(upperButton,stoppedAt);
+    button_prompt::discardThrough(lowerButton,stoppedAt);
+    if (int32_t(upperButton.lastDownAt-stoppedAt)<=0) upperButton.pressLatched=false;
+    if (int32_t(lowerButton.lastDownAt-stoppedAt)<=0) lowerButton.pressLatched=false;
+    bufferedChord=false;
+    activeGestureButton=nullptr;
+    interrupts();
+  } else if (recorded) takeLatchedPress(false);
+  if (!newerRecordingPending(edge)) refreshRecordingSpace();
+  const bool finalFeedback = saving.closeIfNoFollowup();
   releaseRecordingPriority();
+  if (!finalFeedback) {
+    previousRecordingFailed |= !saved;
+    return saved;
+  }
+
   palaSoundSetEnabled(true);
-  refreshRecordingSpace();
-
-  if (!recorded) {
-    showError("RECORD AGAIN");
+  if (saved) {
+    soundSaved();
+#if PALA_STAGE2_BENCH
+    stage2::releaseEvent(edge, "saved_request", millis());
+#endif
+    showSaved(lastRecNum, edge);
+#if PALA_STAGE2_BENCH
+    if (note_display::latestCapture(edge) && note_display::lastPresentationOk())
+      stage2::releaseEvent(edge, "saved_idle", note_display::lastPresentationVisibleAt());
+#endif
+    delay(350);
+  } else {
+    showError(recorded ? "STORAGE FULL" : "RECORD AGAIN");
     delay(1300);
-    returnToReady();
-    return false;
   }
-
-  // Lower-button presses mark the recording. Keep the upper button's held
-  // gesture and buffered edges so its release cannot count as a Home tap.
-  takeLatchedPress(false);
-  if (!preempted && !saveTag(lastRecNum, "Inbox", capturedUtc)) {
-    // The WAV is retained for orphan recovery; never claim a failed index
-    // commit succeeded or launch cloud work against an uncommitted capture.
-    showError("STORAGE FULL"); delay(1300); returnToReady(); return false;
+  if (previousRecordingFailed) {
+    previousRecordingFailed = false;
+    showError("PRIOR SAVE FAILED");
+    delay(1300);
   }
-  soundSaved();
-  showSaved(lastRecNum);
-  delay(350);
-
+  if (takeRecordingQueueFull()) {
+    showError("REC QUEUE FULL");
+    delay(1300);
+  }
   returnToReady(HomeButtonInput::Preserve);
-  return true;
+  return saved;
 }
 
 void captureMemory() {
+  portENTER_CRITICAL(&recordingButtonLock);
+  const bool stopEdge = haveHandsFreeStop && upperButton.lastDownAt==handsFreeUpperStop;
+  portEXIT_CRITICAL(&recordingButtonLock);
+  if (!pendingPriorityRecording() && (stopEdge || recordingEdgeHandled(recordingPressTime()))) return;
   recordingSync.pauseForRecording();
   backlogRequested = false;
   backlogSyncActive = false;
   backlogSyncTotal = 0;
-  if (saveHeldRecording()) afterRecordingSyncPending = true;
+  do {
+    if (saveHeldRecording()) afterRecordingSyncPending = true;
+  } while (pendingPriorityRecording());
   // An existing request resumes even if attempting the new recording failed.
   // A new AfterRecording event waits for Home to finish classifying gestures.
   if (recordingSync.resumeAfterRecording(palaSyncTiming(), lastActivityMs))
@@ -1001,6 +1154,10 @@ void askBrain() {
     returnToReady();
     return;
   }
+#if PALA_STAGE3
+  showAskProgress("SEARCHING", nullptr);
+  const bool answered = requestKuboAnswer(question, answer);
+#else
   bool answered = false;
   int taskSource = -1;
   if (applyBrainTaskCommand(question, answer, taskSource)) {
@@ -1032,9 +1189,16 @@ void askBrain() {
     showAskProgress("SEARCHING", "YOUR MEMORY");
     answered = answerFromBrain(question, answer, sources);
   }
+#endif
 
   if (!answered) {
     stopWifi();
+#if PALA_STAGE3
+    if (pendingPriorityRecording()) {
+      returnToReady(HomeButtonInput::Preserve);
+      return;
+    }
+#endif
     showError("NO ANSWER");
     delay(1400);
     returnToReady();
@@ -1135,6 +1299,20 @@ void playWeeklyBriefing() {
 }
 
 void showAgendaPage() {
+#if PALA_STAGE3
+  if (displayPageIndex == kWorkspaceSavedItemsPage) {
+    showWorkspaceSavedItems(agendaPage);
+    agendaShownAt = millis();
+    return;
+  }
+#endif
+#if PALA_WORKSPACE_CALENDAR
+  if (displayPageIndex == kWorkspaceCalendarPage) {
+    showWorkspaceCalendar(agendaPage);
+    agendaShownAt = millis();
+    return;
+  }
+#endif
   if (displayPageIndex < 0) {
     showTodayAgenda(true, agendaPage, AgendaNavigation::EventsShortcut);
   } else {
@@ -1159,6 +1337,15 @@ void returnFromAgenda() {
 }
 
 void advanceDisplayPage(bool fromHome) {
+#if PALA_WORKSPACE_CALENDAR
+  if (fromHome) {
+    displayPageIndex = kWorkspaceCalendarPage;
+    agendaPage = 0;
+    state = STATE_AGENDA;
+    showAgendaPage();
+    return;
+  }
+#endif
   if (PALA_RECORDER_FIRST) return;
   if (fromHome) {
     resetTodayAgenda();
@@ -1291,6 +1478,18 @@ void handleIdle() {
   switch (input.action) {
     case ButtonAction::None: break;
     case ButtonAction::Single:
+#if PALA_WAV_TIMING
+      // Let the operator start a boot trial from Home with the logger already attached.
+      requestNoteRestart(NoteRestartMode::Restart);
+      break;
+#endif
+#if PALA_STAGE3
+      state = STATE_AGENDA;
+      displayPageIndex = kWorkspaceSavedItemsPage;
+      agendaPage = 0;
+      showAgendaPage();
+      break;
+#endif
       if (PALA_RECORDER_FIRST) break;
 #if PALA_BRIDGE_DISCOVERY
       if (palaDisplayPages().indexOf(static_cast<char>(DisplayPage::Events)) < 0) break;
@@ -1308,7 +1507,11 @@ void handleIdle() {
       if (!backlogSyncActive && backlogScreen.link == BacklogLink::Deferred) enterAquarium();
       break;
     case ButtonAction::Hold:
+#if PALA_STAGE3
+      if (liveButtonHold(lowerButton, BTN_PWR)) askBrain();
+#else
       if (!PALA_RECORDER_FIRST && liveButtonHold(lowerButton, BTN_PWR)) askBrain();
+#endif
       break;
   }
 }
@@ -1340,6 +1543,38 @@ void handleAgenda() {
   if (input.action == ButtonAction::Hold && !liveButtonHold(button, pin)) return;
 
   resetActivity();
+#if PALA_STAGE3
+  if (displayPageIndex == kWorkspaceSavedItemsPage) {
+    if (input.upper && input.action == ButtonAction::Hold) {
+      captureMemory();
+    } else if (input.upper && agendaPage + 1 < workspaceSavedItemsPages()) {
+      ++agendaPage;
+      showAgendaPage();
+    } else {
+      returnFromAgenda();
+    }
+    return;
+  }
+#endif
+#if PALA_WORKSPACE_CALENDAR
+  if (displayPageIndex == kWorkspaceCalendarPage) {
+    if (input.upper && input.action == ButtonAction::Hold) {
+      captureMemory();
+    } else if (input.upper && agendaPage + 1 < workspaceCalendarPages()) {
+      ++agendaPage;
+      showAgendaPage();
+#if PALA_STAGE3
+    } else if (input.upper) {
+      displayPageIndex = kWorkspaceSavedItemsPage;
+      agendaPage = 0;
+      showAgendaPage();
+#endif
+    } else {
+      returnFromAgenda();
+    }
+    return;
+  }
+#endif
   if (input.upper && displayPageIndex >= 0) {
     if (input.action == ButtonAction::Hold) {
       captureMemory();
@@ -1516,8 +1751,16 @@ void handleBackgroundBrain(const IdleSleepPolicy& sleep) {
   if (palaWifiEnabled() && palaHasWifi()) {
     showBacklogLink(BacklogLink::Wifi, completedBefore, backlogSyncTotal);
     if (yieldBacklogToUsb()) return;
-    if (!sleepDue() && connectConfiguredWifi(8, 4500) && !sleepDue() &&
-        !::recordingRequestedDuringSync()) wifi = pairedWifiBacklog();
+#if PALA_WIFI_TRIAL
+    wifi_trial::Probe measure(visibleNote);
+#endif
+    if (!sleepDue()) {
+      const bool associated = connectConfiguredWifi(8, 4500);
+#if PALA_WIFI_TRIAL
+      wifi_trial::association(associated, static_cast<uint32_t>(WiFi.localIP()));
+#endif
+      if (associated && !sleepDue() && !::recordingRequestedDuringSync()) wifi = pairedWifiBacklog();
+    }
   }
   if (recordBeforeResumingSync()) return;
   pollUsbBacklog();
@@ -1666,6 +1909,9 @@ bool pollManualHomeRefresh(uint32_t homeSleepMs) {
       if (!::recordingRequestedDuringSync()) refreshHomeForecast();
       if (!::recordingRequestedDuringSync()) refreshHomeHolidays();
       if (!::recordingRequestedDuringSync()) refreshHomeNoteName();
+#if PALA_WORKSPACE_CALENDAR
+      if (!::recordingRequestedDuringSync()) refreshWorkspaceCalendar();
+#endif
       stopWifi();
       resetBridgeAddressCache();
       if (!::recordingRequestedDuringSync()) {
@@ -1721,8 +1967,25 @@ void refreshHomeMetadataWhenIdle(uint32_t homeSleepMs) {
 
 void handleCompanion() {
   if (transferServerActive) transferServer.handleClient();
+#if PALA_STAGE3
+  if (pendingPriorityRecording()) {
+    leaveCompanion();
+    return;
+  }
+  if (bothButtonsUp()) {
+    maintainArchiveMonthDeletion();
+    if (pendingPriorityRecording()) {
+      leaveCompanion();
+      return;
+    }
+  }
+#endif
 #if PALA_RECORDER_FIRST
-  if (!noteCatalogReady()) {
+  if (!noteCatalogReady()
+#if PALA_STAGE3
+      && (!archiveMonthDeletionActive() || archiveMonthDeletionFailed())
+#endif
+     ) {
     RecordingWindow microphone;
     maintainNoteCatalog();
   }
@@ -1791,24 +2054,94 @@ void initializeDisplay() {
   config.buffer_len = (200 * 200) / 8;
 
   display = new epaper_driver_display(200, 200, config);
+  note_display::initialize();
   // Do not visibly clear the panel here. The first actual UI frame establishes
   // the controller base image, avoiding two slow full refreshes during wake.
 }
 
-bool initializeStorage() {
-  SD_MMC.setPins(SD_CLK, SD_CMD, SD_D0);
-  if (!SD_MMC.begin("/sdcard", true)) return false;
-  return (SD_MMC.exists(NOTES_DIR) || SD_MMC.mkdir(NOTES_DIR)) && initializeRecordingLayout();
+#if PALA_USB_CARD_SERVICE
+void showUsbStorageBootScreen() {
+  initializeDisplay();
+  showUsbCardService();
 }
+#endif
+
+bool initializeStorage() {
+  owner_trace::WorkScope ownerWork(owner_trace::Work::Mount);
+  SD_MMC.setPins(SD_CLK, SD_CMD, SD_D0);
+  markWavBoot("mount_begin");
+  if (!SD_MMC.begin("/sdcard", true)) return false;
+  markWavBoot("mounted");
+  if (!SD_MMC.exists(NOTES_DIR) && !SD_MMC.mkdir(NOTES_DIR)) return false;
+  markWavBoot("notes_dir");
+  return initializeRecordingLayout();
+}
+
+#if PALA_STAGE2_BENCH
+// Fixed-size, numeric qualification data from the boot in which the question
+// was shown. The next software boot reports it once for the attached logger.
+struct RestartPromptTrace {
+  uint32_t magic, ticket, mode, attempt, seen, draw, ok, ack, returned, armed, held, choice, at;
+};
+constexpr uint32_t kRestartPromptTraceMagic = 0x52505431;
+RTC_NOINIT_ATTR RestartPromptTrace restartTrace;
+
+void reportRestartPrompt(bool previous) {
+  const auto& t = restartTrace;
+  char line[224];
+  const int size = snprintf(line, sizeof(line),
+      "[RestartPrompt] prev=%u ticket=%lu mode=%u attempt=%u seen=%lu draw=%lu ok=%u ack=%lu returned=%lu armed=%lu held=%u choice=%u at=%lu\n",
+      unsigned(previous), static_cast<unsigned long>(t.ticket), unsigned(t.mode), unsigned(t.attempt),
+      static_cast<unsigned long>(t.seen), static_cast<unsigned long>(t.draw), unsigned(t.ok),
+      static_cast<unsigned long>(t.ack), static_cast<unsigned long>(t.returned),
+      static_cast<unsigned long>(t.armed), unsigned(t.held), unsigned(t.choice), static_cast<unsigned long>(t.at));
+  if (size > 0 && size < static_cast<int>(sizeof(line)) && Serial.availableForWrite() >= size) {
+    Serial.write(reinterpret_cast<const uint8_t*>(line), size);
+  }
+}
+
+void traceRestartPresentation(NoteRestartRequest request) {
+  if (restartTrace.magic != kRestartPromptTraceMagic || restartTrace.ticket != request.ticket) {
+    restartTrace = {};
+    restartTrace.ticket = request.ticket;
+    restartTrace.seen = request.requestedAt;
+    restartTrace.mode = request.mode == NoteRestartMode::Audit ? 2 : 1;
+    restartTrace.magic = kRestartPromptTraceMagic;
+  }
+  ++restartTrace.attempt;
+  restartTrace.draw = millis();
+  restartTrace.ok = 0;
+  restartTrace.ack = 0;
+  restartTrace.returned = 0;
+  restartTrace.held = 0;
+  restartTrace.armed = 0;
+  restartTrace.choice = 0;
+  restartTrace.at = 0;
+}
+#endif
 
 bool pollRestartConfirmation() {
   static NoteRestartRequest shown;
+  static bool presented = false;
   static bool armed = false;
+  static uint32_t lastAttemptEnd = 0;
+  static uint32_t expiredShownAt = 0;
   const auto request = pendingNoteRestartRequest();
   if (!request.ticket || (state != STATE_IDLE && state != STATE_TRANSFER)) {
     if (!shown.ticket) return false;
+    const bool canShow = state == STATE_IDLE || state == STATE_TRANSFER;
+    if (!request.ticket && canShow && pairingView == PairingView::None && noteRestartExpired(shown.ticket)) {
+      if (!expiredShownAt) {
+        RecordingWindow microphone;
+        showNoteRestartExpired();
+        expiredShownAt = millis();
+        return true;
+      }
+      if (millis() - expiredShownAt < 2200) return false;
+    }
     shown = {};
     armed = false;
+    routeHoldToPrompt(false);
     clearLatchedPresses();
     if (state == STATE_TRANSFER) redrawCompanionHome(false);
     else if (state == STATE_IDLE) {
@@ -1817,21 +2150,54 @@ bool pollRestartConfirmation() {
     }
     return true;
   }
-  if (shown.ticket != request.ticket) {
+  routeHoldToPrompt(true);
+  const bool retry = !presented && button_prompt::retryDue(millis(), lastAttemptEnd);
+  if (shown.ticket != request.ticket || redrawRestartPrompt || retry) {
     shown = request;
+    redrawRestartPrompt = false;
+    pairingView = PairingView::None;
+    expiredShownAt = 0;
     armed = false;
     clearLatchedPresses();
+#if PALA_STAGE2_BENCH
+    traceRestartPresentation(request);
+#endif
     showNoteRestartPrompt(request.mode == NoteRestartMode::Audit);
+    lastAttemptEnd = millis();
+    presented = note_display::lastPresentationOk();
+    if (presented) {
+      noteRestartDisplayed(request);
+      armed = armPresentedPrompt(note_display::lastPresentationVisibleAt());
+    }
+#if PALA_STAGE2_BENCH
+    restartTrace.ok = presented;
+    restartTrace.ack = note_display::lastPresentationVisibleAt();
+    restartTrace.returned = lastAttemptEnd;
+    restartTrace.held = bufferedChord;
+    if (armed && !bufferedChord) restartTrace.armed = millis();
+    reportRestartPrompt(false);
+#endif
     return true;
   }
+  if (!presented) return true;
   if (!armed || bothButtonsDown()) {
-    armed = bothButtonsUp();
-    clearLatchedPresses();
+    armed = armReleasedPrompt();
+#if PALA_STAGE2_BENCH
+    if (armed && !restartTrace.armed) restartTrace.armed = millis();
+#endif
     return true;
   }
   const auto input = pollBufferedButtons(1, 1);
+#if PALA_STAGE2_BENCH
+  if (!bufferedChord && !restartTrace.armed) restartTrace.armed = millis();
+#endif
   if (input.action == ButtonAction::Single || input.action == ButtonAction::Hold) {
-    if (!answerNoteRestart(shown, input.upper)) {
+#if PALA_STAGE2_BENCH
+    restartTrace.choice = input.upper ? 1 : 2;
+    restartTrace.at = millis();
+    reportRestartPrompt(false);
+#endif
+    if (!answerNoteRestart(shown, !input.upper)) {
       // The request may have expired while the e-paper was refreshing.
       armed = false;
       clearLatchedPresses();
@@ -1846,19 +2212,23 @@ bool pollPairingOverlay() {
     startBluetoothEnrollment();
   }
   const bool ble = bluetoothEnrollmentOpen() && pollBluetoothSync();
-  String peer;
+  String peer, peerId;
   uint32_t code = 0;
   PairingView next = PairingView::None;
-  if (noteUsbPairingPrompt(peer)) next = PairingView::UsbPrompt;
+  if (noteUsbPairingPrompt(peer, &peerId)) next = PairingView::UsbPrompt;
   else if (noteUsbPairingOpen()) next = PairingView::UsbWait;
   else if (ble) next = bluetoothEnrollmentPrompt(code) ? PairingView::BluetoothCode : PairingView::BluetoothWait;
 
-  if (next != pairingView || (next == PairingView::BluetoothCode && code != pairingDisplayedCode)) {
+  if (next != PairingView::None) routeHoldToPrompt(true);
+  if (next != pairingView || (next == PairingView::BluetoothCode && code != pairingDisplayedCode) ||
+      (next == PairingView::UsbPrompt && peerId != pairingDisplayedPeer)) {
     clearLatchedPresses();
     pairingButtonsArmed = false;
     pairingDisplayedCode = code;
+    pairingDisplayedPeer = peerId;
     pairingView = next;
-    if (next == PairingView::UsbPrompt) showNoteUsbPairingPrompt(peer);
+    if (next == PairingView::None) routeHoldToPrompt(false);
+    if (next == PairingView::UsbPrompt) showNoteUsbPairingPrompt(peer, peerId);
     else if (next == PairingView::BluetoothCode) showNoteBluetoothPairingNumber(code);
     else if (next == PairingView::BluetoothWait || next == PairingView::UsbWait) {
       showNotePairingWait(next == PairingView::BluetoothWait);
@@ -1870,24 +2240,25 @@ bool pollPairingOverlay() {
     }
     else if (setupRequired) showSetupRequired();
     else renderReadyHome();
-    // Edges captured while e-paper was updating cannot approve a new prompt.
-    clearLatchedPresses();
+    pairingPresented = next != PairingView::None && note_display::lastPresentationOk();
+    pairingButtonsArmed = pairingPresented && armReleasedPrompt();
   }
   if (next == PairingView::None) return false;
   if (state == STATE_TRANSFER && transferServerActive) transferServer.handleClient();
   resetActivity();
-  if (!pairingButtonsArmed) {
-    if (bothButtonsUp()) pairingButtonsArmed = true;
+  if (!pairingPresented) return true;
+  if (!pairingButtonsArmed || bothButtonsDown()) {
+    pairingButtonsArmed = armReleasedPrompt();
     return true;
   }
-  const bool upper = takeLatchedPress(true);
-  const bool lower = takeLatchedPress(false);
-  if (next == PairingView::UsbPrompt && (upper || lower)) noteUsbPairingConfirm(upper && !lower);
-  else if (next == PairingView::BluetoothCode && (upper || lower)) {
-    bluetoothEnrollmentConfirm(upper && !lower);
-    if (lower) stopBluetoothSync();
-  } else if (next == PairingView::UsbWait && lower) noteUsbPairingConfirm(false);
-  else if (next == PairingView::BluetoothWait && lower) stopBluetoothSync();
+  const auto input = pollBufferedButtons(1, 1);
+  if (input.action != ButtonAction::Single && input.action != ButtonAction::Hold) return true;
+  if (next == PairingView::UsbPrompt) noteUsbPairingConfirm(input.upper);
+  else if (next == PairingView::BluetoothCode) {
+    bluetoothEnrollmentConfirm(input.upper);
+    if (!input.upper) stopBluetoothSync();
+  } else if (next == PairingView::UsbWait && !input.upper) noteUsbPairingConfirm(false);
+  else if (next == PairingView::BluetoothWait && !input.upper) stopBluetoothSync();
   return true;
 }
 
@@ -1911,28 +2282,93 @@ void finishTransportRecording(int note) { interruptedSync.stageCommitted(note, S
 
 int preferredRecordingSyncNote() { return interruptedSync.preferred(); }
 
-uint32_t recordingPressTime() { return upperButton.rawAt; }
+uint32_t recordingPressTime() { return upperButton.lastDownAt; }
+
+void consumeRecordingStop(uint32_t captureEdge) {
+  portENTER_CRITICAL(&recordingButtonLock);
+  handsFreeCapture=captureEdge;
+  handsFreeUpperStop=upperButton.lastDownAt;
+  handsFreeStoppedAt=millis();
+  haveHandsFreeStop=true;
+  portEXIT_CRITICAL(&recordingButtonLock);
+}
+
+uint32_t recordingButtonRelease(uint32_t edge) {
+  portENTER_CRITICAL(&recordingButtonLock);
+  const uint32_t released = upperButton.releasedDownAt == edge ? upperButton.releasedAt : 0;
+  portEXIT_CRITICAL(&recordingButtonLock);
+  return released;
+}
+
+bool physicalRecordingPress(uint32_t& edgeMs) {
+  portENTER_CRITICAL(&recordingButtonLock);
+  edgeMs = upperButton.rawAt;
+  const bool single = (!haveHandsFreeStop || edgeMs!=handsFreeUpperStop) && upperButton.rawDown && !lowerButton.rawDown && !recordingChordBlocked && !promptOwnsHold;
+  portEXIT_CRITICAL(&recordingButtonLock);
+  return single && digitalRead(BTN_REC) == LOW && digitalRead(BTN_PWR) == HIGH;
+}
 
 bool physicalRecordingHold(uint32_t& edgeMs) {
-  edgeMs = upperButton.rawAt;
-  return upperButton.rawDown && digitalRead(BTN_REC) == LOW && digitalRead(BTN_PWR) == HIGH &&
-         millis() - edgeMs >= ButtonGesture::kHoldMs;
+  return physicalRecordingPress(edgeMs) && millis() - edgeMs >= ButtonGesture::kHoldMs;
+}
+
+void cancelSleepFrame() {
+  resetActivity();
+  // Let Home process the retained press before preparing its next frame.
+  homeRefreshPending = true;
+}
+
+bool sleepInputPending() {
+  return pendingPriorityRecording() || !bothButtonsUp() || upperButton.pressLatched ||
+         lowerButton.pressLatched || buttonInputPending(upperButton) || buttonInputPending(lowerButton);
 }
 
 bool recordingRequestedDuringSync() {
   uint32_t edgeMs;
   if (pendingPriorityRecording()) return true;
-  if (!physicalRecordingHold(edgeMs)) return false;
+  if (!physicalRecordingHold(edgeMs) || recordingEdgeHandled(edgeMs)) return false;
   latchPriorityRecording(edgeMs);
   return true;
 }
 
 bool recordingSyncAllowed() {
+#if PALA_STAGE3
+  if (archiveMonthDeletionActive()) return false;
+#endif
   return recordingSync.permits(palaSyncTiming(), millis(), lastActivityMs,
                                idleSleepPolicy(palaIdleSleepMinutes()));
 }
 
+#if PALA_USB_CARD_SERVICE
+void pollUsbStorageRestart() {
+  if (!usbStorageRestartPending() || state != STATE_IDLE || !bothButtonsUp()) return;
+  // This runs at the top level, after synchronous SD users have returned.
+  // Stop admitting new physical holds before checking the independent writer.
+  routeHoldToPrompt(true);
+  if (!claimRecorderForUsbStorage()) {
+    routeHoldToPrompt(false);
+    return;
+  }
+  cancelUsbSync();
+  Serial.flush();
+  SD_MMC.end();
+  markImmediateUsbStorageBoot();
+  delay(100);
+  ESP.restart();
+}
+#endif
+
 void setup() {
+#if PALA_USB_CARD_SERVICE
+  if (takeUsbStorageBoot()) {
+    releasePeripheralPowerHolds();
+    powerOnPeripherals();
+    showUsbStorageBootScreen();
+    runUsbCardService();
+    ESP.restart();
+  }
+#endif
+  owner_trace::WorkScope ownerWork(owner_trace::Work::Boot);
   homeBridgeStatus.reset();
   // Seed a key already held at reset and retain edges throughout boot.
   pinMode(BTN_REC, INPUT_PULLUP);
@@ -1943,6 +2379,10 @@ void setup() {
   latchUpperEdge();
   latchLowerEdge();
   interrupts();
+#if PALA_WAV_TIMING && ARDUINO_USB_MODE && ARDUINO_USB_CDC_ON_BOOT
+  // Keep the post-capture boot and FAT trace burst intact over native USB.
+  Serial.setTxBufferSize(4096);
+#endif
   Serial.begin(115200);
 #if PALA_BRIDGE_DISCOVERY && ARDUINO_USB_MODE && ARDUINO_USB_CDC_ON_BOOT
   Serial.onEvent(ARDUINO_HW_CDC_BUS_RESET_EVENT,
@@ -1950,6 +2390,10 @@ void setup() {
 #endif
   delay(40);
   Serial.println("\n=== Pala Note " FIRMWARE_VERSION " ===");
+#if PALA_STAGE2_BENCH
+  if (esp_reset_reason() == ESP_RST_SW && restartTrace.magic == kRestartPromptTraceMagic) reportRestartPrompt(true);
+  restartTrace.magic = 0;
+#endif
 
   releasePeripheralPowerHolds();
   palaSettingsBegin();
@@ -2001,10 +2445,16 @@ void setup() {
   if (armBootRecording) initializeRecordingPriority();
   RecordingWindow bootMicrophone(armBootRecording);
   const bool storageReady = supportedMemory && initializeStorage();
+  markWavBoot("layout_done");
   if (armBootRecording) completeRecordingStorageInit(storageReady);
+#if PALA_STAGE3
+  if (storageReady) mountArchiveMonthDeletion();
+#endif
+  markWavBoot("spool_checked");
   initializeDisplay();
+  markWavBoot("display_ready");
   if (!supportedMemory || !storageReady || !recordingReady) {
-    showError(!supportedMemory ? "8/8 ONLY" : !storageReady ? "SD ERROR" : "MIC ERROR");
+    showBootError(!supportedMemory ? "8/8 ONLY" : !storageReady ? "SD ERROR" : "MIC ERROR");
     while (true) delay(1000);
   }
   state = STATE_IDLE;
@@ -2017,21 +2467,40 @@ void setup() {
   }
   if (setupRequired) showSetupRequired();
   else renderReadyHome();
+  markWavBoot("home_drawn");
   // Paint Home before reading the complete legacy CSV or inspecting the queue.
   // REC during those calls can already drain I2S into a private inbox WAV.
   if (!fullCheck) {
     initializeNoteCatalog(true);
+    markWavBoot("catalog_done");
     initializeSyncQueue();
+    markWavBoot("queue_done");
   }
   loadHomeHolidays();
+  markWavBoot("holidays_done");
   loadHomeForecast();
+  markWavBoot("forecast_done");
   restoreHomeDeliveryRefresh();
+  markWavBoot("delivery_done");
   refreshRecordingSpace();
-  bootHomeNeedsRefresh = !setupRequired;
+  markWavBoot("space_done");
+  homeRefreshPending = !setupRequired;
   if (!setupRequired) beginRecordingSync(SyncTiming::OnWake);
+  if (armBootRecording) bootPanelMicrophone.emplace();
+  markWavBoot("setup_done");
+  stage2::homeEvent("setup_done", millis());
 }
 
 void loop() {
+#if PALA_USB_CARD_SERVICE
+  pollUsbStorageRestart();
+#endif
+  // A press in the last part of the Home waveform may qualify only after
+  // the panel has gone idle. Preserve its inbox path through the hold.
+  if (bootPanelMicrophone && !note_display::bootHomeOutstanding() &&
+      !(upperButton.rawDown && note_display::inBootHome(upperButton.rawAt))) {
+    bootPanelMicrophone.reset();
+  }
   if (recordBeforeResumingSync()) return;
   if (state == STATE_IDLE && pendingPriorityRecording()) {
     clearLatchedPresses();
@@ -2137,13 +2606,20 @@ void loop() {
       delay(8);
       return;
     }
-    if (bootHomeNeedsRefresh) {
-      bootHomeNeedsRefresh = false;
+    if (homeRefreshPending && !note_display::bootHomeOutstanding()) {
+      homeRefreshPending = false;
       RecordingWindow microphone;
       renderReadyHome();
       return;
     }
     const auto sleep = idleSleepPolicy(palaIdleSleepMinutes());
+#if PALA_STAGE3
+    maintainArchiveMonthDeletion();
+    if (pendingPriorityRecording() || (archiveMonthDeletionActive() && !archiveMonthDeletionFailed())) {
+      delay(8);
+      return;
+    }
+#endif
     const bool catalogWasReady = noteCatalogReady();
     const bool queueWasReady = syncQueueReady();
     bool agendaMaintenanceActive = false;
@@ -2182,6 +2658,26 @@ void loop() {
         renderReadyHome();
       }
     }
+#if PALA_WIFI_TRIAL
+    if (wifi_trial::trace().phase == 4 && !usbSyncActive() && !bluetoothSyncActive()) {
+      RecordingWindow microphone;
+      auto& probe = wifi_trial::trace();
+      probe.sampling = true;
+      resetBridgeAddressCache();
+      const bool connected = palaWifiEnabled() && connectConfiguredWifi(8, 4500);
+      wifi_trial::association(connected, static_cast<uint32_t>(WiFi.localIP()));
+      if (connected && !::recordingRequestedDuringSync()) pairedWifiBacklog(true);
+      probe.sampling = false;
+      probe.phase = 5;
+      stopWifi();
+      resetBridgeAddressCache();
+      return;
+    }
+    if (!usbDataConnected && wifi_trial::takeStart()) {
+      resetActivity();
+      beginRecordingSync(SyncTiming::Manual);
+    }
+#endif
     if (afterRecordingSyncPending) {
       afterRecordingSyncPending = false;
       beginRecordingSync(SyncTiming::AfterRecording);

@@ -14,6 +14,9 @@ bool palaBackgroundNetworkMode();
 
 bool transcribe(const String& wavPath, int noteNum);
 bool transcribeQuestion(const String& wavPath, String& question);
+#if PALA_STAGE3
+bool requestKuboAnswer(const String& question, String& answer);
+#endif
 bool understandNote(int noteNum);
 using OrganizationPost = bool (*)(const char*, const String&, String&, uint16_t, String*, const String&);
 String recordingBridge(int note, const String& candidate);

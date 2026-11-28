@@ -881,7 +881,8 @@ clear to the user, preserve original recognition, and keep manual edits dominant
   indicator and in Note settings. Include battery percentage in Note
   settings. Retain peaks over deep sleep and reset them on a reboot.
 - Provide Restart and Restart and check storage in Note settings. Both
-  require confirmation on the Note screen. A full check validates index,
+  require confirmation on the Note screen. The upper button (No) cancels
+  and the lower button (Yes) restarts. A full check validates index,
   queue, metadata and WAV headers and sizes, reports source defects, and
   can repair derived indexes. Show progress on the display and use previous
   measured runs for an estimate when available. A power cut ends maintenance
@@ -1019,10 +1020,13 @@ clear to the user, preserve original recognition, and keep manual edits dominant
   headfirst before its final peek. Bend the anemone polyps in the direction of
   the current and let them straighten as the water settles. Keep the aquarium
   independent of transcription and delivery.
-- Show unfinished items in the configured Google Tasks General list in the
-  left Home column. Show the last confirmed Google delivery time in the
-  right column. When Google confirmation is pending, show the number of
-  waiting dictations there until delivery completes. After a Bluetooth sync,
+- Label the left Home column General and show the number of unfinished items
+  in the configured Google Tasks General list. In the right column, show a
+  stopwatch beside Google and the pending count while dictations await
+  confirmation. When the queue is empty, show a check mark, Delivered
+  (Doručené in Slovak), and the last confirmed local delivery time. Show a
+  plain Google label and a dash when that information is unavailable.
+  After a Bluetooth sync,
   check for confirmation automatically over the paired Bluetooth connection
   while Home still shows a pending delivery.
 - Keep Home at the bottom of the display-pages settings and let the user
@@ -1048,6 +1052,8 @@ clear to the user, preserve original recognition, and keep manual edits dominant
   center of the heading. Keep the month on the left and the ISO week on
   the right. Shorten CW to W when spacing requires it.
 - Show the forecast icon and today's low and high for the configured town.
+  Use the space above the smaller month label for the forecast icon. Keep
+  clear space around the temperatures and date heading.
   Calculate the Moon phase from the device clock. Cache up to seven days
   for the configured town and refresh during paired USB or Bluetooth
   synchronization even when transcription is busy.
@@ -1083,6 +1089,45 @@ Retest sign-in over Bluetooth with Wi-Fi disabled and USB disconnected.
 
 - Wake with the lower button and accept an upper REC hold during startup.
   Capture audio ahead of archive IO, radio and display work.
+- Once the microphone has queued its first PCM block, prepare the REC image
+  even during a Home refresh or a slow first WAV write. Keep the image being
+  sent to the panel stable through its previous-image update. Preserve the
+  queued button edges and arm prompt answers after the matching image has
+  completed its refresh.
+- Show REC and battery state while capturing. After five seconds, offer LOCK
+  on the lower button and confirm a successful lock until capture ends.
+  Releasing the starting hold keeps a locked recording running. A fresh
+  press of either button stops it. Earlier lower-button presses mark moments.
+- Keep one recording ID through five-minute mono WAV parts, including a
+  month change. Transfer parts with checksums and preserve one full transcript
+  in the archive. Long transcripts can use a short preview for Tasks.
+- On release of a normal REC hold, queue a visible Saving state as soon as
+  the microphone stops. Use a large centered floppy disk, a localized
+  caption underneath and the Home battery indicator at the upper right.
+  Storage may still be draining buffered PCM.
+  A successful archive can replace a pending Saving image. Display Saved
+  only after the recording and its metadata are durably committed.
+- Accept a new normal REC hold while the previous WAV is saving. Start its
+  own PCM buffer at hold qualification and preserve its release and markers,
+  even when the writer can only start draining it after the user lets go.
+  Show a small previous-save indicator during the new recording and clear it
+  when the preceding save completes. Keep ordinary success feedback from
+  interrupting the next recording.
+- Keep time-sensitive peripherals independent of slow consumers. Interrupts
+  capture edges, count overruns and wake tasks. Use DMA for sample streams
+  and bounded worker queues for blocking peripheral I/O. Size buffers from
+  the incoming rate, measured service gaps and available RAM of the required
+  type. Preserve ordered PCM, input and storage events across consumer stalls.
+  For disposable sensor and display updates, keep the newest valid value.
+- Supply a timestamped battery reading to every screen and settings caller.
+  While awake, take one calibrated sample about every 50 ms and average up to
+  ten valid samples in the preceding half-second. Show an unknown value when
+  the window has expired.
+- On two-choice Note prompts, use one row per physical side button when
+  space permits. Align the upper choice with REC and the lower choice at
+  the nearest visible point to the lower button. Calendar choices must show
+  the complete start and end of each proposed interval. Group a shared date
+  above the options and show both dates when an interval crosses midnight.
 - Keep WAV and local transcripts in monthly folders on the Note's SD.
   Paired USB sync sets the hardware clock from Bridge UTC and checks its
   readback. After deep sleep, new recordings use the retained time.
@@ -1095,6 +1140,10 @@ Retest sign-in over Bluetooth with Wi-Fi disabled and USB disconnected.
 - Put the Note card first in Settings. Use Note and Bridge as the default
   hardware and service labels. Keep delivery controls in Bridge settings.
   Recorder transcript delivery routes saved text to configured Tasks lists.
+- On the development recorder, a paired USB maintenance command can hand
+  the SD card to the PC as a mass-storage disk. Finish outstanding recordings
+  before handoff. Safe ejection returns the Note to recording. A one-shot
+  service boot can expose the card after power loss before recorder recovery.
 - Preserve the original sleep defaults of one minute on Home, up to three
   minutes with queued work and five minutes in Web Companion.
 - On the home LAN, the Recorder advertises Web Companion under its saved
@@ -1103,10 +1152,11 @@ Retest sign-in over Bluetooth with Wi-Fi disabled and USB disconnected.
 - Require a password by default for Web Companion and Bluetooth settings.
   Allow the owner to turn the requirement off or back on over paired USB.
   Preserve the saved password and wireless Bridge pairing.
-- Source Saved items and Calendar from the connected account. Show a labeled
-  offline snapshot for up to 24 hours. Google access for Kubo uses Workspace
-  MCP. Ask Kubo can search the web and read tasks on request. Account writes
-  use dictation and sync.
+- Source Saved items and Calendar from the connected account. Calendar combines
+  scheduled Tasks and events from the primary Google calendar. Show a labeled
+  offline snapshot for up to 24 hours. Workspace MCP read access requests
+  only Tasks read access and Calendar events read access. Ask Kubo can search
+  the web and read tasks on request. Account writes use dictation and sync.
 - Refresh Home from an available paired Bridge on an upper triple tap.
   This includes Codex allowance, open tasks and weather with an empty queue
   and with transcript delivery or local transcription unavailable.

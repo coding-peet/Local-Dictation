@@ -32,12 +32,17 @@ WRITE_CHUNK = 96
 READ_ATTEMPTS = 3
 ATTACHMENT_ATTEMPTS = 3
 ATTACHMENT_RETRY_SECONDS = 15
+USB_HELLO_TIMEOUT_SECONDS = 35
 MAX_REPLY = 2200
 REPLY_TYPES = {
     "HELLO": ("CHALLENGE",),
     "AUTH": ("OK",),
-    "NEXT": ("NOTE", "EMPTY"),
-    "SELECT": ("NOTE",),
+    "NEXT": ("NOTE", "PARTS", "EMPTY"),
+    "SELECT": ("NOTE","PARTS"),
+    "PART": ("PART",),
+    "PART-CACHED": ("OK",),
+    "PIECE": ("OK",),
+    "PIECE-END": ("OK",),
     "META": ("META",),
     "EXPORT": ("TRANSCRIPT",),
     "AUDIO": ("AUDIO",),
@@ -46,6 +51,7 @@ REPLY_TYPES = {
     "COMMIT": ("SAVED",),
     "NAME": ("NAME-SAVED",),
     "CLOCK": ("CLOCK", "CLOCK-SAVED"),
+    "BENCH": ("BENCH", "OK"),
     "DELIVERY": ("DELIVERY-SAVED",),
     "HOLIDAYS": ("HOLIDAYS-SAVED",),
     "HOME-REQUEST": ("HOME",),
@@ -70,7 +76,7 @@ REPLY_TYPES = {
 }
 
 
-FIRMWARE_ERRORS = {"AUTH", "BUSY", "COMMAND", "NOTE", "READ", "SAVE", "TEXT", "WEATHER", "NAME", "DELIVERY", "HOLIDAYS"}
+FIRMWARE_ERRORS = {"AUTH", "BUSY", "COMMAND", "NOTE", "PART", "READ", "SAVE", "TEXT", "WEATHER", "NAME", "DELIVERY", "HOLIDAYS"}
 BLOCK_COMMANDS = {"READ", "READTXT", "READWEATHER", "JOB-READ"}
 ORGANIZATION_LIMIT = 80_000
 ORGANIZATION_ROUTES = {"MEMORY": "/v1/responses", "EVENT": "/pala/event"}
@@ -180,7 +186,7 @@ def _proof(token, role, host, device):
     return hmac.new(token.encode("ascii"), message, hashlib.sha256).hexdigest()
 
 
-def _exchange(port, command, *, read_block=None):
+def _exchange(port, command, *, read_block=None, accept_reply=None, reply_timeout=None):
     verb = command.partition(" ")[0]
     safe_verb = verb if verb in REPLY_TYPES or verb in BLOCK_COMMANDS else None
     request = PREFIX + command.encode("ascii") + b"\n"
@@ -191,7 +197,8 @@ def _exchange(port, command, *, read_block=None):
     try:
         if port.write(request) != len(request):
             raise UsbSyncError("The USB command was interrupted.", diagnostic=UsbFailure("short-write"))
-        deadline = time.monotonic() + (1 if read_block else 6)
+        wait = reply_timeout if reply_timeout is not None else (1 if read_block else 6)
+        deadline = time.monotonic() + wait
         while time.monotonic() < deadline:
             chunk = port.read_until(b"\n", MAX_REPLY - len(line))
             line.extend(chunk)
@@ -217,7 +224,8 @@ def _exchange(port, command, *, read_block=None):
                             else:
                                 observed_offset = observed_hex_length = None
                     elif response and response[0] in expected:
-                        return response
+                        if accept_reply is None or accept_reply(response):
+                            return response
                 line.clear()
             elif len(line) == MAX_REPLY:
                 raise UsbSyncError("The USB reply exceeded its frame limit.", diagnostic=UsbFailure("frame-limit"))
@@ -248,16 +256,32 @@ def _authenticate(port, tokens):
     host = secrets.token_hex(16)
     identity = getattr(port, "peer_id", None)
     hello = f"HELLO {host}" + (f" {identity}" if identity else "")
-    reply = _exchange(port, hello)
-    if (len(reply) != 3 or reply[0] != "CHALLENGE"
-            or not re.fullmatch(r"[0-9a-f]{32}", reply[1])
-            or not re.fullmatch(r"[0-9a-f]{64}", reply[2])):
-        raise UsbSyncError("Invalid challenge from Pala.")
-    device, proof = reply[1:]
-    token = next((key for key in tokens
-                  if hmac.compare_digest(proof, _proof(key, "device", host, device))), None)
-    if token is None:
-        raise UsbSyncError("This Pala is not paired with this Bridge.")
+    token = None
+    rejected = None
+
+    def matches_challenge(reply):
+        nonlocal token, rejected
+        if (len(reply) != 3 or not re.fullmatch(r"[0-9a-f]{32}", reply[1])
+                or not re.fullmatch(r"[0-9a-f]{64}", reply[2])):
+            rejected = "Invalid challenge from Pala."
+            return False
+        device, proof = reply[1:]
+        token = next((key for key in tokens
+                      if hmac.compare_digest(proof, _proof(key, "device", host, device))), None)
+        if token is None:
+            rejected = "This Pala is not paired with this Bridge."
+        return token is not None
+
+    # On USB the recorder can finish a long storage or display step after a
+    # previous host attempt timed out. Only use a challenge for this nonce.
+    try:
+        reply = _exchange(port, hello, accept_reply=matches_challenge,
+                          reply_timeout=USB_HELLO_TIMEOUT_SECONDS if isinstance(port, BufferedSerial) else None)
+    except UsbReplyTimeout as error:
+        if rejected is not None:
+            raise UsbSyncError(rejected) from error
+        raise
+    device = reply[1]
     try:
         _expect_ok(port, f"AUTH {_proof(token, 'host', host, device)}")
     except UsbReplyTimeout:
@@ -651,7 +675,7 @@ def _recover_saved(port, stage_transcript, stop):
 
 
 def sync_one(port, tokens, transcribe_local, *, note=None, stop=None, stage_transcript=None, activity=None,
-             session_open=False, organize=False, replay=None, device=None):
+             session_open=False, organize=False, replay=None, device=None, segmented=None, cached_segment=None):
     """Use one already-open serial port. Return None for an empty queue."""
     if note is not None:
         _require_note(note)
@@ -667,21 +691,57 @@ def sync_one(port, tokens, transcribe_local, *, note=None, stop=None, stage_tran
         if note is None and reply in (["EMPTY"], ["EMPTY", "RECHECK"]):
             port.recheck_when_empty = reply == ["EMPTY", "RECHECK"]
             return None
-        if (len(reply) != 3 or reply[0] != "NOTE"
+        if (len(reply) != 3 or reply[0] not in ("NOTE","PARTS")
                 or not all(re.fullmatch(r"[0-9]{1,10}", part) for part in reply[1:])):
             raise UsbSyncError("Invalid recording selection.")
         selected, size = map(int, reply[1:])
         if not 0 < selected <= 2_147_483_647 or (note is not None and selected != note):
             raise UsbSyncError("Pala selected a different note.")
-        if not 44 < size <= MAX_WAV_BYTES:
-            raise UsbSyncError("The recording has an unsupported size.")
         captured = _recording_time(port) if stage_transcript is not None else None
-        with _usb_phase("receiving"), activity_step(activity, "receiving"):
-            audio = _download(port, size, stop)
-        _check_stop(stop)
-        with _usb_phase("transcribing"), activity_step(activity, "transcribing"):
-            result = (replay(device, selected, audio, transcribe_local) if replay is not None
-                      else transcribe_local(audio))
+        audio_bytes = 0
+        if reply[0] == "PARTS":
+            if segmented is None or not 1 <= size <= 448:
+                raise UsbSyncError("Unsupported segmented recording.")
+            for index in range(size):
+                _check_stop(stop)
+                info = _exchange(port, f"PART {index}")
+                if (len(info)!=4 or info[0]!="PART" or info[1]!=str(index) or
+                        not all(re.fullmatch(r"[0-9]{1,10}",v) for v in info[2:])):
+                    raise UsbSyncError("Invalid recording part selection.")
+                length,crc = map(int,info[2:])
+                if not 44<length<=9_600_044 or crc>0xffffffff:
+                    raise UsbSyncError("Unsupported recording part.")
+                result = cached_segment(device,selected,index,size,crc) if cached_segment else None
+                if result is not None:
+                    _expect_ok(port,f"PART-CACHED {index} {crc}")
+                else:
+                    with _usb_phase("receiving"), activity_step(activity,"receiving"):
+                        audio = _download(port,length,stop)
+                        audio_bytes += len(audio)
+                    with _usb_phase("transcribing"), activity_step(activity,"transcribing"):
+                        result = segmented(device,selected,index,size,crc,audio,transcribe_local)
+                if result.get("part")!=index or result.get("count")!=size or result.get("crc")!=crc:
+                    raise UsbSyncError("Invalid recording part receipt.")
+                piece=result.get("piece")
+                if not isinstance(piece,str) or "\x00" in piece or len(piece.encode("utf-8"))>MAX_TEXT_BYTES:
+                    raise UsbSyncError("Invalid recording part text.")
+                payload=piece.encode("utf-8")
+                _expect_ok(port,f"PIECE {len(payload)} {hashlib.sha256(payload).hexdigest()}")
+                step=getattr(port,"write_chunk",WRITE_CHUNK)
+                for offset in range(0,len(payload),step):
+                    _check_stop(stop)
+                    _expect_ok(port,f"PUT {offset} {payload[offset:offset+step].hex()}")
+                _expect_ok(port,"PIECE-END")
+        else:
+            if not 44 < size <= MAX_WAV_BYTES:
+                raise UsbSyncError("The recording has an unsupported size.")
+            with _usb_phase("receiving"), activity_step(activity, "receiving"):
+                audio = _download(port, size, stop)
+                audio_bytes = len(audio)
+            _check_stop(stop)
+            with _usb_phase("transcribing"), activity_step(activity, "transcribing"):
+                result = (replay(device, selected, audio, transcribe_local) if replay is not None
+                          else transcribe_local(audio))
         _check_stop(stop)
         text = result.get("text") if isinstance(result, dict) else None
         data = text.strip().encode("utf-8") if isinstance(text, str) else b""
@@ -717,7 +777,7 @@ def sync_one(port, tokens, transcribe_local, *, note=None, stop=None, stage_tran
                     raise UsbSyncError("Pala did not confirm saving the transcript.")
         if acknowledge is not None:
             acknowledge()
-        return SyncedNote(selected, len(audio))
+        return SyncedNote(selected,audio_bytes)
     finally:
         if not session_open:
             with contextlib.suppress(OSError, UsbSyncError):
@@ -885,7 +945,7 @@ def _drain_recorder_work(link, token, bridge, device, stop, activity, *, only_no
                 continue
             result = sync_one(link, (token,), lambda audio: _transcribe_when_ready(bridge, stop, activity, audio),
                               note=note, stop=stop, activity=activity, session_open=True,
-                              replay=bridge.replay_transcription, device=device)
+                              cached_segment=getattr(bridge,"cached_segment",None), segmented=getattr(bridge,"transcribe_segment",None), replay=bridge.replay_transcription, device=device)
             print(f"Pala saved the transcript of note {result.note}.", flush=True)
             saved = True
         _check_stop(stop)
@@ -934,7 +994,7 @@ def _drain_link(link, token, bridge, stop, stage_transcript=None, activity=None,
     while not stop.is_set():
         result = sync_one(link, (token,), lambda audio: _transcribe_when_ready(bridge, stop, activity, audio), stop=stop,
                           stage_transcript=stage_transcript, activity=activity,
-                          device=device, replay=bridge.replay_transcription)
+                          device=device, cached_segment=getattr(bridge,"cached_segment",None), segmented=getattr(bridge,"transcribe_segment",None), replay=bridge.replay_transcription)
         if result is None:
             return link.recheck_when_empty
         print(f"Pala saved the transcript of note {result.note}.", flush=True)
@@ -1013,7 +1073,7 @@ def drain_bluetooth_backlog(link, token, bridge, device, stop, stage_transcript=
                     result = sync_one(link, (token,), lambda audio: _transcribe_when_ready(bridge, stop, activity, audio),
                                       note=note, stop=stop, stage_transcript=retain_transcript if process else stage_transcript,
                                       activity=activity, session_open=True, organize=process,
-                                      replay=bridge.replay_transcription, device=device)
+                                      cached_segment=getattr(bridge,"cached_segment",None), segmented=getattr(bridge,"transcribe_segment",None), replay=bridge.replay_transcription, device=device)
                     print(f"Pala saved the transcript of note {result.note}.", flush=True)
                     saved = True
                 elif not process:
@@ -1412,7 +1472,7 @@ def main():
                 with contextlib.suppress(OSError, UsbSyncError):
                     _expect_ok(link, "CLOSE")
             result = sync_one(link, selected_tokens, bridge.transcribe_local, note=args.note,
-                              stage_transcript=stage, activity=usb_activity, replay=bridge.replay_transcription,
+                              stage_transcript=stage, activity=usb_activity, cached_segment=getattr(bridge,"cached_segment",None), segmented=getattr(bridge,"transcribe_segment",None), replay=bridge.replay_transcription,
                               device=device)
             try:
                 send_holidays(link, selected_tokens)

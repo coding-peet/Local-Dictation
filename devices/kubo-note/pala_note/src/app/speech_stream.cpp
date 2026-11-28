@@ -104,6 +104,9 @@ void PalaSpeechStream::worker(void* context) {
       const int frames = resampler.convert(mono, bytes / 2, 1, true, stereo);
       const uint32_t output = frames * 4;
       if (output && audio_playback_write(stereo, output) != 0) { stream.failed = true; stream.aborting = true; break; }
+#if PALA_STAGE3_TRIAL
+      if (output && !outputBytes) Serial.printf("[S3] speech-start at=%lu\n", (unsigned long)millis());
+#endif
       outputBytes += output;
     }
     if (!stream.aborting && outputBytes) {
@@ -113,6 +116,10 @@ void PalaSpeechStream::worker(void* context) {
     }
     audio_playback_set_vol(0);
     audio_idle_suspend();
+#if PALA_STAGE3_TRIAL
+    if (outputBytes) Serial.printf("[S3] speech-end at=%lu cancelled=%u failed=%u\n",
+                                  (unsigned long)millis(), unsigned(stream.cancelled.load()), unsigned(stream.failed.load()));
+#endif
   }
   Serial.printf("[Audio] stream output=%lu bytes rebuffer=%lu cancelled=%d failed=%d\n",
     (unsigned long)outputBytes, (unsigned long)underruns, stream.cancelled.load(), stream.failed.load());

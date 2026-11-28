@@ -124,15 +124,25 @@ See the [Test 4 bench results](../../development/pala-note-recorder-test4-bench.
   The candidate's Bridge suite passed all 279 tests.
 - Task 3, clock candidate, failed. REC to PCM was 353–356 ms, but the first
   WAV writes took 5,612 and 6,500 ms. The second recording overflowed its
-  2.048-second PCM buffer. Final archival of the two temporary WAVs is open.
+  2.048-second PCM buffer.
+- Task 4, card readback. Both WAVs were present in /recordings/202611.
+  Their capture UTC matched the serial trace. Each decoded to 33,024
+  mono frames at 16 kHz (2.064 s). The recording inbox was empty.
 
-**Remaining runs, in order**
+**Qualification preparation, 26 November 2026**
 
-1. [ ] **Clock and archive (Task 4).** Read the two existing captures on
-   NOTES in a reader first. Inspect both the inbox and /recordings/202611,
-   check WAV headers, readable frames and stored capture UTC. Keep the
-   original files. Restart the Note, read RTC and system UTC before another
-   sync and compare with the PC. Cover midnight into a new UTC month, an
+The qualification profile captures normal SD timing and microphone CRC,
+and has opt-in one-shot windows for the five power-cut boundaries. The
+host bench checks the paired development Note, reads the two clocks and
+verifies SD PCM against the boot trace. The Wi-Fi writer sends a single
+apply attempt per grant. Backup-only plans, claims and receipts can be
+reconciled on restart. See the [hardware procedure and acceptance checks](../../development/pala-note-stage2-qualification.md).
+The following boxes track physical evidence.
+
+**Hardware acceptance runs**
+
+1. [x] **Clock and archive (Task 4).** Keep the original files. Restart the
+   Note, read RTC and system UTC before another sync and compare with the PC. Cover midnight into a new UTC month, an
    invalid clock and recovery on restart. An old recording must retain its
    original capture time and path after correcting the clock.
 2. [ ] **Recording response (Task 3).** Separate the time spent preparing the
@@ -143,7 +153,7 @@ See the [Test 4 bench results](../../development/pala-note-recorder-test4-bench.
    edges where measurable, first PCM, first successful SD write, and WAV
    length with a timed sound. Require intact leading and final samples and
    zero overflows on the previously failing sequence.
-3. [ ] **Wi-Fi end to end (Task 5).** Confirm the transfer used Wi-Fi.
+3. [x] **Wi-Fi end to end (Task 5).** Confirm the transfer used Wi-Fi.
    Follow a new ID from its SD WAV through transcription, saved text and
    delivery receipt. Independently read the Google task and count matches
    after retry. Test 3 proved association and Web Companion access only.
@@ -173,7 +183,63 @@ Hardware records are in the build directories named
 pala-note-recorder-test4-hil-20261126 (hardware-report.md and google-verified.json),
 pala-note-recorder-clock-20261126 (clock-hil.jsonl), and
 pala-note-recorder-test3-20261125 (test3-hardware-report.md).
-Main Note deployment is blocked pending these results and Peter's decision.
+### Stage 2 acceptance close and main Note candidate (28 November 2026)
+
+Peter closed development acceptance for the first main Note installation.
+The checks below record the exercised cases. The broader matrix above
+retains its remaining unchecked cases.
+
+- Recording and storage. The development Note passed wake and Home activity
+  recording, the forced 6.5-second write delay, overlapping save and capture,
+  UTC month rollover, unavailable RTC, and physical power cuts at WAV open,
+  PCM and after close before publication. Card readback also passed low-space
+  rejection and same-hold filename collision recovery.
+- Transport. Physical USB and BLE read and recording trials retained the
+  verified microphone samples. The paced BLE run measured an overlapping
+  device-side block and a partial radio transfer. The complete Wi-Fi test
+  reached the dedicated Google list once for recording 1073796179 and matched
+  the WAV, SD transcript and delivery receipt.
+- Two Bridges. For recording 1073797203, A held the only write grant and the
+  bench withheld the SD receipt. B used independent state and the exact SD
+  transcript, reconciled the existing Google task, and completed the receipt.
+  ASR calls were A=1 and B=0. All 45 temporarily held dev jobs passed checksum
+  verification after restoration.
+
+The new evidence is under
+`build/pala-note-stage2-qualification-20261126/`, in
+`usb-msc-retry-dev/wifi-stage2-dev/wifi-transfer-8443/`,
+`handover-usb-20261128-fixture/`, and `powercut-20261127/`.
+The physical handover covers a general Google task over USB. Separate
+provider-route conflicts, simultaneous peers, remaining interruption points
+and the full per-transport matrix retain their existing coverage status.
+
+#### Main Note preparation
+
+The release candidate is the `pala_note_recorder` profile, without the
+qualification-only hooks or Stage 3. The checked application SHA-256 is
+`a092c13756f71ba28cc071934e394f023798bc88095515a0976c8fd704e3455b`.
+See `build/pala-note-stage2-qualification-20261126/main-note-candidate-20261128/`
+for the candidate checks and the installation helper. The Python suite
+reported 407 passed, one skipped, and two static audio-wiring checks that
+flag the Stage 3 trial-only serial prints. The production image excludes
+those prints.
+
+The prepared FAT32 NOTES image has 61 archived recordings with 183 verified
+WAV, transcript and metadata files, and an empty pending queue. The archive
+path check passed against the current recorder source. The physical card's
+first boot with the main Note is pending.
+
+Identify the main Note by its USB serial and ROM MAC. Keep its card removed
+while taking an independently verified 8 MiB flash backup. After Peter
+authorizes the write, update only the active app0 image and verify the
+entire flash against the expected image and preserved regions. Confirm
+card insertion only after that readback. On first start with the prepared
+card, verify archive visibility and an empty pending queue before a new
+test recording. Record the first available capture sequence, expected to
+start at 82 on this card unless the retained device ledger is already higher.
+
+Main Note status at this close: candidate verified on PC and installation
+pending.
 
 ## Stage 3 · Companion, MCP and voice
 
@@ -202,6 +268,11 @@ Main Note deployment is blocked pending these results and Peter's decision.
 - [ ] Retain the lower hold and voice answer. Remove local archive
   searching from the active Note and the daily/weekly shortcut bindings.
   Verify new behavior from the normal gesture and record release evidence.
+
+## After Stage 3
+
+- [ ] Review how Local Dictation uses speech synthesis and identify where
+  to improve its integration in the desktop app.
 
 ## Execution record
 

@@ -29,6 +29,12 @@ class RestartSettingsTests(unittest.TestCase):
             note_response({"ok": True, "storageAudit": {"state": "complete", "notes": True}}, "USB",
                           "restart.status")
 
+    def test_expired_confirmation_is_reported_for_the_requested_ticket(self):
+        request = note_response({"ok": True, "pending": True, "ticket": 9}, "USB", "restart.request")
+        report = note_response({"ok": True, "storageAudit": {"state": "never", "notes": 2},
+                                "confirmation": {"ticket": 9, "state": "expired"}}, "USB", "restart.status")
+        self.assertEqual(report["confirmation"], {"ticket": request["ticket"], "state": "expired"})
+
     def test_restart_request_returns_only_a_prompt(self):
         response = note_response({"ok": True, "pending": True, "confirmed": "ignored"}, "USB",
                                  "restart.request")

@@ -3,10 +3,9 @@
 #include "../../globals.h"
 #include "../../types.h"
 #include "sleep.h"
+#include "record.h"
 #include "ui.h"
 #include "network.h"
-#include "notes.h"
-#include "battery.h"
 #include "memory_telemetry.h"
 #include "../../sounds.h"
 #include "WiFi.h"
@@ -31,33 +30,35 @@ void releasePeripheralPowerHolds() {
 }
 
 void enterUltraSleep() {
-  // Never shut peripherals down while the level-triggered wake key is held.
-  // Defer to the main loop instead of sleeping and immediately waking again.
-  if (digitalRead(BTN_PWR) == LOW) { resetActivity(); return; }
-  delay(50);
-  if (digitalRead(BTN_PWR) == LOW) { resetActivity(); return; }
-  const esp_err_t wakeResult = esp_sleep_enable_ext1_wakeup(
-      (1ULL << BTN_PWR), ESP_EXT1_WAKEUP_ANY_LOW);
-  if (wakeResult != ESP_OK) {
-    Serial.printf("[Sleep] Wake configuration failed: %s\n", esp_err_to_name(wakeResult));
-    resetActivity();
+  {
+    // Keep capture available throughout the final frame and radio teardown.
+    RecordingWindow microphone;
+    if (sleepInputPending()) { resetActivity(); return; }
+    delay(50);
+    if (sleepInputPending()) { resetActivity(); return; }
+    const esp_err_t wakeResult = esp_sleep_enable_ext1_wakeup(
+        (1ULL << BTN_PWR), ESP_EXT1_WAKEUP_ANY_LOW);
+    if (wakeResult != ESP_OK) {
+      Serial.printf("[Sleep] Wake configuration failed: %s\n", esp_err_to_name(wakeResult));
+      resetActivity();
+      return;
+    }
+    // The lock is a synchronous frame, completed or timed out before power off.
+    showSleepLocked();
+    if (sleepInputPending()) {
+      cancelSleepFrame();
+      return;
+    }
+    stopTransferMode();
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+  }
+  // The window's destructor disarms an unclaimed capture. A worker that
+  // already won the race remains pending and must keep the codec and SD.
+  if (sleepInputPending()) {
+    cancelSleepFrame();
     return;
   }
-  // Keep the last e-paper home screen visible. Refreshing a dedicated sleep
-  // screen would cost power and hide useful information for no benefit.
-  // A small closed lock makes the persistent screen's sleeping state clear.
-  showSleepLocked();
-  // A press during the panel refresh must still cancel sleep safely.
-  if (digitalRead(BTN_PWR) == LOW) {
-    resetActivity();
-    showIdle(pendingTranscriptionCount(), readBattery().percent);
-    return;
-  }
-  stopTransferMode();
-
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
-
   audio_playback_set_vol(0);
   palaSoundSetEnabled(false);
   audio_prepare_sleep();

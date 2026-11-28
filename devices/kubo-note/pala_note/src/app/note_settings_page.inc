@@ -292,13 +292,13 @@ dialog .actions { justify-content: end; }
       White shows the illuminated part.</p>
     <!-- Icon pixels rendered from drawWeatherGlyph in the Note firmware. -->
     <ul class="weather-icons" aria-label="Weather icon legend">
-      <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAARCAAAAADr+JOWAAAAQ0lEQVR4nGP4jwIY8PBwSSILM2CIYWGhmcOAwsfgYDMewUYSwcLEsJyBAUUSajUxOgnaid+1ePyJL4Twhy02W/BJAgAw6bZY3MC1vwAAAABJRU5ErkJggg==" width="56" height="34" alt=""><span>Clear</span></li>
-      <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAARCAAAAADr+JOWAAAAUklEQVR4nI2QAQoAIAgD9/9PG1akmxUKIezIscEM5gOsnQfyCjxLKatCYe4VIlnLz2l9MB3S620IdY770gIFvzXwSLhTduCF/iAXV1iWPEyMKwP5FZ1xv5AbFgAAAABJRU5ErkJggg==" width="56" height="34" alt=""><span>Partly cloudy</span></li>
-      <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAARCAAAAADr+JOWAAAARklEQVR4nJXPWwoAIAgEwL3/pYsEaX2i/qRNZeI0gTkCpuZChDlJsUXK9Gld0q+gmEg2zBGvA0y0Q+oZ1HV7w/yomoX7BV4us6xi6IIHvAAAAABJRU5ErkJggg==" width="56" height="34" alt=""><span>Overcast</span></li>
-      <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAARCAAAAADr+JOWAAAAIklEQVR4nGP4jwcwUCrJgA6oYywlkgyY7hlAB2EPIFrZCQCpx6pk3V5maQAAAABJRU5ErkJggg==" width="56" height="34" alt=""><span>Fog</span></li>
-      <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAARCAAAAADr+JOWAAAASUlEQVR4nI3PWxYAIAQE0Nn/pnV8OIxR8dHrioLVAEBbohgUIUdLLKsoHdP4FM5pSild8cdBX1h6irZu/pmMWzO5z12y2goHswNH8aNrP8ySegAAAABJRU5ErkJggg==" width="56" height="34" alt=""><span>Rain</span></li>
-      <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAARCAAAAADr+JOWAAAATklEQVR4nJWQ2w4AIAhC+f+frrUuoDFXvaSeCCYaD+aRwV3iF0q1v95X8Bo9YQBUPUBDKwifX9ozXOsJWzJRsj4nz0rIuxyETs6zVDrPDipmk3uxr6hSAAAAAElFTkSuQmCC" width="56" height="34" alt=""><span>Snow</span></li>
-      <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAARCAAAAADr+JOWAAAAUElEQVR4nI3QWQrAIAxF0bv/TVsKDX2Dgn5o9IQYZekAbGs0UyN1dIkSTelZtq14TqilaLM08kdVVi4uDLPHvS1/XreBTLs3nD8+zTEs0G09Ho6ZdTw4wu4AAAAASUVORK5CYII=" width="56" height="34" alt=""><span>Thunderstorm</span></li>
+      <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACEAAAAUCAAAAAAmOAutAAAAcElEQVR42pVSWw7AMAgSs/tfmX2sL6hNM3+aGhREwdCAJzJuMRH4HspPEETN5bQYXXo8u04ryn0QoTNEq1ZIVvIE0hGAOwdT6k7OxMoymss0orRBdFydlthNvHuaoasjqYtbd8tKtOy2OoKfF3Sy7gWh3iEnLxrYOwAAAABJRU5ErkJggg==" width="66" height="40" alt=""><span>Clear</span></li>
+      <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACEAAAAUCAAAAAAmOAutAAAAfUlEQVR42o2RQRLDMAgDV4z//2X1gJuCQ6bhYowFSLKMDIAgkyMCLADZmQwIDDlohEQee9MEiQoYIQs1gkZ0yqsL2IJqV+zOa4Y5ZkTbOfEJ/oX8cLksXqXSwl++q5ZuIPnHQ+OvWW+YvkfMP9+0jFbgylA3Nfl2mHRaAnwA0IMrISJFvrMAAAAASUVORK5CYII=" width="66" height="40" alt=""><span>Partly cloudy</span></li>
+      <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACEAAAAUCAAAAAAmOAutAAAAZUlEQVR42p2RSxLAIAhDE8f7XzldOFY+rdKyUvKEIBQO0U4AergTgN4JDpWO8V0kpBqW4JTET06pp+N0ZJwyPNTy21cqQaNoSw0Mw5rTKiHW9+J2IOuRaZpbkd1q+JLNnH9m2cUFDAUbJDra6nEAAAAASUVORK5CYII=" width="66" height="40" alt=""><span>Overcast</span></li>
+      <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACEAAAAUCAAAAAAmOAutAAAAKklEQVR42mP8z0AAMDFQroIFQjFikYLaz0gXd1DRL9i8M0T9gidaBo1fAOi/Bydb7eUaAAAAAElFTkSuQmCC" width="66" height="40" alt=""><span>Fog</span></li>
+      <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACEAAAAUCAAAAAAmOAutAAAAbElEQVR42pWRSw4AIQhDW+P9r9xZGEY+apQFMfCsBSmEIIBY6qktAAxMC7yEouEJWkvcaqyCWh3NkXPKdFHTb5+lAg3RVh5wDO+c3hLinuiHRQz75pFlmr8j/6tpJYc5N7Ow5ERQOb/t4yCBDyTMISUlr8Z+AAAAAElFTkSuQmCC" width="66" height="40" alt=""><span>Rain</span></li>
+      <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACEAAAAUCAAAAAAmOAutAAAAbUlEQVR42p1R0RKAIAyCzv//ZXpIG9pmXXviJhswKURxAG82eGlhAsDhK8aoWDDyojIIhmRLlPsrLw61jq8C7z6+MsSa0TYxMXkkVNwhUmSBNzl/ZOkiTHAwxOlvzZ/cqJ7YdkB307H5UFzWMU5ehSYfE/70XAAAAABJRU5ErkJggg==" width="66" height="40" alt=""><span>Snow</span></li>
+      <li><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACEAAAAUCAAAAAAmOAutAAAAdUlEQVR42oWRSQ7AIAwDbcT/v+weSpS1lBMiQ+IBCmkRQD7apSwATMxKvITWIxK0kvjZY1rUtLVEISnLRXne7UcNepuuNgBkCtyT8mI7AofwB2hAfvXsdGDLyFcweFnFbenTGP2plvTPBbPLRbYSHSi27N+DB+67JSqqZ6hSAAAAAElFTkSuQmCC" width="66" height="40" alt=""><span>Thunderstorm</span></li>
     </ul>
     <p class="muted">Drizzle, freezing rain and rain showers use Rain. Without a
       forecast for today, the weather icon and temperatures are blank.</p>
@@ -498,10 +498,10 @@ dialog .actions { justify-content: end; }
     <div class="setting-row">
       <label for="bridge-address">Fallback IPv4 address</label>
       <div class="setting-with-help">
-        <input id="bridge-address" maxlength="15" inputmode="decimal" autocomplete="off" spellcheck="false" aria-describedby="bridge-address-hint">
+        <input id="bridge-address" maxlength="21" autocomplete="off" spellcheck="false" aria-describedby="bridge-address-hint">
         <details class="context-help">
           <summary aria-label="About the fallback Bridge address">&#9432;</summary>
-          <p id="bridge-address-hint" class="help-popup">Leave blank to use automatic discovery. A fallback address must be on the Note's private Wi-Fi network.</p>
+          <p id="bridge-address-hint" class="help-popup">Leave blank to use automatic discovery. Enter the private IPv4 address of the legacy or sole Wi-Fi Bridge. Include a port if needed, for example 192.168.1.31:8443.</p>
         </details>
       </div>
     </div>
@@ -967,6 +967,7 @@ function show(data) {
   el('note').hidden = !attached;
   showNoteHealth(attached ? data.device : null);
   el('restart-note').hidden = !attached || data.device.r !== 1;
+  if (el('restart-note').hidden) displayedRestart = 0;
   el('restart-status').textContent = '';
   const pages = attached ? data.device.displayPages : null;
   const legacyPages = typeof pages === 'string' && pages.length === 4;
@@ -1222,11 +1223,38 @@ async function readStorageAudit() {
   }
 }
 
+let displayedRestart = 0;
+async function checkRestartOutcome(ticket) {
+  if (displayedRestart !== ticket || el('restart-note').hidden) return;
+  let message = 'Confirmation is no longer active. Check the Note.';
+  try {
+    const { confirmation } = await request('restart.status', {});
+    if (displayedRestart !== ticket || el('restart-note').hidden) return;
+    if (confirmation && confirmation.ticket === ticket) {
+      if (confirmation.state === 'pending') {
+        setTimeout(() => checkRestartOutcome(ticket), 3000);
+        return;
+      }
+      if (confirmation.state === 'expired') message = 'Confirmation expired. The Note did not restart.';
+      if (confirmation.state === 'cancelled') message = 'Restart cancelled on the Note.';
+      if (confirmation.state === 'confirmed') message = 'Restart confirmed on the Note.';
+    }
+  } catch {
+    message = 'Note unavailable. Reconnect to check its status.';
+  }
+  if (displayedRestart === ticket && !el('restart-note').hidden) {
+    el('restart-status').textContent = message;
+    displayedRestart = 0;
+  }
+}
+
 function requestRestart(mode) {
   return run(async () => {
     const response = await request('restart.request', { mode });
     if (response.pending !== true) throw new Error('The Note did not open the restart confirmation.');
-    const prompt = 'Confirm or cancel on the Note display.';
+    const prompt = 'Confirm or cancel on the Note display within 30 seconds of the prompt appearing.';
+    displayedRestart = response.ticket || 0;
+    if (displayedRestart) setTimeout(() => checkRestartOutcome(response.ticket), 31000);
     el('restart-status').textContent = prompt;
     status(prompt);
   });

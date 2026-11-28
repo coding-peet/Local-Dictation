@@ -1,9 +1,11 @@
 #include "Arduino.h"
+#include "owner_trace.h"
 #include "../../config.h"
 #include "../../globals.h"
 #include "../../types.h"
 #include "monthly_recordings.h"
 #include "notes.h"
+#include "stage2_bench.h"
 #include "record.h"
 #include "local_transcript_policy.h"
 #include "rtc.h"
@@ -147,6 +149,7 @@ bool saveNoteTranscript(int num, const String& text, const char* route) {
   char target[64];
   transcriptPath(num, target);
   if (!note_transcript::storeOnce(target, {text.c_str(), text.length()})) return false;
+  stage2::cutWindow(stage2::Point::Text, num);
   if (registerRecorderWork(num)) return true;
   startRecorderWork();
   return false;
@@ -199,6 +202,7 @@ bool repairCatalogRecording(int num, bool interrupted = false) {
 }
 
 bool recoverCaptureIntent() {
+  owner_trace::WorkScope ownerWork(owner_trace::Work::Recovery);
   return note_catalog::recoverReservation("/sdcard" NOTES_DIR "/capture.pending", [](int note, const char* utc) {
     if (noteIsTrashed(note)) return true;
     char wav[72];
@@ -217,6 +221,7 @@ bool recoverCaptureIntent() {
 }
 
 bool loadCatalogBase() {
+  owner_trace::WorkScope ownerWork(owner_trace::Work::Catalog);
   bool filtered = false;
   uint32_t examined = 0;
   if (!catalogSnapshot.load(noteIndex, "/sdcard" INDEX_FILE, "/sdcard" INDEX_FILE ".bak",
@@ -250,6 +255,7 @@ bool startCatalogRecovery() {
 }  // namespace
 
 void initializeNoteCatalog(bool recoverSources) {
+  owner_trace::WorkScope ownerWork(owner_trace::Work::Catalog);
 #if PALA_RECORDER_FIRST
   startRecorderWork();
   return;
@@ -276,6 +282,7 @@ bool noteCatalogReady() {
 }
 
 bool maintainNoteCatalog() {
+  owner_trace::WorkScope ownerWork(owner_trace::Work::Catalog);
 #if PALA_RECORDER_FIRST
   return scanRecorderWorkSlice();
 #endif
@@ -370,6 +377,7 @@ bool emptyArchive() {
 #endif
 
 bool initializeRecordingLayout() {
+  owner_trace::WorkScope ownerWork(owner_trace::Work::Layout);
 #if PALA_RECORDER_FIRST
   using namespace recording_layout;
   monthly_recordings::firstNewSequence = 0;

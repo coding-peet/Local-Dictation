@@ -1,5 +1,6 @@
 #include "Arduino.h"
 #include "draw.h"
+#include "display_pipeline.h"
 #include "../../globals.h"
 #include <Adafruit_GFX.h>
 #include <pgmspace.h>
@@ -16,7 +17,7 @@
 
 inline void px(int x, int y, uint8_t c) {
   if ((unsigned)x >= W || (unsigned)y >= H) return;
-  uint8_t* buf = display->getBuffer();
+  uint8_t* buf = note_display::pixels();
   int      idx = y * BPR + (x >> 3);
   uint8_t  bit = 1 << (7 - (x & 7));
   if (c == BLACK) buf[idx] &= ~bit; else buf[idx] |= bit;
@@ -28,7 +29,7 @@ void fillRect(int x, int y, int w, int h, uint8_t c) {
   if (x >= W || y >= H || w <= 0 || h <= 0) return;
   if (x + w > W) w = W - x;
   if (y + h > H) h = H - y;
-  uint8_t* buf  = display->getBuffer();
+  uint8_t* buf  = note_display::pixels();
   int x2    = x + w - 1;
   int byteL = x  >> 3, byteR = x2 >> 3;
   uint8_t mL = 0xFF >> (x  & 7);
@@ -59,7 +60,7 @@ void vline(int x, int y, int h, uint8_t c) {
   if (y < 0) { h += y; y = 0; }
   if (y + h > H) h = H - y;
   if (h <= 0) return;
-  uint8_t* buf = display->getBuffer();
+  uint8_t* buf = note_display::pixels();
   int idx = y * BPR + (x >> 3);
   uint8_t bit = 1 << (7 - (x & 7));
   if (c == BLACK) { for (int i=0;i<h;i++,idx+=BPR) buf[idx]&=~bit; }
@@ -141,50 +142,10 @@ void drawBitmap1BPP(int x0, int y0, const uint8_t* bits, int bw, int bh, uint8_t
   }
 }
 
-namespace {
-bool epaperBaseReady = false;
-uint8_t epaperPartialRefreshes = 0;
-constexpr uint8_t kPartialRefreshesBeforeClean = 8;
-}
-
-void clearWhite() { display->EPD_Clear(); }
-// The first frame after power-up establishes both controller image planes.
-// Afterwards use the much faster partial waveform and periodically clean the
-// panel to prevent accumulated ghosting.
-void refresh(void (*serviceWhileWaiting)()) {
-  display->setWaitCallback(serviceWhileWaiting);
-  if (!epaperBaseReady || epaperPartialRefreshes >= kPartialRefreshesBeforeClean) {
-    refreshClean();
-  } else {
-    display->EPD_DisplayPart();
-    epaperPartialRefreshes++;
-  }
-  display->setWaitCallback(nullptr);
-}
-
-// Use only when the layout and background stay identical (for example the
-// Moment counter while a recording screen is already visible).
-void refreshFast(void (*serviceWhileWaiting)()) {
-  display->setWaitCallback(serviceWhileWaiting);
-  if (!epaperBaseReady) {
-    refreshClean();
-  } else {
-    display->EPD_DisplayPart();
-    if (epaperPartialRefreshes < UINT8_MAX) ++epaperPartialRefreshes;
-  }
-  display->setWaitCallback(nullptr);
-}
-
-// Rebuild both controller image planes with the full waveform. Use this only
-// for long-lived screens where ghost-free reading matters more than the extra
-// refresh time; interactions continue to use the fast partial waveform.
-void refreshClean() {
-  display->EPD_Init();
-  display->EPD_DisplayPartBaseImage();
-  display->EPD_Init_Partial();
-  epaperBaseReady = true;
-  epaperPartialRefreshes = 0;
-}
+void clearWhite() { memset(note_display::pixels(), 0xff, BPR * H); }
+void refresh(void (*service)()) { note_display::present(note_display::Refresh::Regular, service); }
+void refreshFast(void (*service)()) { note_display::present(note_display::Refresh::Fast, service); }
+void refreshClean() { note_display::present(note_display::Refresh::Clean); }
 
 // ─── Large digit renderer ──────────────────────────────────────────────────
 

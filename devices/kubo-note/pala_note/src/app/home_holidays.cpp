@@ -1,4 +1,5 @@
 #include "home_holidays.h"
+#include "owner_trace.h"
 #include "holiday_calendar.h"
 #include "home_bridge_status.h"
 #include "bridge_client.h"
@@ -14,6 +15,7 @@ HolidayCalendar calendar;
 }
 
 void loadHomeHolidays() {
+  owner_trace::WorkScope ownerWork(owner_trace::Work::Holidays);
   const auto stored = palaSavedHolidays();
   parseHolidaySnapshot({stored.c_str(), stored.length()}, calendar);
 }

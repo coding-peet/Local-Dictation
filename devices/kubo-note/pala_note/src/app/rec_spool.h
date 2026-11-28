@@ -5,6 +5,8 @@
 #include <cstdint>
 #include <ctime>
 #include "capture_wav_recovery.h"
+#include "capture_clock.h"
+#include "recording_parts.h"
 #include <string>
 #include <sys/stat.h>
 
@@ -34,18 +36,7 @@ inline bool parse(const std::string& name, int& id, std::string& base, uint32_t&
          hex.ec == std::errc{} && hex.ptr == base.data()+split+9;
 }
 
-inline std::string captureUtc(uint32_t seconds) {
-  const auto epoch = static_cast<std::time_t>(seconds);
-  if (epoch < 1600000000) return {};
-  std::tm fields{};
-#ifdef _WIN32
-  if (gmtime_s(&fields, &epoch) != 0) return {};
-#else
-  if (!gmtime_r(&epoch, &fields)) return {};
-#endif
-  char stamp[24]{};
-  return std::strftime(stamp, sizeof(stamp), "%Y-%m-%dT%H:%M:%SZ", &fields) ? stamp : "";
-}
+using capture_clock::captureUtc;
 
 // Only the boot scanner may promote a partial. After this rename the claim
 // and capture.pending carry the recording through its normal adoption path.
@@ -84,18 +75,32 @@ bool adopt(const std::string& inbox, const std::string& notes, std::string name,
   uint32_t epoch = 0;
   id = 0;
   if (!parse(name, id, base, epoch)) return false;
+  std::string target, wav;
+  auto resolve = [&] {
+    char number[30]{};
+    std::snprintf(number, sizeof(number), "note_%03d", id);
+    target = notes + number;
+    wav = wavPath(id, target);
+    return present(wav);
+  };
   if (!id) {
-    id = allocate(epoch);
-    if (id <= 0) return false;
+    // Find a free target before persisting the claim or moving sidecars.
+    int occupied;
+    do {
+      const int previous = id;
+      id = allocate(epoch);
+      if (id <= previous) return false;
+      occupied = resolve();
+    } while (occupied > 0);
+    if (occupied < 0) return false;
     const auto claimed = std::string("c") + std::to_string(id) + "-" + name;
     if (present(inbox+claimed) != 0 || std::rename((inbox+name).c_str(), (inbox+claimed).c_str()) != 0)
       return false;
     name = claimed;
+  } else if (resolve() != 0) {
+    return false;
   }
-  char number[30]{};
-  std::snprintf(number, sizeof(number), "note_%03d", id);
-  const std::string target = notes + number, wav = wavPath(id, target);
-  if (present(wav) != 0 || !reserve(id, epoch)) return false;
+  if (!reserve(id, epoch)) return false;
   const auto marks = inbox + base.substr(0, base.size()-4) + ".mom";
   const int hasMarks = present(marks);
   if (hasMarks < 0) return false;
@@ -103,6 +108,6 @@ bool adopt(const std::string& inbox, const std::string& notes, std::string name,
     const auto destination = momentsPath(id, target);
     if (present(destination) != 0 || std::rename(marks.c_str(), destination.c_str()) != 0) return false;
   }
-  return prepare(id, epoch) && std::rename((inbox+name).c_str(), wav.c_str()) == 0 && finish(id);
+  return recording_parts::moveSidecars(inbox+base,wav) && prepare(id, epoch) && std::rename((inbox+name).c_str(), wav.c_str()) == 0 && finish(id);
 }
 }

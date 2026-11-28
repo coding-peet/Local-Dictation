@@ -1,6 +1,6 @@
 #pragma once
 #ifdef PALA_SPEECH_STREAM_HOST_TEST
-#include "../../../scripts/speech_stream_mocks.h"
+#include "speech_stream_mocks.h"
 #else
 #include <Arduino.h>
 #endif

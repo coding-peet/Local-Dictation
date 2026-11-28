@@ -1,4 +1,10 @@
+#include "recording_parts.h"
 #include "usb_sync.h"
+#if PALA_USB_CARD_SERVICE
+#include "usb_storage_boot.h"
+#endif
+#include "owner_trace.h"
+#include "stage2_bench.h"
 #include "record.h"
 #include "provider.h"
 #include "usb_data_frame.h"
@@ -15,7 +21,11 @@ BluetoothSyncReply sendReply = sendSerial;
 void reply(const String& message) {
   // A leading delimiter lets the host recover from a previously truncated frame.
   const String frame = String("\n") + kPrefix + message + "\n";
-  if (sendReply == sendSerial && message.startsWith("DATA ")) {
+  bool readbackFrame = message.startsWith("DATA ");
+#if PALA_STAGE2_BENCH
+  readbackFrame |= message.startsWith("BENCH TRACE1 ");
+#endif
+  if (sendReply == sendSerial && readbackFrame) {
     writeUsbDataFrame(Serial, reinterpret_cast<const uint8_t*>(frame.c_str()), frame.length());
   } else {
     sendReply(frame);
@@ -104,6 +114,10 @@ struct BluetoothOrganization {
 
 File download;
 int selectedNote = 0;
+std::vector<recording_parts::Entry> selectedParts;
+int selectedPart = -1, savedPiece = -1;
+recording_parts::TranscriptArchive segmentArchive;
+bool receivingPiece = false;
 size_t downloadBytes = 0;
 size_t sentBytes = 0;
 String lastReadHex;
@@ -120,6 +134,10 @@ String notePath(int number, const char* extension) {
 void resetTransfer() {
   if (download) download.close();
   selectedNote = 0;
+  selectedParts.clear();
+  selectedPart = savedPiece = -1;
+  receivingPiece=false;
+  segmentArchive.reset();
   downloadBytes = 0;
   sentBytes = 0;
   lastReadHex = String();
@@ -349,7 +367,15 @@ bool offerRecording(const NoteEntry& note) {
   rememberRecordingSyncNote(note.num);
   selectedNote = note.num;
   downloadBytes = download.size();
-  reply(String("NOTE ") + selectedNote + " " + downloadBytes);
+  const auto state = recording_parts::read(std::string("/sdcard")+path.c_str(),selectedParts);
+  if (state==recording_parts::State::Single) {
+    reply(String("NOTE ") + selectedNote + " " + downloadBytes);
+  } else if (state==recording_parts::State::Complete || state==recording_parts::State::Interrupted) {
+    download.close();
+    downloadBytes=0;
+    segmentArchive.start(std::string("/sdcard")+path.c_str(),"usb");
+    reply(String("PARTS ")+selectedNote+" "+selectedParts.size());
+  } else { resetTransfer(); reply("ERROR NOTE"); }
   return true;
 }
 
@@ -411,6 +437,21 @@ void exportTranscript(const String& value) {
   reply(String("TRANSCRIPT ") + id + " " + downloadBytes + " " + captureTimestamp(id));
 }
 
+void selectPart(const String& first) {
+  uint32_t i = 0;
+  if (!selectedNote || selectedParts.empty() || !decimal(first,selectedParts.size()-1,i) ||
+      int(i)!=selectedPart+1 || savedPiece!=selectedPart || sentBytes!=downloadBytes) { reply("ERROR PART"); return; }
+  const auto path=recording_parts::path(notePath(selectedNote,"wav").c_str(),i);
+  download=SD_MMC.open(path.c_str(),FILE_READ);
+  const auto row=selectedParts[i];
+  if (!download || download.size()!=row.bytes+44) { resetTransfer(); reply("ERROR PART"); return; }
+  selectedPart=i;
+  sentBytes=0;
+  lastReadHex=String();
+  downloadBytes=row.bytes+44;
+  reply(String("PART ")+i+" "+downloadBytes+" "+row.crc);
+}
+
 void readDownload(const String& first, const String& second, bool readingText) {
   uint32_t offset = 0;
   uint32_t length = 0;
@@ -449,7 +490,8 @@ void readDownload(const String& first, const String& second, bool readingText) {
 void beginPayload(const String& size, const String& checksum, bool weather) {
   uint32_t length = 0;
   const bool validState = weather ? !selectedNote && !downloadBytes
-                                  : selectedNote && sentBytes == downloadBytes;
+                                  : selectedNote && sentBytes == downloadBytes &&
+                                    (selectedParts.empty() || (selectedPart+1==int(selectedParts.size()) && savedPiece==selectedPart));
   if (!validState || textBytes || !decimal(size, weather ? kHomeForecastMaxBytes : kMaximumText, length) ||
       !length || !validHex(checksum, 64) || !transcript.reserve(length)) {
     reply(weather ? "ERROR WEATHER" : "ERROR TEXT");
@@ -481,8 +523,31 @@ void appendTranscript(const String& first, const String& data) {
   reply(appendPayload(transcript, textBytes, kMaximumWrite, first, data) ? "OK" : "ERROR TEXT");
 }
 
+void beginPiece(const String& size,const String& digest) {
+  uint32_t n=0;
+  if (selectedPart<0 || receivingPiece || textBytes || selectedPart!=savedPiece+1 ||
+      sentBytes!=downloadBytes || !validHex(digest,64) || !decimal(size,kMaximumText,n) ||
+      (n && !transcript.reserve(n))) { reply("ERROR TEXT"); return; }
+  receivingPiece=true;
+  textBytes=n;
+  textDigest=digest;
+  reply("OK");
+}
+void endPiece() {
+  if (!receivingPiece || transcript.length()!=textBytes || !payloadDigestMatches(transcript,textDigest) ||
+      !segmentArchive.piece(selectedPart,transcript.c_str(),transcript.length())) {
+    resetTransfer(); reply("ERROR TEXT"); return;
+  }
+  savedPiece=selectedPart;
+  receivingPiece=false;
+  textBytes=0;
+  textDigest="";
+  transcript=String();
+  reply("OK");
+}
+
 void commitTranscript(bool organizeCalendar) {
-  if (!selectedNote || receivingWeather || !textBytes ||
+  if (!selectedNote || receivingWeather || receivingPiece || !textBytes ||
       transcript.length() != textBytes || !payloadDigestMatches(transcript, textDigest)) {
     reply("ERROR TEXT");
     return;
@@ -493,6 +558,12 @@ void commitTranscript(bool organizeCalendar) {
       (plannedBluetooth && bluetoothBacklog.process);
   // Persist the route before the text so a reboot cannot skip organization.
   const char* route = needsOrganization ? "organizing" : "usb-local";
+  if (!selectedParts.empty() &&
+      !segmentArchive.finish(selectedParts.size(), {transcript.c_str(), transcript.length()})) {
+    reply("ERROR SAVE");
+    resetTransfer();
+    return;
+  }
   if (!saveNoteTranscript(note, transcript, route)) {
     reply("ERROR SAVE");
     resetTransfer();
@@ -765,13 +836,18 @@ bool handleRecorderWork(const String& command, const String& first, const String
     }
     if (claiming) {
       if (!recordingSyncAllowed()) { reply("ERROR BUSY"); return true; }
-      switch (claimRecorderDelivery(id, second)) {
+      const auto grant = claimRecorderDelivery(id, second);
+      if (grant == recorder_work::Claim::Granted || grant == recorder_work::Claim::Reconcile)
+        stage2::transport(owner == Link::Usb ? "usb" : "ble",
+                          grant == recorder_work::Claim::Granted ? "write" : "reconcile", id);
+      switch (grant) {
         case recorder_work::Claim::Granted: reply("CLAIMED"); break;
         case recorder_work::Claim::Reconcile: reply("RECONCILE"); break;
         case recorder_work::Claim::Conflict: reply("CONFLICT"); break;
         case recorder_work::Claim::Error: reply("ERROR SAVE"); break;
       }
     } else if (finishRecorderDelivery(id, second)) {
+      stage2::transport(owner == Link::Usb ? "usb" : "ble", "delivered", id);
       finishTransportRecording(id);
       homeChanged = true;
       reply(String("DELIVERED ") + id);
@@ -789,6 +865,7 @@ bool handleRecorderWork(const String& command, const String& first, const String
 
 void handleCommand(const String& command, const String& first, const String& second,
                    bool idle, Link link, const String& peer, bool deliveryOnly, bool audioSupported) {
+  owner_trace::WorkScope ownerWork(owner_trace::Work::Usb);
   if (!idle) { reply("ERROR BUSY"); return; }
   expireSession();
   if (hostNonce.length() && owner != link) {
@@ -854,6 +931,36 @@ void handleCommand(const String& command, const String& first, const String& sec
       reply("OK");
     }
   }
+#if PALA_STAGE2_BENCH
+  else if (command == "BENCH" && owner == Link::Usb) {
+    uint32_t target = 0;
+    if (first == "status" && second.isEmpty()) reply(String("BENCH ") + noteDeviceSerial() + " " + PALA_NOTE_VERSION);
+#if PALA_USB_CARD_SERVICE
+#if PALA_STAGE3_TRIAL
+    else if (first == "trial-card" && second.isEmpty()) {
+      if (!syncQueueReady() || !recordingTotalMiB()) reply("ERROR BUSY");
+      else {
+        const auto count = syncQueueCounts();
+        reply(String("BENCH CARD ") + recordingTotalMiB() + " " + recordingUsedMiB() + " " +
+              count.audio + " " + count.organization);
+      }
+    }
+#endif
+    else if (first == "usb-storage" && second.isEmpty()) {
+      // A live transfer or an outstanding REC retains ownership of the card.
+      if (selectedNote || receivingWeather || textBytes || !noteCatalogReady() ||
+          !syncQueueReady() || pendingPriorityRecording()) reply("ERROR BUSY");
+      else { requestUsbStorageRestart(); reply("OK"); }
+    } else if ((first == "usb-storage-next" || first == "usb-storage-cancel") && second.isEmpty()) {
+      reply(setNextUsbStorageBoot(first == "usb-storage-next") ? "OK" : "ERROR SAVE");
+    }
+#endif
+    else if (first == "trace" && !second.isEmpty()) reply(stage2::metricsPage(second));
+    else if ((!second.length() || (decimal(second, INT32_MAX, target) && monthly_recordings::sequence(target))) &&
+             stage2::configure(first, target)) reply("OK");
+    else reply("ERROR COMMAND");
+  }
+#endif
   else if (command == "CLOCK" && owner == Link::Usb) {
     if (first.isEmpty() && second.isEmpty()) {
       reply(String("CLOCK ") + static_cast<uint32_t>(rtcUtcEpoch()) + " " +
@@ -887,6 +994,16 @@ void handleCommand(const String& command, const String& first, const String& sec
   else if (command == "AUDIO" && audioSupported && selectedNote && download && !sentBytes && first.isEmpty()) {
     reply(String("AUDIO ") + pala_ble::kAudioBlockBytes);
   }
+  else if (command == "PART-CACHED") {
+    uint32_t index=0,crc=0;
+    if (selectedPart<0 || !download || sentBytes || !decimal(first,selectedParts.size()-1,index) ||
+        int(index)!=selectedPart || !decimal(second,UINT32_MAX,crc) || crc!=selectedParts[index].crc) {
+      reply("ERROR PART");
+    } else { download.close(); sentBytes=downloadBytes; reply("OK"); }
+  }
+  else if (command == "PIECE") beginPiece(first,second);
+  else if (command == "PIECE-END" && first.isEmpty()) endPiece();
+  else if (command == "PART" && !second.length()) selectPart(first);
   else if (command == "META" && !first.length() && !second.length()) {
     if (selectedNote) reply(String("META ") + captureTimestamp(selectedNote));
     else reply("ERROR NOTE");

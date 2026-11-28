@@ -2,6 +2,9 @@
 
 #include <cassert>
 #include <thread>
+#include <cstdio>
+#include <initializer_list>
+#include <cstdlib>
 
 using Buffer = pcm_capture::Buffer<4, 2>;
 
@@ -45,7 +48,47 @@ static void runAcrossThreads() {
   producer.join();
 }
 
+// Replay a 16 kHz microphone while the SD writer makes no progress.
+// The first block is already in the writer when file preparation stalls.
+// Stop producing at button release, then drain and compare every sample.
+static void runSlowWriter() {
+  using Recorder = pcm_capture::RecorderBuffer;
+  static constexpr uint32_t frames = pcm_capture::recorderFrames;
+  static Recorder::Storage storage;
+  Recorder buffer(storage);
+  uint32_t produced = 0, saved = 0;
+  auto sample = [](uint32_t frame) { return static_cast<int16_t>(frame % 32749); };
+  auto produceBlock = [&] {
+    int16_t stereo[frames * 2];
+    for (uint32_t i = 0; i < frames; ++i) {
+      stereo[2 * i] = sample(produced * frames + i);
+      stereo[2 * i + 1] = -1;
+    }
+    if (!buffer.pushStereo(stereo, (produced + 1) * 16, produced % 19 == 0)) {
+      std::fprintf(stderr, "overflow after %u frames before the writer resumed\n", produced * frames);
+      std::exit(1);
+    }
+    ++produced;
+  };
+  auto checkBlock = [&](const Recorder::Block& block) {
+    for (uint32_t i = 0; i < frames; ++i) assert(block.samples[i] == sample(saved * frames + i));
+    assert(block.sampledAt == (saved + 1) * 16 && block.marker == (saved % 19 == 0));
+    ++saved;
+  };
+  for (const auto stallMs : {6500U, 12000U}) {
+    Recorder::Block block;
+    produceBlock();
+    assert(buffer.pop(block));
+    const uint32_t blocks = (stallMs * 16 + frames - 1) / frames;
+    for (uint32_t i = 0; i < blocks; ++i) produceBlock();
+    checkBlock(block);
+    while (buffer.pop(block)) checkBlock(block);
+    assert(saved == produced && saved == buffer.producedBlocks());
+  }
+}
+
 int main() {
+  runSlowWriter();
   Buffer::Storage storage;
   Buffer buffer(storage);
   Buffer::Block block{};
@@ -79,6 +122,7 @@ int main() {
   assert(!buffer.pop(block));
 
   buffer.reset();
+  assert(buffer.producedBlocks() == 0);
   assert(produce(buffer, 100, 16));
   checkNext(buffer, 100, 16);
   assert(!buffer.pop(block));

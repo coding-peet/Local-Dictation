@@ -28,6 +28,7 @@ from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from appointment_dates import early_tomorrow_choices, recording_time, resolve_yearless, valid_future_start
+from ask_kubo import answer_ask_kubo, ask_task_rows
 from bridge_activity import BridgeActivity, activity_step
 from bridge_discovery import authorized_device, BridgeServer, serve
 from holidays import holiday_snapshot
@@ -155,6 +156,65 @@ def local_dictation_application_key(host, port):
     if not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", key):
         raise ValueError("Invalid Bridge application key file.")
     return key
+
+
+NOTE_SPEECH_VOICES = {"piper-lili": "lili", "supertonic-3": "F1"}
+NOTE_AUDIO_LIMIT = 8 * 1024 * 1024
+
+
+def render_note_pcm(connection, headers, options):
+    connection.request("POST", "/v1/audio/speech", encode(options), headers)
+    response = connection.getresponse()
+    if response.status != 200:
+        raise OSError(f"Local Dictation speech returned HTTP {response.status}")
+    data = response.read(NOTE_AUDIO_LIMIT + 1)
+    if len(data) > NOTE_AUDIO_LIMIT:
+        raise ValueError("Speech exceeds the Note audio limit.")
+    with wave.open(io.BytesIO(data)) as sound:
+        frames = sound.getnframes()
+        if sound.getparams()[:3] != (1, 2, 24000) or frames < 1:
+            raise ValueError("Expected 24 kHz mono PCM16 speech.")
+        pcm = sound.readframes(frames)
+        if len(pcm) != frames * 2:
+            raise ValueError("Incomplete Note speech.")
+        return pcm
+
+
+def synthesize_note_speech(settings, model, document):
+    voice = NOTE_SPEECH_VOICES.get(model)
+    if not voice:
+        raise ValueError("Unsupported Note synthesis model.")
+    text = document["input"].strip()
+    fmt = document["response_format"]
+    if not text or len(text) > 8000 or fmt not in ("pcm", "wav"):
+        raise ValueError("Invalid Note speech request.")
+    host, port = local_dictation_address(settings)
+    key = local_dictation_application_key(host, port)
+    if not key:
+        raise OSError("Configure the Bridge application key for local speech.")
+    headers = {"Content-Type": "application/json", "Authorization": "Bearer " + key}
+    pcm = bytearray()
+    with contextlib.closing(http.client.HTTPConnection(host, port, timeout=60)) as connection:
+        while text:
+            cut = min(500, len(text))
+            if cut < len(text):
+                boundaries = list(re.finditer(r"[.!?](?=\s)|\s", text[:cut]))
+                if boundaries:
+                    cut = boundaries[-1].end()
+            part, text = text[:cut].strip(), text[cut:].lstrip()
+            pcm.extend(render_note_pcm(connection, headers, {
+                "input": part, "model": model, "voice": voice, "language": "sk",
+                "speed": document.get("speed", 1.0),
+            }))
+            if len(pcm) + 44 > NOTE_AUDIO_LIMIT:
+                raise ValueError("Speech exceeds the Note audio limit.")
+    if fmt == "pcm":
+        return bytes(pcm)
+    output = io.BytesIO()
+    with wave.open(output, "wb") as sound:
+        sound.setparams((1, 2, 24000, 0, "NONE", "not compressed"))
+        sound.writeframes(pcm)
+    return output.getvalue()
 
 
 def local_dictation_requires_key(health):
@@ -309,21 +369,29 @@ def codex_model_catalog():
     return list(items.values())
 
 
-def codex(prompt, schema, *, profile=None, timeout=120):
+def codex(prompt, schema, *, profile=None, timeout=120, public_web=False):
     cli = codex_command()
     require_chatgpt_login(cli)
     with tempfile.TemporaryDirectory() as work:
         out = Path(work) / "result"
         args = cli + ["exec", "--ephemeral", "--ignore-user-config",
                 "--skip-git-repo-check", "--sandbox", "read-only", "--disable", "shell_tool", "--disable", "apps",
-                "-c", 'web_search="disabled"', "-o", str(out)]
+                "-c", 'web_search="live"' if public_web else 'web_search="disabled"', "-o", str(out)]
+        if public_web:
+            args += ["--json", "-c", "mcp_servers={}"]
         args += codex_options(local_dictation_settings() if profile is None else profile)
         if schema:
             spec = Path(work) / "schema.json"
             spec.write_bytes(encode(schema))
             args += ["--output-schema", str(spec)]
-        subprocess.run(args + ["-"], input=prompt.encode(), cwd=work, env=codex_environment(),
-                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True, timeout=timeout)
+        run = subprocess.run(args + ["-"], input=prompt.encode(), cwd=work, env=codex_environment(),
+                             stdout=subprocess.PIPE if public_web else subprocess.DEVNULL,
+                             stderr=subprocess.PIPE, check=True, timeout=timeout)
+        if public_web:
+            events = (json.loads(line) for line in run.stdout.splitlines() if line.strip())
+            if not any(event.get("type") == "item.completed" and event.get("item", {}).get("type") == "web_search"
+                       for event in events):
+                raise RuntimeError("The public answer did not use web search.")
         return out.read_text(encoding="utf-8").strip()
 
 
@@ -393,6 +461,7 @@ class Bridge:
         self.lock = threading.Lock()
         self.encoder = None
         self.last_contact = None
+        self.workspace_calendar = None
         self.activity = BridgeActivity(state, "network")
         self.weather = ForecastCache(local_dictation_weather_location)
         with self.database() as db:
@@ -657,7 +726,16 @@ class Bridge:
             db.execute("INSERT INTO results VALUES(?,?,?,?)", (*key, json.dumps(result, ensure_ascii=False)))
             return result
 
-    def transcribe(self, body, content_type, *, device=None):
+    def cached_segment(self,device,note,index,count,crc):
+        from recording_parts import SegmentedTranscription
+        return SegmentedTranscription(self.state).cached(device,note,index,count,crc)
+
+    def transcribe_segment(self, device, note, index, count, crc, audio, recognize=None):
+        from recording_parts import SegmentedTranscription
+        return SegmentedTranscription(self.state).receive(
+            device,note,index,count,crc,audio,recognize or self._recognize_upload)
+
+    def transcribe(self, body, content_type, *, device=None, segmented=False):
         # An authenticated recording has an additional note-number field.
         boundary = re.fullmatch(r"multipart/form-data; boundary=([\w-]{1,70})", content_type)
         if not boundary:
@@ -674,6 +752,16 @@ class Bridge:
                 raise ValueError("PCM mono required")
         identity_field = b'Content-Disposition: form-data; name="pala_note"\r\n\r\n'
         prefix = body[:offset]
+        if segmented:
+            if not device:
+                raise PermissionError("Segmented audio requires an individually paired Note.")
+            field = b'Content-Disposition: form-data; name="pala_part"\r\n\r\n'
+            if field not in prefix or prefix.count(field)!=1:
+                raise ValueError("Missing recording part identity.")
+            part = prefix.split(field)[1].split(b"\r\n",1)[0]
+            if not re.fullmatch(rb"[0-9]{1,10}( [0-9]{1,10}){3}",part):
+                raise ValueError("Invalid recording part identity.")
+            return self.transcribe_segment(device,*map(int,part.split()),audio)
         if identity_field in prefix:
             value = prefix.split(identity_field, 1)[1].split(b"\r\n", 1)[0]
             if not re.fullmatch(rb"[1-9][0-9]{0,9}", value):
@@ -752,11 +840,27 @@ class Bridge:
             connection.close()
 
     def dispatch(self, route, body, content_type, *, device=None):
+        if route == "/pala/recording-part":
+            return self.transcribe(body,content_type,device=device,segmented=True)
         if route == "/v1/audio/transcriptions":
             if device:
                 return self.transcribe(body, content_type, device=device)
             return self.transcribe(body, content_type)
         doc = json.loads(body)
+        if route == "/pala/recording-part-status":
+            if not device:
+                raise PermissionError("A paired Note is required.")
+            return self.cached_segment(device,doc["note"],doc["part"],doc["count"],doc["crc"]) or {"missing":True}
+        if route == "/pala/ask-kubo":
+            if not device:
+                raise PermissionError("Ask Kubo requires an individually paired Note.")
+            if processing_config(self.state, self.config)["processing_mode"] != "kubo":
+                raise ProcessingDisabled("Bridge is set to transcription only.")
+            return answer_ask_kubo(
+                doc.get("question"), doc.get("language"),
+                search=lambda prompt: codex(prompt, None, timeout=40, public_web=True),
+                read_tasks=lambda period: ask_task_rows(self.state, self.config, device, period),
+            )
         if route in ("/pala/recorder-plan", "/pala/recorder-apply"):
             from pala_google import DestinationUnavailable
             from recorder_delivery import dispatch_work
@@ -847,6 +951,11 @@ class Bridge:
                 norm = max(sum(float(x)**2 for x in vector)**0.5, 1e-12)
                 return {"data": [{"embedding": [float(x) / norm for x in vector]}]}
             if route == "/v1/audio/speech":
+                settings = local_dictation_settings()
+                model = settings.get("PalaSpeechModel")
+                target = settings.get("PalaSpeechDevice")
+                if model and (target is None or device and device.replace(":", "").casefold() == target.casefold()):
+                    return synthesize_note_speech(settings, model, doc)
                 with tempfile.TemporaryDirectory() as work:
                     wav = Path(work) / "speech.wav"
                     if os.name == "nt":
@@ -877,6 +986,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         bridge = self.server.bridge
+        if self.path in ("/pala/workspace-calendar", "/pala/workspace-calendar?v=2"):
+            feed = getattr(bridge, "workspace_calendar", None)
+            if feed is None:
+                self.send_error(404)
+                return
+            device = paired_device(bridge, self.headers.get("Authorization", ""))
+            payload = feed.payload_for(device, include_saved=self.path.endswith("?v=2"))
+            if payload is None:
+                self.send_error(401)
+                return
+            self.send_json(200, payload)
+            return
         if self.path in ("/pala/delivery", "/pala/home", "/pala/home?v=3", "/pala/home?v=4"):
             from pala_google import home_dashboard_payload, home_delivery_payload
 
@@ -958,19 +1079,19 @@ class Handler(BaseHTTPRequestHandler):
         bridge = self.server.bridge
         authorization = self.headers.get("Authorization", "")
         device = paired_device(bridge, authorization)
-        if device is None and not authorized_device(bridge.config, authorization):
+        if device is None and (self.path in ("/pala/ask-kubo","/pala/recording-part","/pala/recording-part-status") or not authorized_device(bridge.config, authorization)):
             self.send_error(401)
             return
         bridge.last_contact = dt.datetime.now(dt.timezone.utc).isoformat()
         try:
-            limit = 25100000 if self.path == "/v1/audio/transcriptions" else 1024 * 1024
+            limit = 25100000 if self.path in ("/v1/audio/transcriptions","/pala/recording-part") else 1024 * 1024
             size = int(self.headers.get("Content-Length", 0))
             if not 0 < size <= limit:
                 self.send_error(413)
                 return
             self.connection.settimeout(180)
             activity = getattr(bridge, "activity", None)
-            transcription = self.path == "/v1/audio/transcriptions"
+            transcription = self.path in ("/v1/audio/transcriptions","/pala/recording-part")
             with activity_step(activity, "receiving" if transcription else "processing"):
                 data = self.rfile.read(size)
             if len(data) != size:
@@ -1018,6 +1139,15 @@ def serve_configured_bridge(config, stop, report):
     from pala_google import home_codex_usage
 
     bridge = Bridge(STATE, config)
+    if config.get("workspace_calendar"):
+        from workspace_calendar_feed import configured_calendar_feed
+        from workspace_tasks_mcp import McpReadError
+
+        try:
+            bridge.workspace_calendar = configured_calendar_feed(STATE, config)
+            bridge.workspace_calendar.payload_for(bridge.workspace_calendar.note_id)
+        except (McpReadError, OSError, TypeError, KeyError, ValueError):
+            print("Workspace Calendar is unavailable. Check the dedicated read-only profile.", flush=True)
     home_codex_usage(STATE, config)
     if config.get("discovery_id"):
         serve(STATE, config, Handler, bridge, stop=stop,
@@ -1090,6 +1220,10 @@ if __name__ == "__main__":
         sys.stdout.reconfigure(encoding="utf-8")
         print(json.dumps(DeliveryQueue(STATE).note_transcripts(int(sys.argv[2])), ensure_ascii=False))
         sys.exit(0)
+    if sys.argv[1:2] == ["--workspace-task-views"]:
+        from workspace_tasks_mcp import main as workspace_task_views
+
+        sys.exit(workspace_task_views(sys.argv[2:]))
     config = json.loads((STATE / "config.json").read_text())
     if sys.argv[1:] == ["--ms-login"]:
         from microsoft_store import credentials

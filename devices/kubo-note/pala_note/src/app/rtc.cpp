@@ -2,13 +2,38 @@
 #include "../../globals.h"
 #include "../../types.h"
 #include "rtc.h"
+#include "stage2_bench.h"
 #include "date_validation.h"
+#include "capture_clock.h"
 #include "WiFi.h"
 #include <time.h>
 #include <sys/time.h>
+#include <esp_timer.h>
 
 extern "C" {
 #include "../../src/i2c_bsp/i2c_bsp.h"
+}
+
+namespace {
+portMUX_TYPE captureClockGuard = portMUX_INITIALIZER_UNLOCKED;
+capture_clock::Anchor captureClock;
+
+void anchorCaptureClock(bool boot, bool stepped) {
+  timeval wall{};
+  if (gettimeofday(&wall, nullptr) != 0) return;
+  const auto now = esp_timer_get_time();
+  portENTER_CRITICAL(&captureClockGuard);
+  captureClock.sync(static_cast<int64_t>(wall.tv_sec) * 1000000 + wall.tv_usec, now, boot, stepped);
+  portEXIT_CRITICAL(&captureClockGuard);
+}
+}
+
+uint32_t captureEpochAtRec(uint32_t edge) {
+  if (!timeReady.load() || stage2::unknownClock()) return 0;
+  portENTER_CRITICAL(&captureClockGuard);
+  const auto anchor = captureClock;
+  portEXIT_CRITICAL(&captureClockGuard);
+  return anchor.epoch(esp_timer_get_time(), edge);
 }
 
 uint8_t bcdToDec(uint8_t v) { return ((v >> 4) * 10) + (v & 0x0F); }
@@ -93,11 +118,12 @@ time_t utcTmToEpoch(struct tm utc) {
 
 bool rtcSyncSystemFromChip() {
   struct tm utc;
-  if (!rtcReadUtcTm(&utc)) { timeReady = false; return false; }
+  if (!stage2::bootRtcAvailable() || !rtcReadUtcTm(&utc)) { timeReady = false; return false; }
   time_t epoch = utcTmToEpoch(utc);
   if (epoch < 1700000000) { timeReady = false; return false; }
   timeval tv; tv.tv_sec = epoch; tv.tv_usec = 0;
-  settimeofday(&tv, nullptr);
+  if (settimeofday(&tv, nullptr) != 0) { timeReady = false; return false; }
+  anchorCaptureClock(true, true);
   timeReady = true;
   return true;
 }
@@ -108,7 +134,10 @@ bool rtcSyncChipFromSystem() {
   struct tm utc;
   gmtime_r(&now, &utc);
   bool ok = rtcWriteUtcTm(utc);
-  if (ok) timeReady = true;
+  if (ok) {
+    anchorCaptureClock(false, false);
+    timeReady = true;
+  }
   return ok;
 }
 
@@ -128,10 +157,12 @@ bool rtcApplyBridgeUtc(time_t epoch) {
     if (chip < epoch || chip > epoch + 1) return false;
   }
   const time_t system = time(nullptr);
-  if (!timeReady || system < chip - 1 || system > chip + 1) {
+  const bool stepped = !timeReady || system < chip - 1 || system > chip + 1;
+  if (stepped) {
     timeval tv{chip, 0};
     if (settimeofday(&tv, nullptr) != 0) return false;
   }
+  anchorCaptureClock(false, stepped);
   timeReady = true;
   return true;
 }

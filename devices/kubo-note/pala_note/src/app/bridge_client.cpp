@@ -1,4 +1,5 @@
 #include "bridge_client.h"
+#include "wifi_trial.h"
 
 #if PALA_BRIDGE_DISCOVERY
 #include <ArduinoJson.h>
@@ -14,6 +15,7 @@
 
 namespace {
 IPAddress cachedAddress;
+uint16_t cachedPort = 0;
 IPAddress cachedLocal;
 IPAddress cachedGateway;
 String cachedSsid;
@@ -70,6 +72,9 @@ WifiBacklog probe(const NotePeer& peer, bool& transcribeOnly, bool homeOnly) {
   if (homeOnly) http.addHeader("X-Pala-Home", "1");
   else http.addHeader("X-Pala-Receipts", "1");
   const int status = http.GET();
+#if PALA_WIFI_TRIAL
+  if (wifi_trial::trace().sampling) wifi_trial::trace().httpStatus = static_cast<uint32_t>(status);
+#endif
   int receipt = 0;
   const int length = http.getSize();
   WifiBacklog readiness = WifiBacklog::Unavailable;
@@ -188,45 +193,81 @@ int ProviderClient::connect(const char* host, uint16_t port, int32_t timeout) {
   const IPAddress local = WiFi.localIP();
   const IPAddress gateway = WiFi.gatewayIP();
   const String ssid = WiFi.SSID();
-  const auto tryAddress = [&](const IPAddress& address, uint32_t duration) {
-    if (!onWifiLink(address)) return false;
+  const auto tryAddress = [&](const IPAddress& address, uint16_t destinationPort, uint32_t duration) {
+    if (!onWifiLink(address)) {
+#if PALA_WIFI_TRIAL
+      wifi_trial::disallowed();
+#endif
+      return false;
+    }
     // The address comes from local discovery, while TLS verifies the stored
     // hostname and certificate for this particular paired Bridge.
     _timeout = timeout > 0 && timeout < 3500 ? timeout : 3500;
-    const bool verified = WiFiClientSecure::connect(address, port, peer.host.c_str(),
+    const bool verified = WiFiClientSecure::connect(address, destinationPort, peer.host.c_str(),
                                                     peer.cert.c_str(), nullptr, nullptr);
     _timeout = timeout > 0 ? timeout : 30000;
+#if PALA_WIFI_TRIAL
+    if (wifi_trial::trace().sampling) {
+      auto& trace = wifi_trial::trace();
+      trace.socketIp = static_cast<uint32_t>(address);
+      trace.socketPort = destinationPort;
+      if (verified) trace.tcpReached = 1;
+      else if (trace.phase == 4) {
+        // Distinguish a reachable HTTPS socket from a failure to authenticate its certificate.
+        WiFiClient socket;
+        trace.tcpReached = socket.connect(address, destinationPort, 1500) ? 1U : 0U;
+        socket.stop();
+      }
+      char detail[48]{};
+      wifi_trial::tls(verified, verified ? 0 : lastError(detail, sizeof(detail)));
+    }
+#endif
     if (!verified) return false;
     cachedLocal = local;
     cachedGateway = gateway;
     cachedSsid = ssid;
     cachedHost = peer.host;
     cachedAddress = address;
+    cachedPort = destinationPort;
     cachedAt = millis();
     cacheDuration = duration;
     return true;
   };
 
   IPAddress tried;
+  uint16_t triedPort = 0;
   if (cachedHost == peer.host && cachedLocal == local && cachedGateway == gateway &&
       cachedSsid == ssid && millis() - cachedAt < cacheDuration) {
     tried = cachedAddress;
+    triedPort = cachedPort;
     const auto started = cachedAt;
-    if (tryAddress(tried, cacheDuration)) {
+    if (tryAddress(tried, triedPort, cacheDuration)) {
       cachedAt = started;
       return 1;
     }
   }
 
   const IPAddress discovered = lookupPairedBridge(peer.host);
-  if (discovered != tried && tryAddress(discovered, 30000)) return 1;
+#if PALA_WIFI_TRIAL
+  wifi_trial::resolved(static_cast<uint32_t>(discovered));
+#endif
+  if (discovered != IPAddress() && (discovered != tried || port != triedPort) &&
+      tryAddress(discovered, port, 30000)) return 1;
 
-  // The legacy manual fallback was saved before per-Bridge addresses existed.
   uint8_t manual[4];
-  if (peer.id == "legacy" && parseBridgeAddress(palaBridgeAddress().c_str(), manual)) {
-    const IPAddress address(manual);
-    if (address != discovered && address != tried && tryAddress(address, 8000)) return 1;
+  uint16_t manualPort = 0;
+  if (!parseBridgeEndpoint(palaBridgeAddress().c_str(), manual, manualPort)) return 0;
+  // A global fallback is unambiguous for the legacy Bridge or the only Wi-Fi peer.
+  if (peer.id != "legacy") {
+    for (int i = 0; i < notePeerCount(); ++i) {
+      const NotePeer other = notePeerAt(i);
+      if (other.id != peer.id && configured(other)) return 0;
+    }
   }
-  return 0;
+  const IPAddress address(manual);
+  if (!manualPort) manualPort = port;
+  if ((address == discovered && manualPort == port) ||
+      (address == tried && manualPort == triedPort)) return 0;
+  return tryAddress(address, manualPort, 8000) ? 1 : 0;
 }
 #endif

@@ -1,9 +1,11 @@
 #include "../../config.h"
+#include "display_pipeline.h"
 #include "provider.h"
 #include "ui.h"
 #include "network.h"
 #include "calendar_button.h"
 #include "record.h"
+#include "stage2_bench.h"
 #include "restart_maintenance.h"
 #include "../../globals.h"
 #include "draw.h"
@@ -24,6 +26,7 @@
 #include "local_calendar.h"
 #include "rtc.h"
 
+#include <atomic>
 #include <ctime>
 
 namespace {
@@ -46,17 +49,22 @@ static_assert(kHomeStatusX >= kInset && kHomeBatteryX + kBatteryWidth <= W);
 constexpr int kHeaderRuleY = 31;
 constexpr int kHomeWeatherHeight = 17;
 constexpr int kHomeDeliveryRuleY = 141;
-constexpr int kHomeDeliveryColumnGap = 4;
-constexpr int kHomeDeliveryLabelY = 146;
-constexpr int kHomeDeliverySecondLineY = 164;
-constexpr int kHomeDeliveryCountY = 182;
+constexpr int kHomeDeliveryColumnWidth = W / 2 - 6;
+constexpr int kHomeDeliveryLabelY = 151;
+constexpr int kHomeDeliveryValueCenterY = 182;
 constexpr int kContentTop = 43;
 constexpr int kFooterRuleY = 174;
 constexpr int kFooterTextY = 181;
 constexpr int kAnswerLinesPerPage = 6;
 
 struct UiTranslation { const char* en; const char* fr; const char* es; const char* it; const char* pl; const char* cs; const char* ru; const char* uk; const char* nl; const char* pt; const char* sk; };
+// The panel reads static localized captions without opening settings during REC.
+std::atomic<const char*> savingCaption{"SAVING"};
+std::atomic<const char*> lockedCaption{"LOCKED"}, stopCaption{"Either button stops"};
+std::atomic<const char*> priorSaveCaption{"Saving last note"};
 const UiTranslation kUiTranslations[] = {
+  {"SAVING","SAUVEGARDE","GUARDANDO","SALVATAGGIO","ZAPISYWANIE","UKLADANI","SOHRANENIE","ZBEREZHENNYA","OPSLAAN","SALVANDO","UKLADAM"},
+  {"Saving last note","Sauve note prec.","Guarda anterior","Salvo precedente","Zapis poprzedniej","Ukladam minulou","Pishu proshluyu","Pyshu poperedniu","Vorige opslaan","Gravando anterior","Ukladam predoslu"},
   {"TODAY","AUJOURD'HUI","HOY","OGGI","DZISIAJ","DNES","SEGODNYA","SOHODNI","VANDAAG","HOJE","DNES"},
   {"TASKS","TACHES","TAREAS","ATTIVITA","ZADANIA","UKOLY","ZADACHI","ZAVDANNYA","TAKEN","TAREFAS","ULOHY"},
   {"EVENTS","RENDEZ-VOUS","EVENTOS","EVENTI","TERMINY","TERMINY","SOBYTIYA","PODIYI","AFSPRAKEN","EVENTOS","TERMINY"},
@@ -180,6 +188,28 @@ void drawFooter(const char* left, const char* right, uint8_t color) {
   if (left && strlen(left)) drawStr(kInset, kFooterTextY, left, 1, color);
   if (right && strlen(right))
     drawStr(kRight - textW(right, 1), kFooterTextY, right, 1, color);
+}
+
+// Front view: the upper side button is level with y~143; the lower one
+// sits just below the panel. Keep each answer next to its own right edge cue.
+void drawSideButtonCue(int rowY) {
+  hline(kRight + 3, rowY + 6, W - kRight - 5, BLACK);
+}
+
+void drawSideButtonChoices(const char* upper, const char* lower) {
+  auto choice = [](int y, const char* text) {
+    if (!text) return;
+    labelRight(y, text, 1, BLACK);
+    drawSideButtonCue(y);
+  };
+  choice(137, upper);
+  choice(kFooterTextY, lower);
+}
+
+void drawConfirmationChoices(bool lowerCancels) {
+  const bool sk = palaUiLanguage() == "sk";
+  drawSideButtonChoices(sk ? "ANO" : "YES",
+                        lowerCancels ? (sk ? "ZRUSIT" : "CANCEL") : (sk ? "NIE" : "NO"));
 }
 
 void drawFooterCentered(const char* text, uint8_t color) {
@@ -512,23 +542,23 @@ bool beginAgendaScreen(bool events) {
 }
 
 void drawSunGlyph(int x, int y, bool rays) {
-  strokeCircle(x, y, 4, 1, BLACK);
+  strokeCircle(x, y, 5, 1, BLACK);
   if (!rays) return;
-  hline(x - 8, y, 2, BLACK);
-  hline(x + 7, y, 2, BLACK);
-  vline(x, y - 8, 2, BLACK);
-  vline(x, y + 7, 2, BLACK);
+  hline(x - 9, y, 2, BLACK);
+  hline(x + 8, y, 2, BLACK);
+  vline(x, y - 9, 2, BLACK);
+  vline(x, y + 8, 2, BLACK);
   for (int dx : {-1, 1}) {
-    for (int dy : {-1, 1}) line(x + 5 * dx, y + 5 * dy, x + 6 * dx, y + 6 * dy, BLACK);
+    for (int dy : {-1, 1}) line(x + 6 * dx, y + 6 * dy, x + 7 * dx, y + 7 * dy, BLACK);
   }
 }
 
-void drawCloudGlyph(int x, int y, int height = 12) {
+void drawCloudGlyph(int x, int y, int height = 14) {
   static constexpr int outline[][2] = {
-    {-8, 4}, {-9, 2}, {-8, -1}, {-5, -1}, {-3, -5}, {0, -6},
-    {3, -5}, {5, -2}, {7, -2}, {10, 1}, {10, 3}, {7, 6}, {-6, 6}, {-8, 4},
+    {-10, 5}, {-11, 2}, {-10, -1}, {-6, -1}, {-4, -6}, {0, -7},
+    {4, -6}, {6, -2}, {8, -2}, {12, 1}, {12, 4}, {8, 7}, {-7, 7}, {-10, 5},
   };
-  const auto ordinate = [y, height](int dy) { return y + (dy + 6) * height / 12 - height / 2; };
+  const auto ordinate = [y, height](int dy) { return y + (dy + 7) * height / 14 - height / 2; };
   for (size_t i = 1; i < sizeof(outline) / sizeof(outline[0]); ++i) {
     line(x + outline[i - 1][0], ordinate(outline[i - 1][1]),
          x + outline[i][0], ordinate(outline[i][1]), BLACK);
@@ -539,39 +569,39 @@ void drawWeatherGlyph(int x, int y, WeatherGlyph glyph) {
   switch (glyph) {
     case WeatherGlyph::Sun: drawSunGlyph(x, y, true); return;
     case WeatherGlyph::PartlyCloudy:
-      drawSunGlyph(x - 5, y - 4, false);
-      hline(x - 13, y - 4, 2, BLACK);
-      line(x - 12, y - 8, x - 11, y - 7, BLACK);
-      fillRect(x - 8, y - 4, 12, 6, WHITE);
-      drawCloudGlyph(x + 2, y + 2);
+      drawSunGlyph(x - 6, y - 4, false);
+      hline(x - 15, y - 4, 2, BLACK);
+      line(x - 14, y - 9, x - 13, y - 8, BLACK);
+      fillRect(x - 10, y - 4, 15, 7, WHITE);
+      drawCloudGlyph(x + 2, y + 3);
       return;
     case WeatherGlyph::Cloud: drawCloudGlyph(x, y); return;
     case WeatherGlyph::Fog:
-      hline(x - 8, y - 5, 17, BLACK);
-      hline(x - 6, y, 14, BLACK);
-      hline(x - 9, y + 5, 17, BLACK);
+      hline(x - 10, y - 6, 20, BLACK);
+      hline(x - 7, y, 17, BLACK);
+      hline(x - 11, y + 6, 20, BLACK);
       return;
     case WeatherGlyph::Rain:
       drawCloudGlyph(x, y - 2);
-      for (int dx : {-5, 0, 5}) line(x + dx, y + 6, x + dx - 1, y + 8, BLACK);
+      for (int dx : {-6, 0, 6}) line(x + dx, y + 7, x + dx - 2, y + 10, BLACK);
       return;
     case WeatherGlyph::Snow:
-      drawCloudGlyph(x, y - 3, 10);
-      for (int dx : {-5, 5}) {
-        line(x + dx - 2, y + 4, x + dx + 2, y + 8, BLACK);
-        line(x + dx + 2, y + 4, x + dx - 2, y + 8, BLACK);
-        hline(x + dx - 2, y + 6, 5, BLACK);
+      drawCloudGlyph(x, y - 3, 12);
+      for (int dx : {-6, 6}) {
+        line(x + dx - 2, y + 6, x + dx + 2, y + 10, BLACK);
+        line(x + dx + 2, y + 6, x + dx - 2, y + 10, BLACK);
+        hline(x + dx - 2, y + 8, 5, BLACK);
       }
       return;
     case WeatherGlyph::Thunder: {
       drawCloudGlyph(x, y - 2);
       // Keep a white pixel between the bolt and each side of the cloud base.
-      hline(x - 2, y + 4, 6, WHITE);
+      hline(x - 3, y + 5, 7, WHITE);
       static constexpr int bolt[][2] = {
-        {1, 2}, {0, 2}, {-1, 2}, {-2, 2}, {-3, 6},
-        {-1, 4}, {0, 2}, {-1, 2}, {-2, 2}, {-2, 1},
+        {2, 2}, {1, 2}, {0, 2}, {-1, 2}, {-2, 3}, {-4, 7},
+        {-2, 5}, {0, 3}, {0, 2}, {-1, 2}, {-2, 2}, {-3, 1},
       };
-      for (int row = 0; row < 10; ++row)
+      for (size_t row = 0; row < sizeof(bolt) / sizeof(bolt[0]); ++row)
         hline(x + bolt[row][0], y - 1 + row, bolt[row][1], BLACK);
       return;
     }
@@ -605,7 +635,8 @@ void drawHomeWeather(int top, const String& todayKey, int64_t utc) {
   const int centerY = top + kHomeWeatherHeight / 2;
   HomeForecast forecast{};
   if (homeForecastFor(todayKey, forecast)) {
-    drawWeatherGlyph(kInset + 19, centerY, weatherGlyph(forecast.code));
+    // Keep the top margin and use the spare pixels above the month label.
+    drawWeatherGlyph(kInset + 19, centerY + 1, weatherGlyph(forecast.code));
     char temperature[17];
     snprintf(temperature, sizeof(temperature), "%d / %d", forecast.minimum, forecast.maximum);
     int minX, minY, maxX, maxY, advance;
@@ -782,34 +813,62 @@ int drawPendingRecordings(int count) {
   return x;
 }
 
-void drawHomeDeliveryValue(int center, const char* first, const char* second, const char* value) {
-  drawStrC(center, kHomeDeliveryLabelY, first, 1, BLACK);
-  drawStrC(center, kHomeDeliverySecondLineY, second, 1, BLACK);
-  constexpr int width = (kContentWidth - kHomeDeliveryColumnGap) / 2;
-  drawStrC(center, kHomeDeliveryCountY, value, textW(value, 2) <= width ? 2 : 1, BLACK);
+enum class HomeDeliveryIcon { None, Stopwatch, Check };
+
+void drawHomeGoogleLabel(int center, HomeDeliveryIcon icon, bool slovak) {
+  const bool checked = icon == HomeDeliveryIcon::Check;
+  const char* label = checked ? (slovak ? "Dorucene" : "Delivered") : "Google";
+  const int iconWidth = checked ? 11 : 14;
+  const int iconSpace = icon == HomeDeliveryIcon::None ? 0 : iconWidth + 4;
+  const int x = center - (iconSpace + textW(label, 1)) / 2;
+  const int y = kHomeDeliveryLabelY;
+  if (icon == HomeDeliveryIcon::Stopwatch) {
+    const int cx = x + 7, cy = y + 8;
+    strokeCircle(cx, cy, 6, 1, BLACK);
+    fillRect(cx - 2, y - 2, 5, 2, BLACK);
+    vline(cx, y, 2, BLACK);
+    line(cx + 4, y + 3, cx + 6, y + 1, BLACK);
+    line(cx, cy, cx + 3, cy - 3, BLACK);
+    px(cx, cy - 1, BLACK);
+  } else if (checked) {
+    for (int dy = 0; dy < 2; ++dy) {
+      line(x, y + 7 + dy, x + 3, y + 10 + dy, BLACK);
+      line(x + 3, y + 10 + dy, x + 10, y + 3 + dy, BLACK);
+    }
+  }
+  const int labelX = x + iconSpace;
+  drawStr(labelX, y, label, 1, BLACK);
+  if (checked && slovak) {
+    // The native font is ASCII. Place the caron and acute above their lowercase glyphs.
+    const int caron = labelX + textW("Doru", 1) + textW("c", 1) / 2;
+    const int acute = labelX + textW("Dorucen", 1) + textW("e", 1) / 2;
+    line(caron - 2, y - 1, caron, y + 1, BLACK);
+    line(caron, y + 1, caron + 2, y - 1, BLACK);
+    line(acute - 1, y + 1, acute + 2, y - 1, BLACK);
+  }
 }
 
-void drawHomeDeliveryCount(int center, const char* first, const char* second, int count) {
+void drawHomeDeliveryValue(int center, const char* value) {
+  int scale = 3;
+  while (scale > 1 && textW(value, scale) > kHomeDeliveryColumnWidth) --scale;
+  int x0, y0, x1, y1;
+  textBoundsFont(value, scale, &x0, &y0, &x1, &y1, nullptr);
+  drawStrC(center, kHomeDeliveryValueCenterY - (y1 - y0) / 2, value, scale, BLACK);
+}
+
+void drawHomeDeliveryCount(int center, int count) {
   char value[8];
   if (count < 0) strcpy(value, "-");
   else if (count > 999999) strcpy(value, "999999+");
   else snprintf(value, sizeof(value), "%d", count);
-  drawHomeDeliveryValue(center, first, second, value);
-}
-
-void drawDeliveryAccent(int x, int glyphTop, bool caron) {
-  const int y = glyphTop - 4;
-  if (caron) {
-    line(x - 2, y, x, y + 2, BLACK);
-    line(x, y + 2, x + 2, y, BLACK);
-  } else {
-    line(x - 1, y + 2, x + 2, y, BLACK);
-  }
+  drawHomeDeliveryValue(center, value);
 }
 }  // namespace
 
 void showIdle(int pendingCount, int batteryPercent) {
+  note_display::startHome();
   clearWhite();
+  if (note_display::abandonSupersededUi()) return;
   const String name = palaNoteName();
   const auto counts = homeDeliveryCounts();
   const auto codex = counts.codexAt(time(nullptr), palaPrefersWeeklyCodexLimit());
@@ -843,6 +902,7 @@ void showIdle(int pendingCount, int batteryPercent) {
       else hline(x, gaugeY + segmentHeight - 1, segmentWidth, BLACK);
     }
   }
+  if (note_display::abandonSupersededUi()) return;
   const HomeBridgeLink bridgeLink = homeBridgeStatus.latest();
   drawHomeBridgeStatus(bridgeLink);
   drawBattery(batteryPercent);
@@ -850,34 +910,24 @@ void showIdle(int pendingCount, int batteryPercent) {
   const String nowUtc = currentUtcIso();
   const String localNow = utcToLocalDeviceLabel(nowUtc);
   const String todayKey = localNow.length() >= 10 && localNow != "time not set" ? localNow.substring(0, 10) : "";
+  if (note_display::abandonSupersededUi()) return;
   drawHomeWeek(todayKey, time(nullptr));
+  if (note_display::abandonSupersededUi()) return;
   hline(kInset, kHomeDeliveryRuleY, kContentWidth, BLACK);
-  vline(W / 2, kHomeDeliveryLabelY, 52, BLACK);
-  constexpr int halfColumn = (kContentWidth - kHomeDeliveryColumnGap) / 4;
-  constexpr int left = kInset + halfColumn, right = kRight - halfColumn;
-  const bool sk = palaUiLanguage() == "sk";
-  drawHomeDeliveryCount(left, "General", sk ? "otvorene" : "open", counts.generalOpen);
+  vline(W / 2, 149, 45, BLACK);
+  constexpr int left = W / 4, right = 3 * W / 4;
+  drawStrC(left, kHomeDeliveryLabelY, "General", 1, BLACK);
+  drawHomeDeliveryCount(left, counts.generalOpen);
   if (counts.waiting > 0) {
-    drawHomeDeliveryCount(right, sk ? "Caka na" : "Awaiting", "Google", counts.waiting);
-    if (sk) {
-      drawDeliveryAccent(right - 28, kHomeDeliveryLabelY, true);
-      drawDeliveryAccent(right - 16, kHomeDeliveryLabelY + 3, false);
-    }
+    drawHomeGoogleLabel(right, HomeDeliveryIcon::Stopwatch, false);
+    drawHomeDeliveryCount(right, counts.waiting);
   } else {
-    drawHomeDeliveryValue(right, sk ? "Posledne" : "Last", sk ? "dorucenie" : "delivery",
-                          counts.lastDelivery[0] ? counts.lastDelivery : "-");
-    if (sk) {
-      drawDeliveryAccent(right + (textW("Posledne", 1) - textW("e", 1)) / 2,
-                         kHomeDeliveryLabelY + 3, false);
-      drawDeliveryAccent(right - textW("dorucenie", 1) / 2 + textW("doru", 1) + textW("c", 1) / 2,
-                         kHomeDeliverySecondLineY + 3, true);
-    }
+    const bool delivered = counts.waiting == 0 && counts.lastDelivery[0];
+    drawHomeGoogleLabel(right, delivered ? HomeDeliveryIcon::Check : HomeDeliveryIcon::None,
+                        palaUiLanguage() == "sk");
+    drawHomeDeliveryValue(right, delivered ? counts.lastDelivery : "-");
   }
-  if (sk) {
-    drawDeliveryAccent(left + (textW("otvorene", 1) - textW("e", 1)) / 2,
-                       kHomeDeliverySecondLineY + 3, false);
-  }
-  refresh();
+  note_display::present(note_display::Refresh::Regular, nullptr, true);
   homeBridgeStatus.drawn(bridgeLink);
 }
 
@@ -986,24 +1036,102 @@ void showCalendarMonth(int monthOffset, bool moreDisplayPages) {
   refresh();
 }
 
-void showRecording() {
+void cacheRecordingCaptions() {
+  lockedCaption.store(palaUiLanguage() == "sk" ? "ZAMKNUTE" : uiText("GESPERRT", "LOCKED"));
+  stopCaption.store(palaUiLanguage() == "sk" ? "STOP: hociktore tl." : uiText("Stop: jede Taste", "Either button stops"));
+  savingCaption.store(uiText("SPEICHERN", "SAVING"), std::memory_order_relaxed);
+  priorSaveCaption.store(uiText("Speichere vorige", "Saving last note"), std::memory_order_relaxed);
+}
+
+void paintPriorSaveIndicator() {
+  constexpr int x = kInset, y = PALA_STAGE3 ? 44 : 171, size = 20;
+  fillRect(x, y, size, size, WHITE);
+  for (int row = 0; row < 4; ++row) hline(x + size - 4 + row, y + row, 4 - row, BLACK);
+  fillRect(x + 4, y + 1, 10, 5, BLACK);
+  fillRect(x + 10, y + 2, 2, 3, WHITE);
+  fillRect(x + 3, y + 10, 14, 8, BLACK);
+  hline(x + 5, y + 13, 10, WHITE);
+  hline(x + 5, y + 15, 7, WHITE);
+  drawStr(x + size + 6, y + 3, priorSaveCaption.load(std::memory_order_relaxed), 1, WHITE);
+}
+
+void paintRecordingScreen(bool fallback) {
   fillRect(0, 0, W, H, BLACK);
+#if !PALA_STAGE3
+  if (fallback) {
+    fillCircle(100, 60, 10, WHITE);
+    drawStrC(100, 86, "REC", 3, WHITE);
+    return;
+  }
   drawHeader(uiText("NOTIZ", "NOTE"), WHITE);
   drawStatusHero(uiText("HOERE ZU", "LISTENING"), 67, WHITE);
   fillCircle(kRight - 7, 146, 7, WHITE);
   labelLeft(139, uiText("AUFNAHME", "RECORDING"), 1, WHITE);
-  refresh();
+#else
+  (void)fallback;
+  fillCircle(kInset+6,kHeaderY+7,6,WHITE);
+  drawStr(kInset+20,kHeaderY,"REC",1,WHITE);
+  hline(kInset,kHeaderRuleY,kContentWidth,WHITE);
+#endif
 }
 
-void showRecordingProgress(uint32_t elapsedMs, int moments) {
+void paintRecordingProgress(uint32_t elapsedMs) {
+#if PALA_STAGE3
+  paintRecordingScreen(false);
+#else
   fillRect(0, 0, W, H, BLACK);
   drawHeader(uiText("NOTIZ", "NOTE"), WHITE);
   labelLeft(kContentTop, uiText("AUFNAHME", "RECORDING"), 1, WHITE);
   drawTimer(elapsedMs, WHITE);
-  refreshFast();
+#endif
 }
 
-void showSaved(int noteNumber) {
+void paintRecordingStatus(uint32_t elapsed,bool offer,bool locked) {
+  // Draw into the panel's frozen copy so a cached first frame has live battery data.
+  fillRect(kHomeBatteryX-2,kHeaderY-1,kBatteryWidth+4,kBatteryHeight+5,WHITE);
+  const auto battery=readBattery();
+  if (battery.percent>=0) drawBattery(battery.percent);
+  else {
+    const int top=kHomeHeaderCenterY-kBatteryHeight/2;
+    strokeRect(kHomeBatteryX,top,kBatteryBodyWidth,kBatteryHeight,1,BLACK);
+    fillRect(kHomeBatteryX+kBatteryBodyWidth,top+3,kBatteryContactWidth,6,BLACK);
+    drawStrC(kHomeBatteryX+kBatteryBodyWidth/2,kHeaderY,"?",1,BLACK);
+  }
+  drawTimer(elapsed,WHITE);
+  if (locked) {
+    drawStrC(W/2,76,lockedCaption.load(),1,WHITE);
+    drawStrC(W/2,kFooterTextY,stopCaption.load(),1,WHITE);
+  } else if (offer) {
+    labelRight(kFooterTextY,"LOCK",1,WHITE);
+    hline(kRight+3,kFooterTextY+6,W-kRight-5,WHITE);
+  }
+}
+
+void paintSavingScreen() {
+  fillRect(0, 0, W, H, WHITE);
+  drawBattery(readBattery().percent);
+
+  constexpr int size = 76;
+  constexpr int x = (W - size) / 2;
+  constexpr int y = (H - size) / 2;
+  fillRect(x, y, size, size, BLACK);
+  for (int row = 0; row < 12; ++row)
+    hline(x + size - 12 + row, y + row, 12 - row, WHITE);
+
+  // The metal shutter and the ruled paper label distinguish a 3.5-inch disk.
+  fillRect(x + 14, y + 3, 40, 21, WHITE);
+  fillRect(x + 38, y + 6, 9, 15, BLACK);
+  fillRect(x + 10, y + 39, 56, 33, WHITE);
+  fillRect(x + 17, y + 48, 42, 2, BLACK);
+  fillRect(x + 17, y + 58, 33, 2, BLACK);
+
+  const char* caption = savingCaption.load(std::memory_order_relaxed);
+  const int scale = textW(caption, 2) <= kContentWidth ? 2 : -1;
+  drawStrC(W / 2, y + size + 13, caption, scale, BLACK);
+}
+
+void showSaved(int noteNumber, uint32_t edge) {
+  if (!note_display::beginSaved(edge)) return;
   clearWhite();
   char number[12];
   const auto ordinal = monthly_recordings::sequence(noteNumber);
@@ -1048,13 +1176,12 @@ void showBacklogProcessing(int completed, int total, const char* phase,
   refresh(serviceConnection);
 }
 
-void showAskListening() {
+void paintQuestionScreen() {
   fillRect(0, 0, W, H, BLACK);
   drawHeader(uiText("FRAGE", "ASK"), WHITE);
   drawStatusHero(uiText("HOERE ZU", "LISTENING"), 67, WHITE);
   fillCircle(kRight - 7, 146, 7, WHITE);
   labelLeft(139, uiText("AUFNAHME", "RECORDING"), 1, WHITE);
-  refresh();
 }
 
 void showAskThinking() { showAskProgress("THINKING", translatedUi("WITH MEMORY")); }
@@ -1101,26 +1228,56 @@ void showNotePairingWait(bool bluetooth) {
   labelLeft(kContentTop, bluetooth ? "Bluetooth" : "USB", 1, BLACK);
   drawStatusHero(bluetooth ? "READY TO PAIR" : "APPROVED", 75, BLACK);
   labelLeft(130, bluetooth ? "Open settings on PC" : "Finish on computer", 1, BLACK);
-  drawFooter("LOWER: CANCEL", nullptr, BLACK);
+  drawSideButtonChoices(nullptr, palaUiLanguage() == "sk" ? "ZRUSIT" : "CANCEL");
   refresh();
 }
 
-void showNoteUsbPairingPrompt(const String& peer) {
+void showNoteUsbPairingPrompt(const String& peer, const String& id) {
   clearWhite();
-  drawHeader("USB PAIRING", BLACK);
-  labelLeft(kContentTop, "Allow this Bridge?", 1, BLACK);
-  drawStrFit(kInset, 82, kContentWidth, normalizeForDisplay(peer).c_str(), 2, BLACK);
-  labelLeft(132, "UPPER: YES", 1, BLACK);
-  drawFooter("LOWER: CANCEL", nullptr, BLACK);
+  const bool sk = palaUiLanguage() == "sk";
+  labelLeft(6, sk ? "Sparovat cez USB?" : "Allow USB pairing?", 2, BLACK);
+  hline(kInset, kHeaderRuleY, kContentWidth, BLACK);
+  const String name = normalizeForDisplay(peer);
+  if (textW(name.c_str(), 2) <= kContentWidth) {
+    labelLeft(50, name.isEmpty() ? (sk ? "Pocitac" : "Computer") : name.c_str(), 2, BLACK);
+  } else {
+    // Peer names are limited to 32 UTF-8 bytes. Preserve wide names and
+    // punctuation, especially the suffix distinguishing two computers.
+    int start = 0;
+    for (int y = 37; start < static_cast<int>(name.length()) && y <= 94; y += 19) {
+      int end = name.length();
+      while (end > start + 1 && textW(name.substring(start, end).c_str(), 1) > kContentWidth) --end;
+      labelLeft(y, name.substring(start, end).c_str(), 1, BLACK);
+      start = end;
+    }
+  }
+  const String suffix = id.length() > 8 ? id.substring(id.length() - 8) : id;
+  labelLeft(115, (String("ID ") + suffix).c_str(), 1, BLACK);
+  drawConfirmationChoices(true);
   refresh();
 }
 
 void showNoteRestartPrompt(bool audit) {
   clearWhite();
-  drawHeader("RESTART", BLACK);
-  drawStrC(W / 2, 66, audit ? "Restart and check?" : "Restart Note?", 1, BLACK);
-  if (audit) drawStrC(W / 2, 94, "This may take time", 1, BLACK);
-  drawFooter("UPPER: YES", "LOWER: NO", BLACK);
+  const bool sk = palaUiLanguage() == "sk";
+  labelLeft(6, sk ? "Restartovat Note?" : "Restart Note?", 2, BLACK);
+  hline(kInset, kHeaderRuleY, kContentWidth, BLACK);
+  if (audit) {
+    labelLeft(43, sk ? "Aj s kontrolou SD?" : "Check storage too?", 1, BLACK);
+    labelLeft(64, sk ? "Moze to trvat." : "This can take time.", 1, BLACK);
+  }
+  labelLeft(91, sk ? "Na odpoved: 30 s" : "Time to reply: 30 s", 1, BLACK);
+  drawSideButtonChoices(sk ? "NIE" : "NO", sk ? "ANO" : "YES");
+  refresh();
+}
+
+void showNoteRestartExpired() {
+  const bool sk = palaUiLanguage() == "sk";
+  clearWhite();
+  labelLeft(18, sk ? "Cas vyprsal" : "Time expired", 2, BLACK);
+  hline(kInset, 48, kContentWidth, BLACK);
+  labelLeft(73, sk ? "Bez restartu." : "No restart.", 2, BLACK);
+  labelLeft(115, sk ? "Navrat o chvilu." : "Returning shortly.", 1, BLACK);
   refresh();
 }
 
@@ -1151,8 +1308,7 @@ void showNoteBluetoothPairingNumber(uint32_t code) {
   char digits[7];
   snprintf(digits, sizeof(digits), "%06lu", static_cast<unsigned long>(code % 1000000U));
   drawStrC(W / 2, 82, digits, 3, BLACK);
-  labelLeft(132, "UPPER: YES", 1, BLACK);
-  drawFooter("LOWER: CANCEL", nullptr, BLACK);
+  drawConfirmationChoices(true);
   refresh();
 }
 
@@ -1275,9 +1431,42 @@ void showError(const char* message) {
   Serial.printf("[UI] error: %s\n", message ? message : "unspecified");
   clearWhite();
   drawHeader(uiText("FEHLER", "ERROR"), BLACK);
-  drawStatusHero(uiText("NOCHMAL?", "TRY AGAIN"), 72, BLACK);
-  labelLeft(143, uiText("HAT NICHT GEKLAPPT", "SOMETHING WENT WRONG"), 1, BLACK);
-  if (message && *message) labelLeft(158, translatedUi(message), 1, BLACK);
+  drawStatusHero(message && *message ? translatedUi(message)
+                                    : uiText("FEHLER", "ERROR"), 72, BLACK);
+  refresh();
+}
+
+#if PALA_USB_CARD_SERVICE
+void showUsbCardService() {
+  const bool sk = palaUiLanguage() == "sk";
+  clearWhite();
+  labelLeft(9, "USB disk", 2, BLACK);
+  hline(kInset, 39, kContentWidth, BLACK);
+  labelLeft(64, sk ? "Karta patri PC" : "Card in use by PC", 2, BLACK);
+  labelLeft(105, sk ? "REC pozastavene" : "Recording paused", 1, BLACK);
+  labelLeft(139, sk ? "Pre navrat vysun disk" : "Eject disk to resume", 1, BLACK);
+  refresh();
+}
+#endif
+
+void showBootError(const char* message) {
+  const bool sk = palaUiLanguage() == "sk";
+  const bool sd = !strcmp(message, "SD ERROR");
+  const bool memory = !strcmp(message, "8/8 ONLY");
+  Serial.printf("[UI] startup error: %s\n", message);
+  clearWhite();
+  labelLeft(9, sk ? "Chyba pri starte" : "Startup error", 2, BLACK);
+  hline(kInset, 37, kContentWidth, BLACK);
+  if (memory) {
+    labelLeft(57, sk ? "Treba 8 MB flash" : "Needs 8 MB flash", 1, BLACK);
+    labelLeft(80, sk ? "a 8 MB PSRAM." : "and 8 MB PSRAM.", 1, BLACK);
+  } else {
+    labelLeft(58, sd ? (sk ? "Chyba SD karty" : "SD card error")
+                     : (sk ? "Chyba mikrofonu" : "Microphone error"), 2, BLACK);
+    labelLeft(104, sd ? (sk ? "Skontroluj kartu." : "Check the SD card.")
+                      : (sk ? "Skontroluj mikrofon." : "Check the mic."), 1, BLACK);
+    labelLeft(132, sk ? "Restartuj Note." : "Restart the Note.", 1, BLACK);
+  }
   refresh();
 }
 
@@ -1326,33 +1515,109 @@ static bool parseCalendarMinute(const String& text, struct tm& fields) {
   return true;
 }
 
-static String calendarProposalLine(const CalendarProposalTime& time) {
-  struct tm start{}, end{};
-  if (!parseCalendarMinute(time.start, start)) return "-";
-  char label[32];
-  snprintf(label, sizeof(label), "%02d.%02d.%04d %02d:%02d",
-           start.tm_mday, start.tm_mon + 1, start.tm_year + 1900, start.tm_hour, start.tm_min);
-  if (!parseCalendarMinute(time.end, end)) return String(label);
+struct CalendarRangeDisplay {
+  String startDate;
+  String startClock;
+  String endDate;
+  String endClock;
+  String duration;
 
-  setenv("TZ", LOCAL_TZ_RULE, 1); tzset();
+  bool crossesDate() const { return endDate.length() && startDate != endDate; }
+  String clockRange() const {
+    return endClock.isEmpty() ? startClock : startClock + " - " + endClock;
+  }
+};
+
+static String displayCalendarDate(const String& stamp) {
+  return stamp.substring(8, 10) + "." + stamp.substring(5, 7) + "." + stamp.substring(0, 4);
+}
+
+static CalendarRangeDisplay calendarRangeDisplay(const CalendarProposalTime& time) {
+  CalendarRangeDisplay range;
+  struct tm start{}, end{};
+  if (!parseCalendarMinute(time.start, start)) {
+    range.startDate = "?";
+    range.startClock = "?";
+    return range;
+  }
+  range.startDate = displayCalendarDate(time.start);
+  range.startClock = time.start.substring(11, 16);
+  if (!parseCalendarMinute(time.end, end)) return range;
+  range.endDate = displayCalendarDate(time.end);
+  range.endClock = time.end.substring(11, 16);
+
+  setenv("TZ", LOCAL_TZ_RULE, 1);
+  tzset();
   const time_t from = localWallClockEpoch(utcTmToEpoch(start));
   const time_t until = localWallClockEpoch(utcTmToEpoch(end));
-  if (from == -1 || until <= from) return String(label);
-  return String(label) + " / " + static_cast<long>((until - from) / 60) + " min";
+  if (from != -1 && until > from) range.duration = String(static_cast<long>((until - from) / 60)) + " min";
+  return range;
+}
+
+static void drawCalendarHeading(const char* question, const String& title) {
+  clearWhite();
+  labelLeft(6, question, 2, BLACK);
+  hline(kInset, 32, kContentWidth, BLACK);
+
+  const String text = normalizeForDisplay(title);
+  if (text.isEmpty()) return;
+  if (textW(text.c_str(), 2) <= kContentWidth) {
+    labelLeft(39, text.c_str(), 2, BLACK);
+    return;
+  }
+  int lines = 0;
+  String second;
+  visitAnswerLines(text, [&](const String& line) {
+    ++lines;
+    if (lines == 1) labelLeft(38, line.c_str(), 1, BLACK);
+    if (lines == 2) second = line;
+    if (lines < 3) return true;
+    while (second.length() && textW((second + "...").c_str(), 1) > kContentWidth)
+      second.remove(second.length() - 1);
+    second += "...";
+    return false;
+  });
+  if (second.length()) labelLeft(57, second.c_str(), 1, BLACK);
+}
+
+static void drawCalendarEndpoint(int y, const char* label, const String& date, const String& clock) {
+  // Leave the centre and right of the row for the complete local date and time.
+  drawStr(5, y, label, 1, BLACK);
+  labelRight(y, (date + " " + clock).c_str(), 1, BLACK);
+}
+
+static void drawCalendarRange(const CalendarRangeDisplay& range, bool sharedDate, bool sk,
+                              int detailY, int timeY, bool alignToButton) {
+  if (range.crossesDate()) {
+    drawCalendarEndpoint(detailY, sk ? "Od" : "Start", range.startDate, range.startClock);
+    drawCalendarEndpoint(timeY, sk ? "Do" : "End", range.endDate, range.endClock);
+    return;
+  }
+  if (!sharedDate) labelLeft(detailY, range.startDate.c_str(), 1, BLACK);
+  if (range.duration.length()) labelRight(detailY, range.duration.c_str(), 1, BLACK);
+  const String clocks = range.clockRange();
+  if (alignToButton) labelRight(timeY, clocks.c_str(), 2, BLACK);
+  else labelLeft(timeY, clocks.c_str(), 2, BLACK);
 }
 
 int chooseCalendarEventDate(const String& title, const CalendarProposalTime& first, const CalendarProposalTime& second,
                             bool (*serviceConnection)()) {
   RecordingWindow microphone;
   const bool sk = palaUiLanguage() == "sk";
-  clearWhite();
-  drawHeader(sk ? "VYBER DATUM" : "CHOOSE DATE", BLACK);
-  labelLeft(38, normalizeForDisplay(title).c_str(), 1, BLACK);
-  labelLeft(75, (String("1  ") + calendarProposalLine(first)).c_str(), 1, BLACK);
-  labelLeft(108, (String("2  ") + calendarProposalLine(second)).c_str(), 1, BLACK);
-  drawFooter(sk ? "HORE 1" : "UP 1", sk ? "DOLE 2" : "DOWN 2", BLACK);
+  const auto upper = calendarRangeDisplay(first);
+  const auto lower = calendarRangeDisplay(second);
+  const bool sharedDate = upper.startDate == lower.startDate && !upper.crossesDate() && !lower.crossesDate();
+  drawCalendarHeading(sk ? "Ktory termin?" : "Which time?", title);
+  if (sharedDate) labelLeft(79, upper.startDate.c_str(), 2, BLACK);
+
+  hline(kInset, 104, kContentWidth, BLACK);
+  drawCalendarRange(upper, sharedDate, sk, 109, 131, true);
+  drawSideButtonCue(137);
+  hline(kInset, 154, kContentWidth, BLACK);
+  drawCalendarRange(lower, sharedDate, sk, 159, 177, true);
+  drawSideButtonCue(181);
   refresh();
-  return calendarButtonChoice(serviceConnection);
+  return note_display::lastPresentationOk() ? calendarButtonChoice(serviceConnection) : -1;
 }
 
 // 1 accepts, 0 declines, -1 leaves the proposal pending at the Bridge.
@@ -1360,14 +1625,14 @@ int confirmCalendarEvent(const String& title, const CalendarProposalTime& time, 
                          bool (*serviceConnection)()) {
   RecordingWindow microphone;
   const bool sk = palaUiLanguage() == "sk";
-  clearWhite();
-  drawHeader(sk ? "KALENDAR" : "CALENDAR", BLACK);
-  labelLeft(38, normalizeForDisplay(title).c_str(), 1, BLACK);
-  labelLeft(66, calendarProposalLine(time).c_str(), 1, BLACK);
-  if (minutes >= 0) labelLeft(91, (String(sk ? "Predstih " : "Alert ") + minutes + " min").c_str(), 1, BLACK);
-  labelLeft(143, sk ? "Ulozit termin?" : "Save event?", 1, BLACK);
-  drawFooter(sk ? "HORE ANO" : "UP YES", sk ? "DOLE NIE" : "DOWN NO", BLACK);
+  drawCalendarHeading(sk ? "Ulozit termin?" : "Save event?", title);
+  drawCalendarRange(calendarRangeDisplay(time), false, sk, 77, 97, false);
+  if (minutes >= 0) {
+    labelLeft(119, sk ? "Predstih" : "Alert", 1, BLACK);
+    labelRight(119, (String(minutes) + " min").c_str(), 1, BLACK);
+  }
+  drawConfirmationChoices(false);
   refresh();
-  const int button = calendarButtonChoice(serviceConnection);
+  const int button = note_display::lastPresentationOk() ? calendarButtonChoice(serviceConnection) : -1;
   return button < 0 ? -1 : 1 - button;
 }

@@ -1,4 +1,5 @@
 #include "provider.h"
+#include "display_pipeline.h"
 #include "settings.h"
 #include <Preferences.h>
 #include "bridge_address.h"
@@ -97,8 +98,10 @@ bool palaSaveLocalNoteSettings(const String& name, const String& language, bool 
   palaSettingsBegin();
   if (!ready || !validNoteName(name) || !supportedLanguage(language)) return false;
   const String settings = name + "|" + language + (weeklyCodexLimit ? "|weekly" : "");
-  return storedString("note_device") == settings ||
-      (prefs.putString("note_device", settings) == settings.length() && storedString("note_device") == settings);
+  if (storedString("note_device") == settings) return true;
+  const bool saved = prefs.putString("note_device", settings) == settings.length() && storedString("note_device") == settings;
+  if (saved) note_display::invalidateRecordingCache();
+  return saved;
 }
 
 String palaNoteName() {
@@ -112,7 +115,9 @@ bool palaSetNoteName(const String& name) {
   if (!validNoteName(name)) return false;
   if (value("note_name") == name) return true;
   if (!ready || prefs.putString("note_name", name) == 0) return false;
-  return storedString("note_name") == name;
+  const bool saved = storedString("note_name") == name;
+  if (saved) note_display::invalidateRecordingCache();
+  return saved;
 }
 
 String palaStoredDeliveryCounts() {
@@ -211,7 +216,8 @@ bool palaSetBridgeAddress(const String& address) {
   palaSettingsBegin();
   if (!ready) return false;
   uint8_t octets[4];
-  if (address.length() && !parseBridgeAddress(address.c_str(), octets)) return false;
+  uint16_t port = 0;
+  if (address.length() && !parseBridgeEndpoint(address.c_str(), octets, port)) return false;
   if (storedString("bridge_ip") == address) return true;
   if (!address.length()) return prefs.remove("bridge_ip");
   return prefs.putString("bridge_ip", address) == address.length() &&
@@ -330,7 +336,9 @@ bool palaSetUiLanguage(const String& language) {
   if (!ready || !supportedLanguage(language)) return false;
   if (palaNoteNameLocallyManaged())
     return palaSaveLocalNoteSettings(palaNoteName(), language, palaPrefersWeeklyCodexLimit());
-  return prefs.putString("ui_lang", language) > 0;
+  const bool saved = prefs.putString("ui_lang", language) > 0;
+  if (saved) note_display::invalidateRecordingCache();
+  return saved;
 }
 int palaPlaybackVolume() {
   palaSettingsBegin();

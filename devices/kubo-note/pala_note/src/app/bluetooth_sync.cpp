@@ -8,6 +8,7 @@
 #include "note_peers.h"
 #include "usb_sync.h"
 #include "settings.h"
+#include "stage2_bench.h"
 #include <Arduino.h>
 #include <BLE2902.h>
 #include <BLEDevice.h>
@@ -449,10 +450,20 @@ void sendFrame(const String& plaintext) {
   if (!publishResponse(preparedGeneration, packet, size + kTagSize)) markOverflow(preparedGeneration);
 }
 
+#if PALA_STAGE2_BENCH
+uint32_t bleTraceSequence = 0;
+#endif
+#if PALA_STAGE2_BENCH && defined(PALA_TEST_BLE_FRAGMENT_GAP_MS)
+uint32_t lastPacedFragmentAt = 0;
+#endif
+
 bool queueAudioPacket(const uint8_t* plaintext, size_t size) {
   const AudioRequest request = parseAudioRequest(plaintext, size);
-  if (audioPacketSize || sent == UINT64_MAX || !request.length ||
-      !readBluetoothAudio(linkPeer, request.offset, audioPacket + kAudioOffsetBytes, request.length)) return false;
+  if (audioPacketSize || sent == UINT64_MAX || !request.length) return false;
+#if PALA_STAGE2_BENCH
+  bleTraceSequence = stage2::bleBlockRequested(request.offset, request.length);
+#endif
+  if (!readBluetoothAudio(linkPeer, request.offset, audioPacket + kAudioOffsetBytes, request.length)) return false;
 
   memcpy(audioPacket, plaintext + 1, kAudioOffsetBytes);
   uint8_t iv[12];
@@ -477,17 +488,44 @@ bool sendAudioNotifications(uint32_t generation) {
   uint8_t fragment[kPreferredMtu - kNotificationOverhead] = {kAudioFragment};
   const size_t capacity = std::min<size_t>(sizeof(fragment), peerMtu - kNotificationOverhead) - 1;
   const unsigned credits = esp_ble_get_cur_sendable_packets_num(static_cast<uint16_t>(id));
-  for (unsigned i = 0; i < std::min(kNotificationsPerPoll, credits); ++i) {
+#if PALA_STAGE2_BENCH && defined(PALA_TEST_BLE_FRAGMENT_GAP_MS)
+  // Return to the recorder while waiting for the next test fragment.
+  // A new audio packet starts immediately because audioPacketSent is zero.
+  if (audioPacketSent && millis() - lastPacedFragmentAt < PALA_TEST_BLE_FRAGMENT_GAP_MS) return true;
+  const unsigned budget = std::min(1U, credits);
+#else
+  const unsigned budget = std::min(kNotificationsPerPoll, credits);
+#endif
+#if PALA_STAGE2_BENCH
+  uint32_t firstQueuedAt = 0, lastQueuedAt = 0;
+  bool queued = false;
+  bool completed = false;
+#endif
+  for (unsigned i = 0; i < budget; ++i) {
     const size_t count = std::min(capacity, audioPacketSize - audioPacketSent);
     memcpy(fragment + 1, audioPacket + audioPacketSent, count);
     if (esp_ble_gatts_send_indicate(gattInterface.load(), static_cast<uint16_t>(id), signal->getHandle(),
                                    count + 1, fragment, false) != ESP_OK) break;
     audioPacketSent += count;
+#if PALA_STAGE2_BENCH
+    lastQueuedAt = millis();
+#if defined(PALA_TEST_BLE_FRAGMENT_GAP_MS)
+    lastPacedFragmentAt = lastQueuedAt;
+#endif
+    if (!queued) firstQueuedAt = lastQueuedAt;
+    queued = true;
+#endif
     if (audioPacketSent == audioPacketSize) {
       audioPacketSize = audioPacketSent = 0;
+#if PALA_STAGE2_BENCH
+      completed = true;
+#endif
       break;
     }
   }
+#if PALA_STAGE2_BENCH
+  if (queued) stage2::bleBlockNotifications(bleTraceSequence, firstQueuedAt, lastQueuedAt, completed);
+#endif
   return true;
 }
 

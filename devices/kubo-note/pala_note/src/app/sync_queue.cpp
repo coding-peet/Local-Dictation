@@ -1,4 +1,5 @@
 #include "sync_queue.h"
+#include "owner_trace.h"
 #include "audit_projection.h"
 #include "audit_progress.h"
 #include "record.h"
@@ -154,6 +155,7 @@ void invalidate() {
 }
 
 void initializeSyncQueue() {
+  owner_trace::WorkScope ownerWork(owner_trace::Work::Queue);
 #if PALA_RECORDER_FIRST
   return;
 #endif
@@ -214,6 +216,7 @@ SyncQueueCounts syncQueueCounts() {
 }
 
 bool maintainSyncQueue() {
+  owner_trace::WorkScope ownerWork(owner_trace::Work::Queue);
 #if PALA_RECORDER_FIRST
   return scanRecorderWorkSlice();
 #endif
@@ -258,6 +261,7 @@ bool maintainSyncQueue() {
 }
 
 bool visitSyncQueue(bool newestFirst, const std::function<bool(const SyncQueueEntry&)>& visit) {
+  owner_trace::WorkScope ownerWork(owner_trace::Work::Queue);
 #if PALA_RECORDER_FIRST
   return visitRecorderWork(newestFirst, visit);
 #endif

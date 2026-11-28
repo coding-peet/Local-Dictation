@@ -1,4 +1,5 @@
 #include "home_weather.h"
+#include "owner_trace.h"
 #include "home_bridge_status.h"
 #include "home_almanac.h"
 #include "bridge_client.h"
@@ -106,6 +107,7 @@ bool homeForecastFor(const String& date, HomeForecast& forecast) {
 }
 
 void loadHomeForecast() {
+  owner_trace::WorkScope ownerWork(owner_trace::Work::Forecast);
   ForecastCache candidate{};
   if (decodeForecast(readHomeForecastFile(), candidate)) cache = candidate;
 }

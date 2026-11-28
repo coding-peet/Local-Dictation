@@ -1,4 +1,5 @@
 #include "../pala_note/src/app/button_gesture.h"
+#include "../pala_note/src/app/prompt_input.h"
 
 namespace {
 constexpr uint8_t kHomeClickCount = 3;
@@ -64,6 +65,36 @@ constexpr bool recordingReleaseDoesNotConsumeBufferedManualSync() {
   return upper.poll(2600, kHomeClickCount) == ButtonAction::None && !upper.pending();
 }
 
+struct PromptTestInput {
+  struct Edge { uint32_t at; bool down; } edges[4]{};
+  unsigned read = 0, write = 0;
+  bool replayDown = false, rawDown = false, stableDown = false;
+  uint32_t rawAt = 0;
+  ButtonGesture gesture;
+};
+
+constexpr bool preservedPostVisibilityInput() {
+  PromptTestInput button;
+  button.read = 2;
+  button.write = 1;
+  button.edges[2] = {UINT32_MAX - 12, true};
+  button.edges[3] = {0, false};
+  button.edges[0] = {24, true};
+  button_prompt::discardThrough(button, 0);
+  if (button.read != 0 || button.replayDown || !button.edges[button.read].down) return false;
+
+  // A press exactly at the boundary might still be debouncing when the
+  // panel returns. It belongs to the old screen until its release.
+  PromptTestInput atBoundary;
+  atBoundary.rawAt = 90;
+  atBoundary.rawDown = true;
+  button_prompt::discardThrough(atBoundary, 90);
+  return atBoundary.replayDown && atBoundary.stableDown;
+}
+
+static_assert(preservedPostVisibilityInput());
+static_assert(!button_prompt::retryDue(400, UINT32_MAX - 99));
+static_assert(button_prompt::retryDue(900, UINT32_MAX - 99));
 static_assert(recordingReleaseDoesNotConsumeBufferedManualSync());
 static_assert(distinguishesOneTwoAndThreeHomeClicks());
 static_assert(holdClearsEarlierTapsAndDoesNotBecomeOneOnRelease());

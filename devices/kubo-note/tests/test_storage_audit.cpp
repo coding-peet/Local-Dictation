@@ -38,6 +38,17 @@ int main() {
   assert(confirmation.request(NoteRestartMode::Restart, 36'001));
   assert(!confirmation.answer(expired, 36'002));
   assert(confirmation.answer(confirmation.pending(36'002), 36'003));
+  assert(confirmation.request(NoteRestartMode::Restart, 40'000));
+  const auto visible = confirmation.pending(40'001);
+  confirmation.displayed(visible, 43'000);
+  confirmation.displayed(visible, 50'000); // Redraws cannot extend a visible prompt.
+  assert(confirmation.pending(72'999).ticket == visible.ticket);
+  assert(visible.requestedAt == 40'000 && confirmation.pending(72'999).requestedAt == visible.requestedAt);
+  assert(!confirmation.pending(73'000).ticket && std::string_view(confirmation.state(73'001)) == "expired");
+  assert(!confirmation.answer(visible, 73'002));
+  assert(confirmation.request(NoteRestartMode::Restart, 74'000));
+  assert(confirmation.answer(confirmation.pending(74'001), 74'002, false));
+  assert(std::string_view(confirmation.state(74'003)) == "cancelled");
   assert(!shouldRunConfirmedAudit(true, false, AuditState::Running));
   assert(!shouldRunConfirmedAudit(false, true, AuditState::Running));
   assert(!shouldRunConfirmedAudit(true, true, AuditState::Incomplete));

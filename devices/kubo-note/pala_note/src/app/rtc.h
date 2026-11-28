@@ -21,6 +21,7 @@ time_t  utcTmToEpoch(struct tm utc);
 
 bool    rtcSyncSystemFromChip();
 bool    rtcSyncChipFromSystem();
+uint32_t captureEpochAtRec(uint32_t edge);
 time_t  rtcUtcEpoch();
 bool    rtcApplyBridgeUtc(time_t epoch);
 String  rtcUtcIso();

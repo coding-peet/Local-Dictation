@@ -14,7 +14,7 @@ NOTE_SAMPLE_RATE = 24000
 PEAK_LEVEL = 0.70
 
 
-def synthesize(model: Path, text: str, output) -> None:
+def synthesize(model: Path, text: str, output, speed: float = 1.0) -> None:
     with model.with_suffix(model.suffix + ".json").open(encoding="utf-8") as settings:
         config = PiperConfig.from_dict(json.load(settings))
     # A small CPU pool avoids contention with the running local ASR service.
@@ -26,7 +26,8 @@ def synthesize(model: Path, text: str, output) -> None:
     sample_rate = voice.config.sample_rate
     pause = np.zeros(round(sample_rate * 0.15), dtype=np.float32)
     parts = []
-    for chunk in voice.synthesize(text, syn_config=SynthesisConfig(normalize_audio=False)):
+    settings = SynthesisConfig(normalize_audio=False, length_scale=None if speed == 1.0 else voice.config.length_scale / speed)
+    for chunk in voice.synthesize(text, syn_config=settings):
         if chunk.audio_float_array.size:
             if parts:
                 parts.append(pause)
@@ -51,4 +52,5 @@ def synthesize(model: Path, text: str, output) -> None:
 
 if __name__ == "__main__":
     output = sys.stdout.buffer if sys.argv[2] == "--stdout" else Path(sys.argv[2])
-    synthesize(Path(sys.argv[1]), sys.stdin.buffer.read().decode("utf-8").strip(), output)
+    speed = float(sys.argv[3]) if len(sys.argv) > 3 else 1.0
+    synthesize(Path(sys.argv[1]), sys.stdin.buffer.read().decode("utf-8").strip(), output, speed)

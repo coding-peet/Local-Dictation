@@ -30,11 +30,14 @@ private:
     spi_device_handle_t spi;
     uint8_t *buffer = NULL;
     bool busyTimedOut = false;
+    bool waveOk = false;
+    void (*observer)(const char*) = nullptr;
+    void signal(const char* phase) { if (observer) observer(phase); }
     void (*waitCallback)() = nullptr;
 
     void spi_gpio_init();
     void spi_port_init();
-    void read_busy();
+    bool read_busy(bool waveform = false);
     void waitForReset(unsigned milliseconds);
 
     void set_cs_1(){gpio_set_level((gpio_num_t)lcd_spi_data.cs,1);}
@@ -64,11 +67,14 @@ public:
     void EPD_Display(); /* 刷buffer到墨水屏 */
 
     /*局部刷新*/
-    void EPD_DisplayPartBaseImage();
+    void EPD_DisplayPartBaseImage(const uint8_t* image);
     void EPD_Init_Partial();
-    void EPD_DisplayPart();
+    void EPD_DisplayPart(const uint8_t* image);
     void EPD_DrawColorPixel(uint16_t x, uint16_t y, uint8_t color);
 
+    bool healthy() const { return !busyTimedOut; }
+    bool waveAcknowledged() const { return waveOk && healthy(); }
+    void setObserver(void (*callback)(const char*)) { observer = callback; }
     void setWaitCallback(void (*callback)()) { waitCallback = callback; }
     uint8_t* getBuffer()  { return buffer; }
     int      getWidth()   { return Width; }

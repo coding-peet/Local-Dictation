@@ -175,6 +175,24 @@ static void priority(bool afterMove, uint32_t checkpoint) {
   assert(get(c.wav+".recovery-original")==input && allocations==1);
 }
 
+static void occupiedInboxTarget() {
+  Card card;
+  const std::string filename = "s1700000000_00000088.wav";
+  const std::vector<int16_t> pcm{-32, 23, 0, 31};
+  const auto original = recording({3, 4, 5}, 6);
+  const auto incoming = recording(pcm, 8);
+  put(card.wav, original);
+  put(card.inbox + filename, incoming);
+  int next = 17, assigned = 0, reserved = 0;
+  assert(rec_spool::adopt(card.inbox, card.notes, filename, assigned,
+      [&](uint32_t) { return next++; },
+      [&](int note, uint32_t) { reserved = note; return true; },
+      [](int, uint32_t) { return true; }, [](int) { return true; }));
+  assert(assigned == 18 && reserved == 18);
+  assert(get(card.wav) == original);
+  assert(get(card.notes + "note_018.wav") == incoming);
+}
+
 static void monthlyPowerCut(bool priorityCapture) {
   Card card;
   const std::string captured = "2023-11-14T22:13:20Z";
@@ -253,6 +271,7 @@ static void boundaries() {
 }
 
 int main() {
+  occupiedInboxTarget();
   direct(0,{-32768},false);
   std::vector<int16_t> pcm;
   for (int i=0;i<6203;++i) pcm.push_back(static_cast<int16_t>(i*19));

@@ -51,6 +51,21 @@ int main() {
   assert(recorder_work::plan(plan, claim, "V2", chosen) && chosen == "LEGACY");
   assert(!fs::exists(plan));
 
+  // The other Bridge only has the durable SD state after an interrupted save.
+  fs::rename(claim, claim + ".bak");
+  assert(recorder_work::claim(claim, a) == Claim::Reconcile);
+  assert(recorder_work::claim(claim, b) == Claim::Conflict);
+  assert(recorder_work::plan(plan, claim, "", chosen) && chosen == "LEGACY");
+  fs::rename(receipt, receipt + ".bak");
+  assert(recorder_work::complete(claim, receipt, a));
+  assert(!recorder_work::complete(claim, receipt, b));
+  assert(fs::remove(receipt + ".bak"));
+  assert(recorder_work::complete(claim, receipt, a));
+  { std::ofstream saved(plan + ".bak"); saved << "V2.YWJj"; }
+  assert(recorder_work::plan(plan, claim, "V2.ZGVm", chosen) && chosen == "V2.YWJj");
+  { std::ofstream broken(plan + ".bak"); broken << "V2.!"; }
+  assert(!recorder_work::plan(plan, claim, "", chosen));
+
   const auto blocked = pending / "222.claim";
   assert(fs::create_directory(blocked));
   assert(recorder_work::claim(blocked.string(), a) == Claim::Error);

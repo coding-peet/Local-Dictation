@@ -19,13 +19,18 @@ public:
   bool claimForeground() {
     return change(Phase::Idle, Phase::Foreground) || change(Phase::Armed, Phase::Foreground);
   }
+  template<class ReadEdge, class PhysicalHold>
+  bool select(ReadEdge requestedEdge, PhysicalHold held, uint32_t& edge) {
+    if (takeRequest()) { edge = requestedEdge(); return true; }
+    return armed() && held(edge) && claimWorker();
+  }
   template<class ReadEdge, class PhysicalHold, class Capture>
   void service(ReadEdge requestedEdge, PhysicalHold held, Capture capture) {
-    uint32_t edge = 0;
-    if (takeRequest()) edge = requestedEdge();
-    else if (!armed() || !held(edge) || !claimWorker()) return;
-    capture(edge);
-    complete();
+    uint32_t edge;
+    if (select(requestedEdge, held, edge)) {
+      capture(edge);
+      complete();
+    }
   }
   void complete() { phase.store(Phase::Complete); }
   bool armed() const { return phase.load() == Phase::Armed; }

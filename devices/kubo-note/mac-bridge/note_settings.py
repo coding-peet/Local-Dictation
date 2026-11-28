@@ -100,7 +100,7 @@ def note_request(data):
     if op == "peers.remove" and valid(data.get("id"), PEER_ID):
         return {"op": op, "id": data["id"]}
     if op == "bridge.address":
-        return {"op": op, "address": text(data.get("address"), 15, empty=True)}
+        return {"op": op, "address": text(data.get("address"), 21, empty=True)}
     if op == "sleep.save" and bounded_integer(data.get("minutes"), 0, IDLE_SLEEP_MINUTES_MAX):
         return {"op": op, "minutes": data["minutes"]}
     if op == "sync.save" and bounded_integer(data.get("mode"), 0, 3):
@@ -178,7 +178,10 @@ def note_response(reply, transport, op="get"):
     if op == "restart.request":
         if reply.get("pending") is not True:
             raise SettingsError("The Note did not open a restart confirmation.")
-        return {**result, "pending": True}
+        result["pending"] = True
+        if bounded_integer(reply.get("ticket"), 1, 2**32 - 1):
+            result["ticket"] = reply["ticket"]
+        return result
     if op == "restart.status":
         report = reply.get("storageAudit")
         if (not isinstance(report, dict)
@@ -190,6 +193,11 @@ def note_response(reply, transport, op="get"):
                       "queueIssues", "firstNote", "repaired"):
             if bounded_integer(report.get(field), 0, 2**32 - 1):
                 status[field] = report[field]
+        confirmation = reply.get("confirmation")
+        if (isinstance(confirmation, dict)
+                and bounded_integer(confirmation.get("ticket"), 0, 2**32 - 1)
+                and confirmation.get("state") in ("none", "pending", "expired", "confirmed", "cancelled")):
+            result["confirmation"] = {"ticket": confirmation["ticket"], "state": confirmation["state"]}
         return {**result, "storageAudit": status}
     if "device" not in reply:
         return result
@@ -229,7 +237,7 @@ def note_response(reply, transport, op="get"):
                 and values[0] <= values[1]):
             result["device"][field] = values
     if "bridgeAddress" in device:
-        result["device"]["bridgeAddress"] = text(device["bridgeAddress"], 15, empty=True)
+        result["device"]["bridgeAddress"] = text(device["bridgeAddress"], 21, empty=True)
     result["wifi"] = [{"ssid": text(item["ssid"], 32)}
                       for item in wifi if isinstance(item, dict) and "ssid" in item]
     result["peers"] = [{"id": item["id"], "name": text(item["name"], 32), "primary": item.get("primary") is True}

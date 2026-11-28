@@ -57,6 +57,10 @@
 #define REC_BUF      (8 * 1024)
 
 /* Storage paths */
+#ifndef PALA_STAGE3
+#define PALA_STAGE3 0
+#endif
+
 #ifndef PALA_RECORDER_FIRST
 #define PALA_RECORDER_FIRST 0
 #endif
@@ -84,7 +88,29 @@
 #define LOCAL_TZ_RULE          "CET-1CEST,M3.5.0,M10.5.0/3"
 #if PALA_RECORDER_FIRST
 #undef PALA_NOTE_VERSION
-#define PALA_NOTE_VERSION "2.0.0-recorder-test4-clock"
+#if PALA_STAGE3_TRIAL
+#define PALA_NOTE_VERSION "2.0.0-stage3-trial1"
+#elif PALA_USB_CARD_SERVICE && PALA_STAGE2_BENCH && PALA_WIFI_TRIAL
+#define PALA_NOTE_VERSION "2.0.0-recorder-msc6-wifi-ip"
+#elif PALA_USB_CARD_SERVICE && PALA_STAGE2_BENCH && defined(PALA_TEST_BLE_FRAGMENT_GAP_MS)
+#define PALA_NOTE_VERSION "2.0.0-recorder-msc4-ble-paced"
+#elif PALA_USB_CARD_SERVICE
+#define PALA_NOTE_VERSION "2.0.0-recorder-msc3"
+#elif PALA_VFS_OWNER_TRACE && PALA_STORAGE_PROBE && PALA_STAGE2_BENCH && PALA_TEST_FIRST_WRITE_DELAY_MS == 6500
+#define PALA_NOTE_VERSION "2.0.0-recorder-overlap1-stall6500"
+#elif PALA_STORAGE_PROBE && PALA_STAGE2_BENCH && PALA_TEST_FIRST_WRITE_DELAY_MS == 6500
+#define PALA_NOTE_VERSION "2.0.0-recorder-sdtrace1-stall6500"
+#elif PALA_STAGE2_BENCH && PALA_TEST_FIRST_WRITE_DELAY_MS == 6500
+#define PALA_NOTE_VERSION "2.0.0-recorder-periph1-stall6500"
+#elif PALA_TEST_FIRST_WRITE_DELAY_MS
+#define PALA_NOTE_VERSION "2.0.0-recorder-test4-stall6500"
+#elif PALA_STAGE2_BENCH
+#define PALA_NOTE_VERSION "2.0.0-recorder-stage2-qual2"
+#elif PALA_WAV_TIMING
+#define PALA_NOTE_VERSION "2.0.0-recorder-test4-timing4"
+#else
+#define PALA_NOTE_VERSION "2.0.0-recorder-periph1"
+#endif
 #endif
 #ifndef PALA_NOTE_VERSION
 #define PALA_NOTE_VERSION "2.0.0-rc43"

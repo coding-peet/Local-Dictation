@@ -11,6 +11,8 @@
 #include "../esp_codec_dev/include/esp_codec_dev_os.h"
 #include "codec_board.h"
 #include "codec_init.h"
+#include "../audio/microphone_loss.h"
+#include "esp_attr.h"
 #include "esp_log.h"
 #include "dummy_codec.h"
 #include "driver/i2c_master.h"
@@ -46,6 +48,35 @@ static bool                    i2c_inited[MAX_I2C_NUM];
 static i2c_master_bus_handle_t i2c_bus_handle[MAX_I2C_NUM];
 static i2s_keep_t             *i2s_keep[MAX_I2S_NUM];
 static codec_res_t             codec_res;
+
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+static DRAM_ATTR portMUX_TYPE rx_loss_lock = portMUX_INITIALIZER_UNLOCKED;
+static DRAM_ATTR AudioDmaSnapshot rx_loss;
+
+static bool IRAM_ATTR microphone_rx_overflow(i2s_chan_handle_t channel,
+                                             i2s_event_data_t *event, void *context)
+{
+    (void)channel;
+    (void)context;
+    portENTER_CRITICAL_ISR(&rx_loss_lock);
+    ++rx_loss.overruns;
+    rx_loss.bytes += event->size;
+    portEXIT_CRITICAL_ISR(&rx_loss_lock);
+    return false;
+}
+#endif
+
+AudioDmaSnapshot audio_rx_dma_snapshot(void)
+{
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+    portENTER_CRITICAL(&rx_loss_lock);
+    AudioDmaSnapshot snapshot = rx_loss;
+    portEXIT_CRITICAL(&rx_loss_lock);
+    return snapshot;
+#else
+    return (AudioDmaSnapshot){0};
+#endif
+}
 
 static int _i2c_init(uint8_t port)
 {
@@ -246,6 +277,13 @@ static int _i2s_init(uint8_t port, esp_codec_dev_type_t dev_type, codec_init_cfg
         }
 #endif
     }
+    if (i2s_keep[port]->rx_handle) {
+        const i2s_event_callbacks_t events = { .on_recv_q_ovf = microphone_rx_overflow };
+        const bool monitored = i2s_channel_register_event_callback(i2s_keep[port]->rx_handle, &events, NULL) == ESP_OK;
+        portENTER_CRITICAL(&rx_loss_lock);
+        rx_loss.monitored = monitored;
+        portEXIT_CRITICAL(&rx_loss_lock);
+    }
     // Enable I2S here for maybe some codec need I2S clock to set register correctly
     if (i2s_keep[port]->tx_handle) {
         i2s_channel_enable(i2s_keep[port]->tx_handle);
@@ -297,6 +335,9 @@ static int _i2s_deinit(uint8_t port)
     }
     if (i2s_keep[port]->rx_handle) {
         i2s_channel_disable(i2s_keep[port]->rx_handle);
+        portENTER_CRITICAL(&rx_loss_lock);
+        rx_loss.monitored = false;
+        portEXIT_CRITICAL(&rx_loss_lock);
     }
     if (i2s_keep[port]->tx_handle) {
         i2s_del_channel(i2s_keep[port]->tx_handle);

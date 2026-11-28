@@ -1,4 +1,5 @@
 #include "note_config.h"
+#include "owner_trace.h"
 #include "../../config.h"
 
 #include "note_access.h"
@@ -406,16 +407,21 @@ void dispatch(JsonVariantConst request, NoteConfigTransport link, bool authentic
     if (link == NoteConfigTransport::Web) csrf = "";
   } else if (op == "get") getSettings(request, link, result);
   else if (op.startsWith("trash.")) trashSettings(op, request, result);
-  else if (op == "restart.status")
+  else if (op == "restart.status") {
     addNoteStorageAuditSettings(result["storageAudit"].to<JsonObject>(), noteIndex.size());
-  else if (op == "restart.request") {
+    addNoteRestartConfirmation(result["confirmation"].to<JsonObject>());
+  } else if (op == "restart.request") {
     const String mode = accessField(request["mode"]);
     const auto restart = mode == "restart" ? NoteRestartMode::Restart
         : !PALA_RECORDER_FIRST && mode == "audit" ? NoteRestartMode::Audit : NoteRestartMode::None;
     if (restart == NoteRestartMode::None) fillResult(result, "Choose a supported restart.");
-    else if ((state != STATE_IDLE && state != STATE_TRANSFER) || !requestNoteRestart(restart))
-      fillResult(result, "Finish the current activity or confirmation first.");
-    else result["pending"] = true;
+    else {
+      const uint32_t ticket = state == STATE_IDLE || state == STATE_TRANSFER ? requestNoteRestart(restart) : 0;
+      if (ticket) {
+        result["pending"] = true;
+        result["ticket"] = ticket;
+      } else fillResult(result, "Finish the current activity or confirmation first.");
+    }
   }
   else if (op == "pair.enableBle" && link == NoteConfigTransport::Web && bluetoothEnrollmentAvailable()) {
     bleEnableRequested = true;
@@ -450,7 +456,7 @@ void dispatch(JsonVariantConst request, NoteConfigTransport link, bool authentic
     const JsonString raw = request["address"].as<JsonString>();
     if (raw.isNull() || strlen(raw.c_str()) != raw.size() ||
         !palaSetBridgeAddress(String(raw.c_str()))) {
-      fillResult(result, "Enter a private IPv4 address or leave the field empty.");
+      fillResult(result, "Enter a private IPv4 address with an optional port, or leave the field empty.");
     } else {
       resetBridgeAddressCache();
     }
@@ -533,6 +539,7 @@ bool noteConfigRandom(uint8_t* output, size_t length) {
 
 String noteConfigRequest(const String& json, NoteConfigTransport transport, bool authenticated,
                          uint32_t attachment, bool enrollment) {
+  owner_trace::WorkScope ownerWork(owner_trace::Work::Settings);
   JsonDocument result;
   JsonDocument request;
   if (json.length() > kConfigRequestLimit || deserializeJson(request, json) ||
@@ -589,9 +596,10 @@ bool noteUsbPairingOpen() {
          pending.attachment == usbAttachment;
 }
 
-bool noteUsbPairingPrompt(String& name) {
+bool noteUsbPairingPrompt(String& name, String* id) {
   if (!noteUsbPairingOpen() || pending.approval != Approval::Waiting) return false;
   name = pending.peer.name;
+  if (id) *id = pending.peer.id;
   return true;
 }
 

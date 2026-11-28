@@ -133,15 +133,18 @@ Provider items already delivered stay in the destination. Pause competing
 operations at their safe boundary, revalidate counts and persist delete intent.
 
 On Note, **Saved items** shows the selected destination list. **Calendar**
-shows scheduled tasks across the synchronized account, using scheduled
-date and time. A compact cached view can be shown for up to 24 hours with
-the Offline label and the last successful update time. Expiry shows
+combines scheduled tasks across the synchronized account and events from the
+primary Google calendar. Each row shows the date, applicable time, title and
+whether it is a task or an event. A compact cached view can be shown for up
+to 24 hours with the Offline label and the last successful update time. Expiry shows
 Unavailable. Account disconnection and revoked access invalidate the view.
 
 Bridge owns provider authentication. Use official Google Workspace MCP for
 AI-driven access and keep provider interfaces on Bridge. Google Tasks MCP
-provides the task view. Calendar and Docs integrations use their own tools
-where applicable. The local archive contains independently captured audio
+provides the task view. Google Calendar MCP reads events from the primary
+calendar. The Stage 3 read grant requests only `tasks.readonly` and
+`calendar.events.readonly`. The grant stays on the Bridge PC. Docs uses
+its own tools where applicable. The local archive contains independently captured audio
 and transcripts. Keep provider snapshots subject to their own lifetime.
 
 The lower hold opens **Ask Kubo**. Bridge can search the public web and read
